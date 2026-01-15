@@ -1,16 +1,42 @@
 """
 ChartSense API - FastAPI Backend
-Technical analysis stock trading app
+Technical analysis stock trading app with automated trading bot
 """
+import logging
+from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from routes import stocks, watchlist, analysis
+from routes import bot, positions, performance, settings
+from routes import ai, watchlist_bot
+from database.connection import init_db
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+)
+logger = logging.getLogger(__name__)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Application startup and shutdown events"""
+    # Startup
+    logger.info("Initializing database...")
+    init_db()
+    logger.info("ChartSense API starting up")
+    yield
+    # Shutdown
+    logger.info("ChartSense API shutting down")
+
 
 app = FastAPI(
     title="ChartSense API",
-    description="Technical analysis stock trading API",
-    version="0.1.0",
+    description="Technical analysis stock trading API with automated trading bot",
+    version="0.2.0",
+    lifespan=lifespan,
 )
 
 # CORS middleware
@@ -22,10 +48,22 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Include routers
+# Include routers - Market Data
 app.include_router(stocks.router, prefix="/api/stocks", tags=["stocks"])
 app.include_router(watchlist.router, prefix="/api/watchlist", tags=["watchlist"])
 app.include_router(analysis.router, prefix="/api/analysis", tags=["analysis"])
+
+# Include routers - Trading Bot
+app.include_router(bot.router, prefix="/api/bot", tags=["bot"])
+app.include_router(positions.router, prefix="/api/positions", tags=["positions"])
+app.include_router(performance.router, prefix="/api/performance", tags=["performance"])
+app.include_router(settings.router, prefix="/api/settings", tags=["settings"])
+
+# Include routers - AI Advisor
+app.include_router(ai.router, prefix="/api/ai", tags=["ai"])
+
+# Include routers - User Stocks & Repository
+app.include_router(watchlist_bot.router, prefix="/api/stocks-bot", tags=["stocks-bot"])
 
 
 @app.get("/")

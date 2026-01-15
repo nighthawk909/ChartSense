@@ -1,0 +1,305 @@
+"""
+Pydantic models for Trading Bot API
+Request/Response models for bot endpoints
+"""
+from pydantic import BaseModel, Field
+from typing import List, Optional, Dict, Any
+from datetime import datetime
+from enum import Enum
+
+
+# ============== Enums ==============
+
+class BotState(str, Enum):
+    """Trading bot operational state"""
+    RUNNING = "RUNNING"
+    STOPPED = "STOPPED"
+    PAUSED = "PAUSED"
+    ERROR = "ERROR"
+
+
+class TradeType(str, Enum):
+    """Type of trade based on holding period"""
+    SWING = "SWING"
+    LONG_TERM = "LONG_TERM"
+
+
+class OrderSide(str, Enum):
+    """Buy or sell"""
+    BUY = "BUY"
+    SELL = "SELL"
+
+
+class ExitReason(str, Enum):
+    """Reason for exiting a position"""
+    PROFIT_TARGET = "PROFIT_TARGET"
+    STOP_LOSS = "STOP_LOSS"
+    SIGNAL = "SIGNAL"
+    MANUAL = "MANUAL"
+    TIME_STOP = "TIME_STOP"
+
+
+# ============== Bot Status ==============
+
+class BotStatusResponse(BaseModel):
+    """Current bot status"""
+    state: BotState
+    uptime_seconds: int = 0
+    last_trade_time: Optional[datetime] = None
+    current_cycle: str = "idle"  # What the bot is currently doing
+    error_message: Optional[str] = None
+    paper_trading: bool = True
+    active_symbols: List[str] = []
+
+
+class BotStartRequest(BaseModel):
+    """Request to start the bot"""
+    paper_trading: Optional[bool] = None  # Override config
+    symbols: Optional[List[str]] = None  # Override enabled symbols
+
+
+class BotActionResponse(BaseModel):
+    """Response for bot control actions"""
+    success: bool
+    message: str
+    state: BotState
+
+
+# ============== Account ==============
+
+class AccountSummary(BaseModel):
+    """Alpaca account summary"""
+    equity: float = Field(..., description="Total account equity")
+    cash: float = Field(..., description="Available cash")
+    buying_power: float = Field(..., description="Available buying power")
+    portfolio_value: float = Field(..., description="Value of all positions")
+    unrealized_pnl: float = Field(0, description="Unrealized profit/loss")
+    unrealized_pnl_pct: float = Field(0, description="Unrealized P&L percentage")
+    day_pnl: float = Field(0, description="Today's profit/loss")
+    day_pnl_pct: float = Field(0, description="Today's P&L percentage")
+
+
+# ============== Positions ==============
+
+class PositionResponse(BaseModel):
+    """Current open position"""
+    symbol: str
+    quantity: float
+    entry_price: float
+    current_price: float
+    market_value: float
+    unrealized_pnl: float
+    unrealized_pnl_pct: float
+    stop_loss: Optional[float] = None
+    profit_target: Optional[float] = None
+    trade_type: Optional[TradeType] = None
+    entry_time: datetime
+    entry_score: Optional[float] = None
+
+
+class PositionsListResponse(BaseModel):
+    """List of current positions"""
+    positions: List[PositionResponse]
+    total_value: float
+    total_unrealized_pnl: float
+
+
+class ClosePositionRequest(BaseModel):
+    """Request to close a position"""
+    symbol: str
+    quantity: Optional[float] = None  # None = close entire position
+
+
+class ClosePositionResponse(BaseModel):
+    """Response after closing a position"""
+    success: bool
+    message: str
+    symbol: str
+    quantity_closed: float
+    exit_price: Optional[float] = None
+    realized_pnl: Optional[float] = None
+
+
+# ============== Trades / History ==============
+
+class TradeResponse(BaseModel):
+    """Completed trade record"""
+    id: int
+    symbol: str
+    side: OrderSide
+    quantity: float
+    entry_price: float
+    exit_price: Optional[float] = None
+    entry_time: datetime
+    exit_time: Optional[datetime] = None
+    profit_loss: Optional[float] = None
+    profit_loss_pct: Optional[float] = None
+    exit_reason: Optional[ExitReason] = None
+    trade_type: Optional[TradeType] = None
+    entry_score: Optional[float] = None
+
+
+class TradeHistoryResponse(BaseModel):
+    """Paginated trade history"""
+    trades: List[TradeResponse]
+    total_count: int
+    page: int
+    page_size: int
+
+
+# ============== Performance ==============
+
+class PerformanceSummary(BaseModel):
+    """Quick performance summary"""
+    total_trades: int = 0
+    winning_trades: int = 0
+    losing_trades: int = 0
+    win_rate: float = 0.0
+    total_pnl: float = 0.0
+    total_pnl_pct: float = 0.0
+
+
+class PerformanceMetrics(BaseModel):
+    """Detailed performance metrics"""
+    period_days: int
+    total_trades: int = 0
+    winning_trades: int = 0
+    losing_trades: int = 0
+    win_rate: float = 0.0
+    total_pnl: float = 0.0
+    total_pnl_pct: float = 0.0
+    profit_factor: float = 0.0  # Gross profit / gross loss
+    sharpe_ratio: Optional[float] = None
+    max_drawdown: float = 0.0
+    max_drawdown_pct: float = 0.0
+    avg_win: float = 0.0
+    avg_loss: float = 0.0
+    avg_trade_duration_hours: float = 0.0
+    best_trade: float = 0.0
+    worst_trade: float = 0.0
+    # By trade type
+    swing_trades: int = 0
+    swing_win_rate: float = 0.0
+    longterm_trades: int = 0
+    longterm_win_rate: float = 0.0
+
+
+class EquityCurvePoint(BaseModel):
+    """Single point on equity curve"""
+    date: datetime
+    equity: float
+    pnl: float
+    cumulative_pnl: float
+
+
+class EquityCurveResponse(BaseModel):
+    """Equity curve data for charting"""
+    data: List[EquityCurvePoint]
+    starting_equity: float
+    current_equity: float
+    total_return_pct: float
+
+
+# ============== Settings ==============
+
+class BotSettings(BaseModel):
+    """Bot configuration settings"""
+    # Symbols
+    enabled_symbols: List[str] = Field(
+        default=["AAPL", "MSFT", "GOOGL", "AMZN", "NVDA"],
+        description="Symbols the bot will trade"
+    )
+
+    # Position limits
+    max_positions: int = Field(5, ge=1, le=20, description="Maximum concurrent positions")
+    max_position_size_pct: float = Field(
+        0.20, ge=0.05, le=0.50,
+        description="Maximum position size as percentage of equity"
+    )
+
+    # Risk management
+    risk_per_trade_pct: float = Field(
+        0.02, ge=0.01, le=0.10,
+        description="Risk per trade as percentage of equity"
+    )
+    max_daily_loss_pct: float = Field(
+        0.03, ge=0.01, le=0.10,
+        description="Maximum daily loss before bot pauses"
+    )
+    default_stop_loss_pct: float = Field(
+        0.05, ge=0.02, le=0.15,
+        description="Default stop loss percentage"
+    )
+
+    # Strategy parameters
+    entry_score_threshold: float = Field(
+        70.0, ge=50.0, le=95.0,
+        description="Minimum score to enter a trade (0-100)"
+    )
+    swing_profit_target_pct: float = Field(
+        0.08, ge=0.03, le=0.25,
+        description="Profit target for swing trades"
+    )
+    longterm_profit_target_pct: float = Field(
+        0.15, ge=0.05, le=0.50,
+        description="Profit target for long-term trades"
+    )
+
+    # Behavior
+    paper_trading: bool = Field(False, description="Use paper trading (simulated)")
+    trading_hours_only: bool = Field(True, description="Only trade during market hours")
+    auto_optimize: bool = Field(True, description="Enable self-optimization")
+
+
+class BotSettingsResponse(BaseModel):
+    """Settings response with metadata"""
+    settings: BotSettings
+    config_name: str = "default"
+    last_updated: Optional[datetime] = None
+
+
+class UpdateSettingsRequest(BaseModel):
+    """Request to update settings"""
+    settings: BotSettings
+
+
+# ============== Optimization ==============
+
+class OptimizationSuggestion(BaseModel):
+    """AI-suggested parameter adjustment"""
+    parameter: str
+    current_value: float
+    suggested_value: float
+    reason: str
+    expected_impact: str
+
+
+class OptimizationLogEntry(BaseModel):
+    """Log entry for an optimization change"""
+    timestamp: datetime
+    parameter: str
+    old_value: float
+    new_value: float
+    reason: str
+    applied: bool
+
+
+class OptimizationHistoryResponse(BaseModel):
+    """History of optimization changes"""
+    entries: List[OptimizationLogEntry]
+    total_adjustments: int
+
+
+# ============== Trading Signals (internal) ==============
+
+class TradingSignal(BaseModel):
+    """Generated trading signal"""
+    symbol: str
+    signal_type: str  # BUY, SELL, HOLD
+    score: float  # 0-100 confidence
+    trade_type: TradeType
+    suggested_entry: float
+    suggested_stop_loss: float
+    suggested_profit_target: float
+    indicators: Dict[str, Any]
+    reason: str

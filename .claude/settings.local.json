@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(dir:*)",
+      "Bash(dir \"C:\\\\Users\\\\jcoci\\\\OneDrive\\\\Desktop\\\\ChartSense\\\\apps\\\\web\")",
+      "Bash(git add:*)"
+    ]
+  }
+}

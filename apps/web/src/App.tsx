@@ -3,6 +3,7 @@ import Layout from './components/Layout'
 import Dashboard from './pages/Dashboard'
 import StockDetail from './pages/StockDetail'
 import Watchlist from './pages/Watchlist'
+import TradingBot from './pages/TradingBot'
 
 function App() {
   return (
@@ -11,6 +12,7 @@ function App() {
         <Route index element={<Dashboard />} />
         <Route path="stock/:symbol" element={<StockDetail />} />
         <Route path="watchlist" element={<Watchlist />} />
+        <Route path="bot" element={<TradingBot />} />
       </Route>
     </Routes>
   )
