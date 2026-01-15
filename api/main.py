@@ -4,12 +4,18 @@ Technical analysis stock trading app with automated trading bot
 """
 import logging
 from contextlib import asynccontextmanager
+from dotenv import load_dotenv
+
+# Load environment variables BEFORE other imports
+load_dotenv()
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from routes import stocks, watchlist, analysis
 from routes import bot, positions, performance, settings
 from routes import ai, watchlist_bot
+from routes import crypto, advanced
 from database.connection import init_db
 
 # Configure logging
@@ -65,10 +71,24 @@ app.include_router(ai.router, prefix="/api/ai", tags=["ai"])
 # Include routers - User Stocks & Repository
 app.include_router(watchlist_bot.router, prefix="/api/stocks-bot", tags=["stocks-bot"])
 
+# Include routers - Crypto Trading (24/7)
+app.include_router(crypto.router, prefix="/api/crypto", tags=["crypto"])
+
+# Include routers - Advanced Analysis
+app.include_router(advanced.router, prefix="/api/advanced", tags=["advanced"])
+
 
 @app.get("/")
 async def root():
-    return {"message": "ChartSense API", "version": "0.1.0"}
+    return {"message": "ChartSense API", "version": "0.3.0", "features": [
+        "Stock Trading Bot",
+        "24/7 Crypto Trading",
+        "Multi-Timeframe Analysis",
+        "Pattern Recognition",
+        "Sentiment Analysis",
+        "Backtesting Engine",
+        "Risk Management",
+    ]}
 
 
 @app.get("/health")
@@ -79,3 +99,4 @@ async def health_check():
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000, reload=True)
+

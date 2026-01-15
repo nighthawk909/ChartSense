@@ -11,8 +11,8 @@ import statistics
 from sqlalchemy.orm import Session
 from sqlalchemy import func, and_
 
-from ..database.models import Trade, PerformanceMetric, BotConfiguration, OptimizationLog
-from ..database.connection import SessionLocal
+from database.models import Trade, PerformanceMetric, BotConfiguration, OptimizationLog
+from database.connection import SessionLocal
 
 logger = logging.getLogger(__name__)
 

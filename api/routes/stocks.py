@@ -45,10 +45,15 @@ async def get_stock_history(
 @router.get("/search")
 async def search_symbols(query: str = Query(min_length=1)):
     """Search for stock symbols by keyword"""
+    import logging
+    logger = logging.getLogger(__name__)
     try:
+        logger.info(f"Searching for: {query}")
         results = await av_service.search_symbols(query)
+        logger.info(f"Search results: {len(results)} matches")
         return {"results": results}
     except Exception as e:
+        logger.error(f"Search error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

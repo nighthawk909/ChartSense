@@ -20,8 +20,8 @@ from .strategy_engine import StrategyEngine, SignalType, TradeType
 from .risk_manager import RiskManager
 from .indicators import IndicatorService
 from .ai_advisor import get_ai_advisor
-from ..database.models import Trade, Position, BotConfiguration, StockRepository, UserWatchlist
-from ..database.connection import SessionLocal
+from database.models import Trade, Position, BotConfiguration, StockRepository, UserWatchlist
+from database.connection import SessionLocal
 
 logger = logging.getLogger(__name__)
 
@@ -43,15 +43,18 @@ class TradingBot:
     def __init__(
         self,
         alpaca_service: Optional[AlpacaService] = None,
-        paper_trading: bool = False,
+        paper_trading: bool = None,
     ):
         """
         Initialize trading bot.
 
         Args:
             alpaca_service: Alpaca service instance
-            paper_trading: Use paper trading (safer for testing)
+            paper_trading: Use paper trading (safer for testing). Reads from ALPACA_TRADING_MODE env var if not specified.
         """
+        # Default to paper trading unless explicitly set to live
+        if paper_trading is None:
+            paper_trading = os.getenv("ALPACA_TRADING_MODE", "paper") == "paper"
         self.alpaca = alpaca_service or get_alpaca_service(paper_trading=paper_trading)
         self.strategy = StrategyEngine()
         self.risk_manager = RiskManager()

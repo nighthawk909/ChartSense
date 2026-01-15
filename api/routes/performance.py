@@ -6,7 +6,7 @@ from fastapi import APIRouter, HTTPException, Query
 from typing import Optional, List
 from datetime import datetime
 
-from ..models.bot import (
+from models.bot import (
     PerformanceSummary,
     PerformanceMetrics,
     EquityCurvePoint,
@@ -19,10 +19,10 @@ from ..models.bot import (
     OptimizationLogEntry,
     OptimizationHistoryResponse,
 )
-from ..services.performance_tracker import PerformanceTracker, SelfOptimizer
-from ..services.alpaca_service import get_alpaca_service
-from ..database.connection import SessionLocal
-from ..database.models import Trade, OptimizationLog
+from services.performance_tracker import PerformanceTracker, SelfOptimizer
+from services.alpaca_service import get_alpaca_service
+from database.connection import SessionLocal
+from database.models import Trade, OptimizationLog
 
 router = APIRouter()
 

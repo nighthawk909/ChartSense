@@ -1,0 +1,304 @@
+"""
+Advanced Analysis API Routes
+Multi-timeframe, patterns, sentiment, calendar, backtesting
+"""
+from fastapi import APIRouter, HTTPException, Query
+from typing import Optional, List
+from pydantic import BaseModel
+
+from services.multi_timeframe import get_multi_timeframe_service
+from services.pattern_recognition import get_pattern_service
+from services.sentiment_analysis import get_sentiment_service
+from services.calendar_service import get_calendar_service
+from services.backtester import get_backtest_engine, StrategyType
+from services.alpha_vantage import AlphaVantageService
+
+router = APIRouter()
+
+
+# ==================== Multi-Timeframe Analysis ====================
+
+@router.get("/mtf/{symbol}")
+async def multi_timeframe_analysis(symbol: str):
+    """
+    Perform multi-timeframe analysis on a stock.
+
+    Analyzes daily and weekly timeframes to find confluence.
+    Higher confluence = stronger signal.
+    """
+    mtf_service = get_multi_timeframe_service()
+    result = await mtf_service.analyze_symbol(symbol)
+    return result
+
+
+# ==================== Pattern Recognition ====================
+
+@router.get("/patterns/{symbol}")
+async def detect_patterns(symbol: str):
+    """
+    Detect chart patterns for a stock.
+
+    Identifies patterns like:
+    - Head & Shoulders
+    - Double Top/Bottom
+    - Triangles
+    - Candlestick patterns (Doji, Hammer, Engulfing, etc.)
+    """
+    av_service = AlphaVantageService()
+    pattern_service = get_pattern_service()
+
+    # Get historical data
+    history = await av_service.get_history(symbol.upper(), "daily", "full")
+
+    if not history or not history.data:
+        raise HTTPException(status_code=404, detail=f"No data found for {symbol}")
+
+    # Extract OHLC data
+    opens = [d.open for d in history.data]
+    highs = [d.high for d in history.data]
+    lows = [d.low for d in history.data]
+    closes = [d.close for d in history.data]
+
+    # Analyze patterns
+    result = pattern_service.analyze(opens, highs, lows, closes)
+    result["symbol"] = symbol.upper()
+
+    return result
+
+
+# ==================== Sentiment Analysis ====================
+
+@router.get("/sentiment/{symbol}")
+async def get_sentiment(symbol: str):
+    """
+    Get sentiment analysis for a stock.
+
+    Analyzes news articles and provides bullish/bearish sentiment score.
+    """
+    sentiment_service = get_sentiment_service()
+    result = await sentiment_service.get_full_sentiment_report(symbol)
+    return result
+
+
+@router.get("/sentiment/news/{symbol}")
+async def get_news_sentiment(symbol: str, limit: int = Query(10, ge=1, le=50)):
+    """Get news sentiment breakdown for a stock"""
+    sentiment_service = get_sentiment_service()
+    return await sentiment_service.get_news_sentiment(symbol, limit)
+
+
+@router.get("/market/fear-greed")
+async def get_market_fear_greed():
+    """Get overall market fear/greed index"""
+    sentiment_service = get_sentiment_service()
+    return await sentiment_service.get_market_fear_greed()
+
+
+# ==================== Calendar & Events ====================
+
+@router.get("/calendar/earnings")
+async def get_earnings_calendar(
+    symbol: Optional[str] = None,
+    horizon: str = Query("3month", description="3month, 6month, or 12month")
+):
+    """Get upcoming earnings dates"""
+    calendar_service = get_calendar_service()
+    return await calendar_service.get_earnings_calendar(symbol, horizon)
+
+
+@router.get("/calendar/earnings-risk/{symbol}")
+async def check_earnings_risk(symbol: str):
+    """
+    Check if a stock has upcoming earnings.
+
+    Returns risk level and recommendation for trading around earnings.
+    """
+    calendar_service = get_calendar_service()
+    return await calendar_service.check_earnings_risk(symbol)
+
+
+@router.get("/calendar/economic")
+async def get_economic_calendar():
+    """Get important economic events"""
+    calendar_service = get_calendar_service()
+    return await calendar_service.get_economic_calendar()
+
+
+@router.get("/calendar/market-hours")
+async def get_market_hours():
+    """Get current market hours status for stocks and crypto"""
+    calendar_service = get_calendar_service()
+    return await calendar_service.get_market_hours_status()
+
+
+# ==================== Backtesting ====================
+
+class BacktestRequest(BaseModel):
+    """Request for running a backtest"""
+    symbol: str
+    strategy: str
+    initial_capital: float = 10000
+    position_size_pct: float = 0.1
+    stop_loss_pct: float = 0.05
+    take_profit_pct: float = 0.10
+
+
+@router.get("/backtest/strategies")
+async def get_available_strategies():
+    """Get list of available backtest strategies"""
+    return {
+        "strategies": [
+            {
+                "id": "rsi_oversold",
+                "name": "RSI Oversold/Overbought",
+                "description": "Buy when RSI < 30, sell when RSI > 70"
+            },
+            {
+                "id": "macd_crossover",
+                "name": "MACD Crossover",
+                "description": "Buy on bullish MACD crossover, sell on bearish"
+            },
+            {
+                "id": "golden_cross",
+                "name": "Golden Cross",
+                "description": "Buy when 50 SMA crosses above 200 SMA"
+            },
+            {
+                "id": "bollinger_bounce",
+                "name": "Bollinger Band Bounce",
+                "description": "Buy at lower band, sell at upper band"
+            },
+            {
+                "id": "momentum",
+                "name": "Momentum",
+                "description": "Buy when price momentum exceeds threshold"
+            },
+            {
+                "id": "mean_reversion",
+                "name": "Mean Reversion",
+                "description": "Buy when price deviates from 20 SMA"
+            },
+        ]
+    }
+
+
+@router.post("/backtest/run")
+async def run_backtest(request: BacktestRequest):
+    """
+    Run a backtest on historical data.
+
+    Returns performance metrics including:
+    - Total return
+    - Win rate
+    - Profit factor
+    - Max drawdown
+    - Sharpe ratio
+    """
+    av_service = AlphaVantageService()
+    backtest_engine = get_backtest_engine()
+
+    # Map strategy string to enum
+    strategy_map = {
+        "rsi_oversold": StrategyType.RSI_OVERSOLD,
+        "macd_crossover": StrategyType.MACD_CROSSOVER,
+        "golden_cross": StrategyType.GOLDEN_CROSS,
+        "bollinger_bounce": StrategyType.BOLLINGER_BOUNCE,
+        "momentum": StrategyType.MOMENTUM,
+        "mean_reversion": StrategyType.MEAN_REVERSION,
+    }
+
+    strategy = strategy_map.get(request.strategy.lower())
+    if not strategy:
+        raise HTTPException(status_code=400, detail=f"Unknown strategy: {request.strategy}")
+
+    # Get historical data
+    history = await av_service.get_history(request.symbol.upper(), "daily", "full")
+
+    if not history or not history.data:
+        raise HTTPException(status_code=404, detail=f"No data found for {request.symbol}")
+
+    # Need at least 200 bars for proper backtesting
+    if len(history.data) < 200:
+        raise HTTPException(status_code=400, detail="Insufficient historical data (need 200+ bars)")
+
+    # Extract OHLCV data
+    opens = [d.open for d in history.data]
+    highs = [d.high for d in history.data]
+    lows = [d.low for d in history.data]
+    closes = [d.close for d in history.data]
+    volumes = [d.volume for d in history.data]
+    dates = [d.date for d in history.data]
+
+    # Run backtest
+    result = backtest_engine.run_backtest(
+        symbol=request.symbol.upper(),
+        strategy=strategy,
+        opens=opens,
+        highs=highs,
+        lows=lows,
+        closes=closes,
+        volumes=volumes,
+        dates=dates,
+        initial_capital=request.initial_capital,
+        position_size_pct=request.position_size_pct,
+        stop_loss_pct=request.stop_loss_pct,
+        take_profit_pct=request.take_profit_pct,
+    )
+
+    # Convert to dict (excluding trades list for brevity)
+    return {
+        "strategy": result.strategy,
+        "symbol": result.symbol,
+        "start_date": result.start_date,
+        "end_date": result.end_date,
+        "initial_capital": result.initial_capital,
+        "final_capital": result.final_capital,
+        "total_return": result.total_return,
+        "total_return_pct": result.total_return_pct,
+        "total_trades": result.total_trades,
+        "winning_trades": result.winning_trades,
+        "losing_trades": result.losing_trades,
+        "win_rate": result.win_rate,
+        "profit_factor": result.profit_factor,
+        "max_drawdown": result.max_drawdown,
+        "max_drawdown_pct": result.max_drawdown_pct,
+        "sharpe_ratio": result.sharpe_ratio,
+        "avg_trade_pnl": result.avg_trade_pnl,
+        "avg_win": result.avg_win,
+        "avg_loss": result.avg_loss,
+        "largest_win": result.largest_win,
+        "largest_loss": result.largest_loss,
+    }
+
+
+# ==================== Risk Analysis ====================
+
+@router.get("/risk/portfolio")
+async def get_portfolio_risk_analysis():
+    """
+    Get comprehensive portfolio risk analysis.
+
+    Includes sector exposure, correlation risk, and diversification score.
+    """
+    from services.alpaca_service import get_alpaca_service
+    from services.risk_manager import SectorExposureManager, CorrelationRiskManager
+
+    alpaca = get_alpaca_service()
+    sector_manager = SectorExposureManager()
+    correlation_manager = CorrelationRiskManager()
+
+    try:
+        account = await alpaca.get_account()
+        positions = await alpaca.get_positions()
+
+        sector_exposure = sector_manager.calculate_sector_exposure(positions, account["equity"])
+        correlation_report = correlation_manager.get_portfolio_correlation_report(positions)
+
+        return {
+            "account_equity": account["equity"],
+            "total_positions": len(positions),
+            "sector_exposure": sector_exposure,
+            "correlation_analysis": correlation_report,
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))

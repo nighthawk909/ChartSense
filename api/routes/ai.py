@@ -6,9 +6,9 @@ from fastapi import APIRouter, HTTPException, Query
 from typing import Optional, List
 from pydantic import BaseModel
 
-from ..services.ai_advisor import get_ai_advisor
-from ..services.alpha_vantage import AlphaVantageService
-from ..services.indicators import IndicatorService
+from services.ai_advisor import get_ai_advisor
+from services.alpha_vantage import AlphaVantageService
+from services.indicators import IndicatorService
 
 router = APIRouter()
 

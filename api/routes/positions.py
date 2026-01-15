@@ -5,7 +5,7 @@ Endpoints for viewing and managing trading positions
 from fastapi import APIRouter, HTTPException, Query
 from typing import Optional, List
 
-from ..models.bot import (
+from models.bot import (
     PositionResponse,
     PositionsListResponse,
     ClosePositionRequest,
@@ -13,10 +13,10 @@ from ..models.bot import (
     AccountSummary,
     TradeType,
 )
-from ..services.trading_bot import get_trading_bot
-from ..services.alpaca_service import get_alpaca_service
-from ..database.connection import SessionLocal
-from ..database.models import Position as DBPosition
+from services.trading_bot import get_trading_bot
+from services.alpaca_service import get_alpaca_service
+from database.connection import SessionLocal
+from database.models import Position as DBPosition
 
 router = APIRouter()
 

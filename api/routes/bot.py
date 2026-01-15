@@ -5,13 +5,13 @@ Endpoints for starting, stopping, and monitoring the trading bot
 from fastapi import APIRouter, HTTPException, BackgroundTasks
 from typing import Optional
 
-from ..models.bot import (
+from models.bot import (
     BotStatusResponse,
     BotStartRequest,
     BotActionResponse,
     BotState,
 )
-from ..services.trading_bot import get_trading_bot
+from services.trading_bot import get_trading_bot
 
 router = APIRouter()
 

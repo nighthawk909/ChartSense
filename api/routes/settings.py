@@ -6,14 +6,14 @@ from fastapi import APIRouter, HTTPException
 from typing import Optional
 from datetime import datetime
 
-from ..models.bot import (
+from models.bot import (
     BotSettings,
     BotSettingsResponse,
     UpdateSettingsRequest,
 )
-from ..database.connection import SessionLocal
-from ..database.models import BotConfiguration
-from ..services.trading_bot import get_trading_bot
+from database.connection import SessionLocal
+from database.models import BotConfiguration
+from services.trading_bot import get_trading_bot
 
 router = APIRouter()
 
