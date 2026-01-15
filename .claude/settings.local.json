@@ -3,7 +3,31 @@
     "allow": [
       "Bash(dir:*)",
       "Bash(dir \"C:\\\\Users\\\\jcoci\\\\OneDrive\\\\Desktop\\\\ChartSense\\\\apps\\\\web\")",
-      "Bash(git add:*)"
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git push:*)",
+      "Bash(test:*)",
+      "Bash(./\"\"Start ChartSense.bat\"\")",
+      "Bash(if [ -d \"venv\" ])",
+      "Bash(then source venv/Scripts/activate)",
+      "Bash(pip install:*)",
+      "Bash(else python -m venv venv)",
+      "Bash(source:*)",
+      "Bash(fi)",
+      "Bash(grep:*)",
+      "Bash(python:*)",
+      "Bash(curl:*)",
+      "Bash(pkill:*)",
+      "Bash(netstat:*)",
+      "Bash(taskkill:*)",
+      "Bash(taskkill //F //PID 103116)",
+      "Bash(taskkill //F //PID 125020)",
+      "Bash(findstr:*)",
+      "Bash(timeout:*)",
+      "Bash(find:*)",
+      "Bash(tasklist:*)",
+      "Bash(chmod +x \"C:\\\\Users\\\\jcoci\\\\OneDrive\\\\Desktop\\\\ChartSense\\\\.git\\\\hooks\\\\pre-commit\")",
+      "Bash(npm run dev:*)"
     ]
   }
 }
