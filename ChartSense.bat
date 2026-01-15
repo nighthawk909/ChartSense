@@ -1,16 +1,9 @@
 @echo off
-setlocal enabledelayedexpansion
 title ChartSense Trading Platform
 
 echo.
 echo  ========================================================
-echo   ____ _                _   ____
-echo  / ___^| ^|__   __ _ _ __^| ^|_/ ___|  ___ _ __  ___  ___
-echo  ^| ^|   ^| '_ \ / _` ^| '__^| __\___ \ / _ \ '_ \/ __|/ _ \
-echo  ^| ^|___^| ^| ^| ^| (_^| ^| ^|  ^| ^|_ ___) ^|  __/ ^| ^| \__ \  __/
-echo   \____^|_^| ^|_^|\__,_^|_^|   \__^|____/ \___^|_^| ^|_^|___/\___^|
-echo.
-echo   AI-Powered Trading Platform
+echo      ChartSense - AI-Powered Trading Platform
 echo  ========================================================
 echo.
 
@@ -20,10 +13,6 @@ cd /d "%PROJECT_DIR%"
 
 echo  [1/7] Cleaning up temp files and processes...
 echo  --------------------------------------------------------
-
-REM Delete any tmpclaude temp files
-for /r "%PROJECT_DIR%" %%f in (tmpclaude-*) do del /q "%%f" 2>nul
-for /r "%PROJECT_DIR%" %%f in (nul) do if "%%~nxf"=="nul" del /q "%%f" 2>nul
 
 REM Kill any Python processes on port 8000
 for /f "tokens=5" %%a in ('netstat -ano 2^>nul ^| findstr ":8000" ^| findstr "LISTENING"') do (
@@ -64,38 +53,38 @@ echo.
 
 echo  [4/7] Starting API Server (port 8000)...
 echo  --------------------------------------------------------
-start "ChartSense API Server" /min cmd /c "cd /d "%PROJECT_DIR%api" && python -m uvicorn main:app --host 0.0.0.0 --port 8000"
-echo         API server starting in background...
+cd /d "%PROJECT_DIR%api"
+start "ChartSense API" cmd /k python -m uvicorn main:app --host 0.0.0.0 --port 8000
+echo         API server starting...
 timeout /t 3 /nobreak >nul
 echo.
 
 echo  [5/7] Starting Web Application (port 5173)...
 echo  --------------------------------------------------------
-start "ChartSense Web App" /min cmd /c "cd /d "%PROJECT_DIR%apps\web" && npm run dev -- --port 5173 --host"
-echo         Web app starting in background...
+cd /d "%PROJECT_DIR%apps\web"
+start "ChartSense Web" cmd /k npm run dev -- --port 5173
+echo         Web app starting...
 timeout /t 5 /nobreak >nul
 echo.
 
+cd /d "%PROJECT_DIR%"
+
 echo  [6/7] Opening browser...
 echo  --------------------------------------------------------
-start "" http://localhost:5173
+start http://localhost:5173
 echo         Browser launched!
 echo.
 
 echo  [7/7] Ready!
-echo  --------------------------------------------------------
-echo.
-echo  ========================================================
-echo   ChartSense is now running!
 echo  ========================================================
 echo.
 echo   Web App:    http://localhost:5173
 echo   API Docs:   http://localhost:8000/docs
 echo.
-echo   Paper Trading Account: $100,000 virtual funds
-echo   Crypto Trading: 24/7 (BTC, ETH, SOL, etc.)
+echo   Paper Trading: $100,000 virtual funds
+echo   Crypto: 24/7 (BTC, ETH, SOL, etc.)
 echo.
-echo  --------------------------------------------------------
+echo  ========================================================
 echo   Press any key to STOP all servers and exit...
 echo  ========================================================
 pause >nul
@@ -103,7 +92,7 @@ pause >nul
 echo.
 echo  Shutting down servers...
 
-REM Kill the servers we started
+REM Kill the servers
 for /f "tokens=5" %%a in ('netstat -ano 2^>nul ^| findstr ":8000" ^| findstr "LISTENING"') do (
     taskkill /F /PID %%a >nul 2>&1
 )
@@ -113,4 +102,3 @@ for /f "tokens=5" %%a in ('netstat -ano 2^>nul ^| findstr ":5173" ^| findstr "LI
 
 echo  Goodbye!
 timeout /t 2 /nobreak >nul
-exit /b 0
