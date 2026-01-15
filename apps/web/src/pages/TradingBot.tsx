@@ -11,6 +11,7 @@ import AccountSummary from '../components/bot/AccountSummary';
 import CurrentPositions from '../components/bot/CurrentPositions';
 import TradeHistory from '../components/bot/TradeHistory';
 import PerformanceStats from '../components/bot/PerformanceStats';
+import ActivityLog from '../components/bot/ActivityLog';
 
 import { botApi, positionsApi, performanceApi } from '../services/botApi';
 import type {
@@ -21,6 +22,15 @@ import type {
   PerformanceMetrics,
 } from '../types/bot';
 
+interface ActivityItem {
+  timestamp: string | null;
+  type: string;
+  message: string;
+  level: 'info' | 'warning' | 'error' | 'success';
+}
+
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+
 export default function TradingBot() {
   // State
   const [status, setStatus] = useState<BotStatus | null>(null);
@@ -30,6 +40,7 @@ export default function TradingBot() {
   const [tradesTotal, setTradesTotal] = useState(0);
   const [tradesPage, setTradesPage] = useState(1);
   const [metrics, setMetrics] = useState<PerformanceMetrics | null>(null);
+  const [activities, setActivities] = useState<ActivityItem[]>([]);
 
   // Loading states
   const [statusLoading, setStatusLoading] = useState(true);
@@ -37,6 +48,7 @@ export default function TradingBot() {
   const [positionsLoading, setPositionsLoading] = useState(true);
   const [tradesLoading, setTradesLoading] = useState(true);
   const [metricsLoading, setMetricsLoading] = useState(true);
+  const [activityLoading, setActivityLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState(false);
 
   // Fetch bot status
@@ -102,6 +114,21 @@ export default function TradingBot() {
     }
   }, []);
 
+  // Fetch activity log
+  const fetchActivity = useCallback(async () => {
+    try {
+      const response = await fetch(`${API_URL}/api/bot/activity`);
+      if (response.ok) {
+        const data = await response.json();
+        setActivities(data.activities || []);
+      }
+    } catch (err) {
+      console.error('Failed to fetch activity:', err);
+    } finally {
+      setActivityLoading(false);
+    }
+  }, []);
+
   // Refresh all data
   const refreshAll = useCallback(() => {
     fetchStatus();
@@ -109,7 +136,8 @@ export default function TradingBot() {
     fetchPositions();
     fetchTrades(1);
     fetchMetrics();
-  }, [fetchStatus, fetchAccount, fetchPositions, fetchTrades, fetchMetrics]);
+    fetchActivity();
+  }, [fetchStatus, fetchAccount, fetchPositions, fetchTrades, fetchMetrics, fetchActivity]);
 
   // Initial load and polling
   useEffect(() => {
@@ -120,10 +148,11 @@ export default function TradingBot() {
       fetchStatus();
       fetchAccount();
       fetchPositions();
+      fetchActivity();
     }, 5000);
 
     return () => clearInterval(interval);
-  }, [refreshAll, fetchStatus, fetchAccount, fetchPositions]);
+  }, [refreshAll, fetchStatus, fetchAccount, fetchPositions, fetchActivity]);
 
   // Bot control handlers
   const handleStart = async () => {
@@ -217,14 +246,15 @@ export default function TradingBot() {
         <AccountSummary account={account} loading={accountLoading} />
       </div>
 
-      {/* Middle Row - Positions and Performance */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      {/* Middle Row - Positions, Performance, and Activity */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <CurrentPositions
           positions={positions}
           onClosePosition={handleClosePosition}
           loading={positionsLoading}
         />
         <PerformanceStats metrics={metrics} loading={metricsLoading} />
+        <ActivityLog activities={activities} loading={activityLoading} />
       </div>
 
       {/* Bottom Row - Trade History */}

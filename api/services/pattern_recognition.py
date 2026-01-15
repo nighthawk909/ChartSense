@@ -34,6 +34,10 @@ class PatternType(str, Enum):
     WEDGE_UP = "wedge_up"
     WEDGE_DOWN = "wedge_down"
 
+    # Elliott Wave
+    ELLIOTT_IMPULSE = "elliott_impulse"
+    ELLIOTT_CORRECTIVE = "elliott_corrective"
+
     # Candlestick Patterns
     DOJI = "doji"
     HAMMER = "hammer"
@@ -56,6 +60,44 @@ class PatternResult:
     end_index: int
     price_target: Optional[float] = None
     stop_loss: Optional[float] = None
+    description: str = ""
+
+
+@dataclass
+class SupportResistanceLevel:
+    """Support or resistance level"""
+    price: float
+    level_type: str  # "support" or "resistance"
+    strength: float  # 0-100
+    touches: int
+    first_touch_index: int
+    last_touch_index: int
+
+
+@dataclass
+class TrendLine:
+    """Trend line data"""
+    slope: float
+    intercept: float
+    line_type: str  # "support", "resistance", "channel_upper", "channel_lower"
+    direction: str  # "up", "down", "horizontal"
+    strength: float
+    start_index: int
+    end_index: int
+    touches: int
+
+
+@dataclass
+class ElliottWave:
+    """Elliott Wave analysis result"""
+    wave_count: int  # Current wave number (1-5 for impulse, A-C for corrective)
+    wave_type: str  # "impulse" or "corrective"
+    wave_degree: str  # "primary", "intermediate", "minor"
+    direction: str  # "bullish" or "bearish"
+    current_position: str  # Description of current wave position
+    wave_points: List[Dict[str, Any]]  # Price points for each wave
+    confidence: float
+    next_target: Optional[float] = None
     description: str = ""
 
 
@@ -421,6 +463,310 @@ class PatternRecognitionService:
 
         return patterns
 
+    def detect_support_resistance(
+        self,
+        highs: List[float],
+        lows: List[float],
+        closes: List[float],
+        tolerance: float = 0.02
+    ) -> List[SupportResistanceLevel]:
+        """
+        Detect support and resistance levels based on price clusters.
+
+        Uses pivot points and price clustering to identify key levels.
+        """
+        levels = []
+
+        if len(closes) < 20:
+            return levels
+
+        # Find pivot highs and lows
+        maxima, minima = self.find_local_extrema(closes, window=5)
+
+        # Group similar price levels
+        all_pivots = []
+        for idx in maxima:
+            all_pivots.append({'price': highs[idx], 'type': 'high', 'index': idx})
+        for idx in minima:
+            all_pivots.append({'price': lows[idx], 'type': 'low', 'index': idx})
+
+        if not all_pivots:
+            return levels
+
+        # Cluster pivots by price proximity
+        all_pivots.sort(key=lambda x: x['price'])
+        clusters = []
+        current_cluster = [all_pivots[0]]
+
+        for pivot in all_pivots[1:]:
+            if abs(pivot['price'] - current_cluster[-1]['price']) / current_cluster[-1]['price'] < tolerance:
+                current_cluster.append(pivot)
+            else:
+                if len(current_cluster) >= 2:
+                    clusters.append(current_cluster)
+                current_cluster = [pivot]
+
+        if len(current_cluster) >= 2:
+            clusters.append(current_cluster)
+
+        # Create S/R levels from clusters
+        current_price = closes[-1]
+        for cluster in clusters:
+            avg_price = sum(p['price'] for p in cluster) / len(cluster)
+            touches = len(cluster)
+            first_touch = min(p['index'] for p in cluster)
+            last_touch = max(p['index'] for p in cluster)
+
+            # Determine if support or resistance
+            if avg_price < current_price:
+                level_type = "support"
+            else:
+                level_type = "resistance"
+
+            # Calculate strength based on touches and recency
+            recency_factor = 1 - (len(closes) - last_touch) / len(closes)
+            strength = min(100, touches * 20 + recency_factor * 30)
+
+            levels.append(SupportResistanceLevel(
+                price=round(avg_price, 2),
+                level_type=level_type,
+                strength=strength,
+                touches=touches,
+                first_touch_index=first_touch,
+                last_touch_index=last_touch
+            ))
+
+        # Sort by strength
+        levels.sort(key=lambda x: x.strength, reverse=True)
+        return levels[:10]  # Return top 10 levels
+
+    def detect_trend_lines(
+        self,
+        highs: List[float],
+        lows: List[float],
+        closes: List[float]
+    ) -> List[TrendLine]:
+        """
+        Detect trend lines using linear regression on pivot points.
+        """
+        trend_lines = []
+
+        if len(closes) < 20:
+            return trend_lines
+
+        maxima, minima = self.find_local_extrema(closes, window=3)
+
+        # Support trend line (connecting lows)
+        if len(minima) >= 2:
+            # Use linear regression on minima
+            x_vals = np.array(minima)
+            y_vals = np.array([lows[i] for i in minima])
+
+            if len(x_vals) >= 2:
+                slope, intercept = np.polyfit(x_vals, y_vals, 1)
+
+                # Count touches (points close to the line)
+                touches = 0
+                for i, idx in enumerate(minima):
+                    expected = slope * idx + intercept
+                    if abs(lows[idx] - expected) / expected < 0.01:
+                        touches += 1
+
+                direction = "up" if slope > 0.001 else "down" if slope < -0.001 else "horizontal"
+                strength = min(100, touches * 25 + 25)
+
+                trend_lines.append(TrendLine(
+                    slope=float(slope),
+                    intercept=float(intercept),
+                    line_type="support",
+                    direction=direction,
+                    strength=strength,
+                    start_index=minima[0],
+                    end_index=minima[-1],
+                    touches=touches
+                ))
+
+        # Resistance trend line (connecting highs)
+        if len(maxima) >= 2:
+            x_vals = np.array(maxima)
+            y_vals = np.array([highs[i] for i in maxima])
+
+            if len(x_vals) >= 2:
+                slope, intercept = np.polyfit(x_vals, y_vals, 1)
+
+                touches = 0
+                for idx in maxima:
+                    expected = slope * idx + intercept
+                    if abs(highs[idx] - expected) / expected < 0.01:
+                        touches += 1
+
+                direction = "up" if slope > 0.001 else "down" if slope < -0.001 else "horizontal"
+                strength = min(100, touches * 25 + 25)
+
+                trend_lines.append(TrendLine(
+                    slope=float(slope),
+                    intercept=float(intercept),
+                    line_type="resistance",
+                    direction=direction,
+                    strength=strength,
+                    start_index=maxima[0],
+                    end_index=maxima[-1],
+                    touches=touches
+                ))
+
+        return trend_lines
+
+    def detect_elliott_wave(
+        self,
+        highs: List[float],
+        lows: List[float],
+        closes: List[float]
+    ) -> Optional[ElliottWave]:
+        """
+        Detect Elliott Wave patterns.
+
+        Elliott Wave Theory:
+        - Impulse waves: 5 waves in the direction of the trend (1-2-3-4-5)
+        - Corrective waves: 3 waves against the trend (A-B-C)
+
+        Rules:
+        1. Wave 2 cannot retrace more than 100% of Wave 1
+        2. Wave 3 cannot be the shortest of waves 1, 3, 5
+        3. Wave 4 cannot overlap Wave 1 (except in diagonals)
+        """
+        if len(closes) < 30:
+            return None
+
+        # Find significant pivot points
+        maxima, minima = self.find_local_extrema(closes, window=5)
+
+        if len(maxima) < 3 or len(minima) < 3:
+            return None
+
+        # Combine and sort all pivots
+        all_pivots = []
+        for idx in maxima:
+            all_pivots.append({'index': idx, 'price': highs[idx], 'type': 'high'})
+        for idx in minima:
+            all_pivots.append({'index': idx, 'price': lows[idx], 'type': 'low'})
+
+        all_pivots.sort(key=lambda x: x['index'])
+
+        # Determine overall trend
+        start_price = closes[0]
+        end_price = closes[-1]
+        trend_direction = "bullish" if end_price > start_price else "bearish"
+
+        # Try to identify 5-wave impulse pattern
+        wave_points = []
+        confidence = 0
+
+        # For bullish trend: Low -> High -> Low -> High -> Low -> High
+        # For bearish trend: High -> Low -> High -> Low -> High -> Low
+        if trend_direction == "bullish":
+            expected_sequence = ['low', 'high', 'low', 'high', 'low', 'high']
+        else:
+            expected_sequence = ['high', 'low', 'high', 'low', 'high', 'low']
+
+        # Find matching sequence
+        sequence_idx = 0
+        for pivot in all_pivots:
+            if sequence_idx < len(expected_sequence):
+                if pivot['type'] == expected_sequence[sequence_idx]:
+                    wave_points.append({
+                        'wave': sequence_idx,
+                        'index': pivot['index'],
+                        'price': pivot['price'],
+                        'type': pivot['type']
+                    })
+                    sequence_idx += 1
+
+        # Validate Elliott Wave rules
+        if len(wave_points) >= 5:
+            # This is a potential impulse wave
+            wave_type = "impulse"
+
+            # Wave 1: point 0 to 1
+            # Wave 2: point 1 to 2
+            # Wave 3: point 2 to 3
+            # Wave 4: point 3 to 4
+            # Wave 5: point 4 to 5
+
+            if len(wave_points) >= 6:
+                w1 = abs(wave_points[1]['price'] - wave_points[0]['price'])
+                w2 = abs(wave_points[2]['price'] - wave_points[1]['price'])
+                w3 = abs(wave_points[3]['price'] - wave_points[2]['price'])
+                w4 = abs(wave_points[4]['price'] - wave_points[3]['price'])
+                w5 = abs(wave_points[5]['price'] - wave_points[4]['price'])
+
+                # Rule 1: Wave 2 < Wave 1
+                rule1 = w2 < w1
+                # Rule 2: Wave 3 is not the shortest
+                rule2 = not (w3 < w1 and w3 < w5)
+                # Rule 3: Wave 4 doesn't overlap Wave 1
+                if trend_direction == "bullish":
+                    rule3 = wave_points[4]['price'] > wave_points[1]['price']
+                else:
+                    rule3 = wave_points[4]['price'] < wave_points[1]['price']
+
+                confidence = 0
+                if rule1:
+                    confidence += 30
+                if rule2:
+                    confidence += 40
+                if rule3:
+                    confidence += 30
+
+                # Determine current wave position
+                current_wave = len(wave_points)
+                if current_wave >= 6:
+                    current_position = "Wave 5 complete - expect correction"
+                    # Fibonacci targets for correction
+                    if trend_direction == "bullish":
+                        next_target = wave_points[5]['price'] - (w3 * 0.382)
+                    else:
+                        next_target = wave_points[5]['price'] + (w3 * 0.382)
+                else:
+                    current_position = f"In Wave {current_wave}"
+                    # Project next wave using Fibonacci
+                    if current_wave % 2 == 0:  # In corrective sub-wave
+                        next_target = wave_points[-1]['price']
+                    else:
+                        if trend_direction == "bullish":
+                            next_target = wave_points[-1]['price'] + (w3 * 1.618 if w3 else w1 * 1.618)
+                        else:
+                            next_target = wave_points[-1]['price'] - (w3 * 1.618 if w3 else w1 * 1.618)
+
+                return ElliottWave(
+                    wave_count=min(len(wave_points) - 1, 5),
+                    wave_type=wave_type,
+                    wave_degree="intermediate",
+                    direction=trend_direction,
+                    current_position=current_position,
+                    wave_points=wave_points,
+                    confidence=confidence,
+                    next_target=round(next_target, 2) if next_target else None,
+                    description=f"Elliott {wave_type.title()} Wave - {current_position}"
+                )
+
+        # Check for corrective pattern (3 waves)
+        elif len(wave_points) >= 3:
+            wave_type = "corrective"
+            current_position = f"Wave {chr(65 + len(wave_points) - 1)}"  # A, B, C
+
+            return ElliottWave(
+                wave_count=len(wave_points),
+                wave_type=wave_type,
+                wave_degree="intermediate",
+                direction="bearish" if trend_direction == "bullish" else "bullish",
+                current_position=current_position,
+                wave_points=wave_points,
+                confidence=60,
+                description=f"Elliott Corrective Wave - {current_position}"
+            )
+
+        return None
+
     def analyze(
         self,
         opens: List[float],
@@ -470,6 +816,15 @@ class PatternRecognitionService:
         else:
             bias = "neutral"
 
+        # Detect support/resistance levels
+        sr_levels = self.detect_support_resistance(highs, lows, closes)
+
+        # Detect trend lines
+        trend_lines = self.detect_trend_lines(highs, lows, closes)
+
+        # Detect Elliott Wave
+        elliott = self.detect_elliott_wave(highs, lows, closes)
+
         return {
             "patterns": [
                 {
@@ -486,6 +841,39 @@ class PatternRecognitionService:
             "bias": bias,
             "bullish_score": bullish_score,
             "bearish_score": bearish_score,
+            "support_resistance": [
+                {
+                    "price": sr.price,
+                    "type": sr.level_type,
+                    "strength": sr.strength,
+                    "touches": sr.touches,
+                }
+                for sr in sr_levels
+            ],
+            "trend_lines": [
+                {
+                    "slope": tl.slope,
+                    "intercept": tl.intercept,
+                    "type": tl.line_type,
+                    "direction": tl.direction,
+                    "strength": tl.strength,
+                    "touches": tl.touches,
+                    "start_index": tl.start_index,
+                    "end_index": tl.end_index,
+                }
+                for tl in trend_lines
+            ],
+            "elliott_wave": {
+                "wave_count": elliott.wave_count,
+                "wave_type": elliott.wave_type,
+                "wave_degree": elliott.wave_degree,
+                "direction": elliott.direction,
+                "current_position": elliott.current_position,
+                "confidence": elliott.confidence,
+                "next_target": elliott.next_target,
+                "description": elliott.description,
+                "wave_points": elliott.wave_points,
+            } if elliott else None,
         }
 
 

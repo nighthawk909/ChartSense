@@ -1,41 +1,57 @@
-import { useEffect, useRef } from 'react'
-import { createChart, ColorType, IChartApi } from 'lightweight-charts'
+import { useEffect, useRef, useState } from 'react'
+import { createChart, ColorType, IChartApi, ISeriesApi, CandlestickData, LineData, HistogramData } from 'lightweight-charts'
+
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
 
 interface StockChartProps {
   symbol: string
+  chartType?: 'candlestick' | 'line'
+  period?: string
 }
 
-// Generate mock candlestick data
-function generateMockData() {
-  const data = []
-  let time = new Date('2024-01-01').getTime() / 1000
-  let open = 150
-
-  for (let i = 0; i < 100; i++) {
-    const volatility = Math.random() * 5
-    const change = (Math.random() - 0.5) * volatility
-    const high = open + Math.abs(change) + Math.random() * 2
-    const low = open - Math.abs(change) - Math.random() * 2
-    const close = open + change
-
-    data.push({
-      time: time as number,
-      open: parseFloat(open.toFixed(2)),
-      high: parseFloat(high.toFixed(2)),
-      low: parseFloat(low.toFixed(2)),
-      close: parseFloat(close.toFixed(2)),
-    })
-
-    open = close
-    time += 86400 // Add one day
-  }
-
-  return data
+interface HistoricalData {
+  date: string
+  open: number
+  high: number
+  low: number
+  close: number
+  volume: number
 }
 
-export default function StockChart({ symbol }: StockChartProps) {
+export default function StockChart({ symbol, chartType = 'candlestick', period = '1M' }: StockChartProps) {
   const chartContainerRef = useRef<HTMLDivElement>(null)
   const chartRef = useRef<IChartApi | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+
+  // Filter data based on period
+  const filterByPeriod = (data: HistoricalData[], period: string): HistoricalData[] => {
+    const now = new Date()
+    let cutoffDate: Date
+
+    switch (period) {
+      case '1D':
+        cutoffDate = new Date(now.getTime() - 1 * 24 * 60 * 60 * 1000)
+        break
+      case '1W':
+        cutoffDate = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000)
+        break
+      case '1M':
+        cutoffDate = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000)
+        break
+      case '3M':
+        cutoffDate = new Date(now.getTime() - 90 * 24 * 60 * 60 * 1000)
+        break
+      case '1Y':
+        cutoffDate = new Date(now.getTime() - 365 * 24 * 60 * 60 * 1000)
+        break
+      case 'ALL':
+      default:
+        return data
+    }
+
+    return data.filter(item => new Date(item.date) >= cutoffDate)
+  }
 
   useEffect(() => {
     if (!chartContainerRef.current) return
@@ -53,83 +69,117 @@ export default function StockChart({ symbol }: StockChartProps) {
       width: chartContainerRef.current.clientWidth,
       height: 350,
       crosshair: {
-        vertLine: {
-          color: '#64748b',
-          labelBackgroundColor: '#1e293b',
-        },
-        horzLine: {
-          color: '#64748b',
-          labelBackgroundColor: '#1e293b',
-        },
+        vertLine: { color: '#64748b', labelBackgroundColor: '#1e293b' },
+        horzLine: { color: '#64748b', labelBackgroundColor: '#1e293b' },
       },
-      timeScale: {
-        borderColor: '#334155',
-        timeVisible: true,
-      },
-      rightPriceScale: {
-        borderColor: '#334155',
-      },
+      timeScale: { borderColor: '#334155', timeVisible: true },
+      rightPriceScale: { borderColor: '#334155' },
     })
 
     chartRef.current = chart
 
-    // Add candlestick series
-    const candlestickSeries = chart.addCandlestickSeries({
-      upColor: '#22c55e',
-      downColor: '#ef4444',
-      borderDownColor: '#ef4444',
-      borderUpColor: '#22c55e',
-      wickDownColor: '#ef4444',
-      wickUpColor: '#22c55e',
-    })
+    // Load data
+    const loadChart = async () => {
+      setLoading(true)
+      setError(null)
 
-    // Set mock data
-    const mockData = generateMockData()
-    candlestickSeries.setData(mockData)
+      try {
+        const outputsize = ['1Y', 'ALL'].includes(period) ? 'full' : 'compact'
+        const response = await fetch(`${API_URL}/api/stocks/history/${symbol}?outputsize=${outputsize}`)
 
-    // Add volume series
-    const volumeSeries = chart.addHistogramSeries({
-      color: '#3b82f6',
-      priceFormat: {
-        type: 'volume',
-      },
-      priceScaleId: '',
-    })
+        if (!response.ok) throw new Error('Failed to fetch stock data')
 
-    volumeSeries.priceScale().applyOptions({
-      scaleMargins: {
-        top: 0.8,
-        bottom: 0,
-      },
-    })
+        const data = await response.json()
+        if (!data.history || data.history.length === 0) {
+          throw new Error('No historical data available')
+        }
 
-    const volumeData = mockData.map((d) => ({
-      time: d.time,
-      value: Math.random() * 10000000 + 1000000,
-      color: d.close >= d.open ? '#22c55e40' : '#ef444440',
-    }))
+        // Filter and sort
+        const filteredData = filterByPeriod(data.history, period)
+        const sortedData = [...filteredData].sort((a: HistoricalData, b: HistoricalData) =>
+          new Date(a.date).getTime() - new Date(b.date).getTime()
+        )
 
-    volumeSeries.setData(volumeData)
+        if (sortedData.length === 0) {
+          throw new Error('No data for selected period')
+        }
 
-    // Fit content
-    chart.timeScale().fitContent()
+        if (chartType === 'candlestick') {
+          const series = chart.addCandlestickSeries({
+            upColor: '#22c55e',
+            downColor: '#ef4444',
+            borderDownColor: '#ef4444',
+            borderUpColor: '#22c55e',
+            wickDownColor: '#ef4444',
+            wickUpColor: '#22c55e',
+          })
+          series.setData(sortedData.map((d: HistoricalData) => ({
+            time: d.date,
+            open: d.open,
+            high: d.high,
+            low: d.low,
+            close: d.close,
+          })))
+        } else {
+          const series = chart.addLineSeries({ color: '#3b82f6', lineWidth: 2 })
+          series.setData(sortedData.map((d: HistoricalData) => ({
+            time: d.date,
+            value: d.close,
+          })))
+        }
 
-    // Handle resize
-    const handleResize = () => {
-      if (chartContainerRef.current && chartRef.current) {
-        chartRef.current.applyOptions({
-          width: chartContainerRef.current.clientWidth,
+        // Volume
+        const volumeSeries = chart.addHistogramSeries({
+          color: '#3b82f6',
+          priceFormat: { type: 'volume' },
+          priceScaleId: '',
         })
+        volumeSeries.priceScale().applyOptions({ scaleMargins: { top: 0.8, bottom: 0 } })
+        volumeSeries.setData(sortedData.map((d: HistoricalData) => ({
+          time: d.date,
+          value: d.volume,
+          color: d.close >= d.open ? '#22c55e40' : '#ef444440',
+        })))
+
+        chart.timeScale().fitContent()
+      } catch (err) {
+        console.error('Chart error:', err)
+        setError(err instanceof Error ? err.message : 'Failed to load chart')
+      } finally {
+        setLoading(false)
       }
     }
 
+    loadChart()
+
+    const handleResize = () => {
+      if (chartContainerRef.current && chartRef.current) {
+        chartRef.current.applyOptions({ width: chartContainerRef.current.clientWidth })
+      }
+    }
     window.addEventListener('resize', handleResize)
 
     return () => {
       window.removeEventListener('resize', handleResize)
       chart.remove()
     }
-  }, [symbol])
+  }, [symbol, chartType, period])
+
+  if (loading) {
+    return (
+      <div className="w-full h-[350px] flex items-center justify-center">
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500"></div>
+      </div>
+    )
+  }
+
+  if (error) {
+    return (
+      <div className="w-full h-[350px] flex items-center justify-center text-red-400">
+        <p>{error}</p>
+      </div>
+    )
+  }
 
   return <div ref={chartContainerRef} className="w-full" />
 }

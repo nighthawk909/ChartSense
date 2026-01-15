@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { Outlet, Link, useLocation, useNavigate } from 'react-router-dom'
-import { TrendingUp, LayoutDashboard, Star, Settings, Bot, Search, X, Loader2 } from 'lucide-react'
+import { TrendingUp, LayoutDashboard, Star, Settings, Bot, Search, X, Loader2, Bitcoin } from 'lucide-react'
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
 
@@ -25,7 +25,9 @@ export default function Layout() {
   const navItems = [
     { path: '/', icon: LayoutDashboard, label: 'Dashboard' },
     { path: '/watchlist', icon: Star, label: 'Watchlist' },
+    { path: '/crypto', icon: Bitcoin, label: 'Crypto' },
     { path: '/bot', icon: Bot, label: 'Trading Bot' },
+    { path: '/settings', icon: Settings, label: 'Settings' },
   ]
 
   // Handle click outside to close search results
@@ -150,9 +152,9 @@ export default function Layout() {
           </div>
 
           {/* Settings */}
-          <button className="p-2 hover:bg-slate-700 rounded-lg transition-colors">
+          <Link to="/settings" className="p-2 hover:bg-slate-700 rounded-lg transition-colors">
             <Settings className="h-5 w-5" />
-          </button>
+          </Link>
         </div>
       </header>
 

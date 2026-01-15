@@ -9,6 +9,7 @@ The bot is designed to be always active:
 """
 import asyncio
 import logging
+import os
 from typing import Dict, Any, Optional, List
 from datetime import datetime, timedelta
 from enum import Enum
@@ -755,9 +756,12 @@ class TradingBot:
 _trading_bot: Optional[TradingBot] = None
 
 
-def get_trading_bot(paper_trading: bool = False) -> TradingBot:
+def get_trading_bot(paper_trading: bool = None) -> TradingBot:
     """Get or create trading bot singleton"""
     global _trading_bot
     if _trading_bot is None:
+        # Default to paper trading from env, or True for safety
+        if paper_trading is None:
+            paper_trading = os.getenv("ALPACA_TRADING_MODE", "paper") == "paper"
         _trading_bot = TradingBot(paper_trading=paper_trading)
     return _trading_bot

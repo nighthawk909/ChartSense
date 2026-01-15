@@ -176,3 +176,83 @@ async def bot_health():
             "alpaca_connected": False,
             "error": str(e),
         }
+
+
+@router.get("/activity")
+async def get_bot_activity():
+    """
+    Get recent bot activity log.
+
+    Returns recent actions, decisions, and events from the trading bot.
+    """
+    bot = get_trading_bot()
+
+    # Get activity log if available
+    activity_log = getattr(bot, 'activity_log', [])
+
+    # Build activity from available data
+    activities = []
+
+    # Add current cycle as activity
+    status = bot.get_status()
+    if status["current_cycle"]:
+        activities.append({
+            "timestamp": status["last_trade_time"] or None,
+            "type": "cycle",
+            "message": f"Current: {status['current_cycle'].replace('_', ' ').title()}",
+            "level": "info"
+        })
+
+    # Add state info
+    activities.append({
+        "timestamp": None,
+        "type": "state",
+        "message": f"Bot is {status['state']}",
+        "level": "info" if status["state"] in ["RUNNING", "PAUSED"] else "warning" if status["state"] == "STOPPED" else "error"
+    })
+
+    # Add market hours check
+    try:
+        market_open = await bot.alpaca.is_market_open()
+        activities.append({
+            "timestamp": None,
+            "type": "market",
+            "message": f"Stock market is {'OPEN' if market_open else 'CLOSED'}",
+            "level": "info" if market_open else "warning"
+        })
+    except:
+        pass
+
+    # Add watching symbols
+    if status["active_symbols"]:
+        activities.append({
+            "timestamp": None,
+            "type": "symbols",
+            "message": f"Watching: {', '.join(status['active_symbols'][:5])}{'...' if len(status['active_symbols']) > 5 else ''}",
+            "level": "info"
+        })
+
+    # Add error if present
+    if status["error_message"]:
+        activities.append({
+            "timestamp": None,
+            "type": "error",
+            "message": status["error_message"],
+            "level": "error"
+        })
+
+    # Add uptime info
+    if status["uptime_seconds"] > 0:
+        hours = int(status["uptime_seconds"] // 3600)
+        minutes = int((status["uptime_seconds"] % 3600) // 60)
+        activities.append({
+            "timestamp": None,
+            "type": "uptime",
+            "message": f"Running for {hours}h {minutes}m",
+            "level": "info"
+        })
+
+    return {
+        "activities": activities,
+        "total_count": len(activities),
+    }
