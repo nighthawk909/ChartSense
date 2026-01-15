@@ -58,4 +58,9 @@ tmp/
 temp/
 *.tmp
 tmpclaude-*
+**/tmpclaude-*
 nul
+**/nul
+
+# Claude Code local settings
+.claude/settings.local.json

@@ -18,8 +18,12 @@ REM Get the directory where this batch file is located
 set "PROJECT_DIR=%~dp0"
 cd /d "%PROJECT_DIR%"
 
-echo  [1/6] Cleaning up existing processes...
+echo  [1/7] Cleaning up temp files and processes...
 echo  --------------------------------------------------------
+
+REM Delete any tmpclaude temp files
+for /r "%PROJECT_DIR%" %%f in (tmpclaude-*) do del /q "%%f" 2>nul
+for /r "%PROJECT_DIR%" %%f in (nul) do if "%%~nxf"=="nul" del /q "%%f" 2>nul
 
 REM Kill any Python processes on port 8000
 for /f "tokens=5" %%a in ('netstat -ano 2^>nul ^| findstr ":8000" ^| findstr "LISTENING"') do (
@@ -34,7 +38,7 @@ for /f "tokens=5" %%a in ('netstat -ano 2^>nul ^| findstr ":5173" ^| findstr "LI
 echo         Done.
 echo.
 
-echo  [2/6] Checking Python installation...
+echo  [2/7] Checking Python installation...
 echo  --------------------------------------------------------
 python --version >nul 2>&1
 if errorlevel 1 (
@@ -46,7 +50,7 @@ if errorlevel 1 (
 for /f "tokens=*" %%i in ('python --version 2^>^&1') do echo         %%i found
 echo.
 
-echo  [3/6] Checking Node.js installation...
+echo  [3/7] Checking Node.js installation...
 echo  --------------------------------------------------------
 node --version >nul 2>&1
 if errorlevel 1 (
@@ -58,26 +62,29 @@ if errorlevel 1 (
 for /f "tokens=*" %%i in ('node --version 2^>^&1') do echo         Node.js %%i found
 echo.
 
-echo  [4/6] Starting API Server (port 8000)...
+echo  [4/7] Starting API Server (port 8000)...
 echo  --------------------------------------------------------
 start "ChartSense API Server" /min cmd /c "cd /d "%PROJECT_DIR%api" && python -m uvicorn main:app --host 0.0.0.0 --port 8000"
 echo         API server starting in background...
 timeout /t 3 /nobreak >nul
 echo.
 
-echo  [5/6] Starting Web Application (port 5173)...
+echo  [5/7] Starting Web Application (port 5173)...
 echo  --------------------------------------------------------
 start "ChartSense Web App" /min cmd /c "cd /d "%PROJECT_DIR%apps\web" && npm run dev -- --port 5173 --host"
 echo         Web app starting in background...
 timeout /t 5 /nobreak >nul
 echo.
 
-echo  [6/6] Opening browser...
+echo  [6/7] Opening browser...
 echo  --------------------------------------------------------
 start "" http://localhost:5173
 echo         Browser launched!
 echo.
 
+echo  [7/7] Ready!
+echo  --------------------------------------------------------
+echo.
 echo  ========================================================
 echo   ChartSense is now running!
 echo  ========================================================
