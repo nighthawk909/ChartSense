@@ -27,7 +27,11 @@
       "Bash(find:*)",
       "Bash(tasklist:*)",
       "Bash(chmod +x \"C:\\\\Users\\\\jcoci\\\\OneDrive\\\\Desktop\\\\ChartSense\\\\.git\\\\hooks\\\\pre-commit\")",
-      "Bash(npm run dev:*)"
+      "Bash(npm run dev:*)",
+      "Bash(powershell:*)",
+      "Bash(forfiles /S /M * /C \"cmd /c if @fsize GEQ 1048576 echo @fsize @path\")",
+      "Bash(xargs:*)",
+      "Bash(npm run build:*)"
     ]
   }
 }

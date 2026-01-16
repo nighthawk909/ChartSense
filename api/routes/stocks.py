@@ -34,6 +34,9 @@ async def get_stock_quote(symbol: str):
             raise HTTPException(status_code=404, detail=f"Symbol {symbol} not found")
 
         # Get previous close to calculate change
+        prev_close = bar["close"]  # Default to current if we can't get previous
+        latest_trading_day = bar["timestamp"].split("T")[0] if "T" in bar["timestamp"] else bar["timestamp"]
+
         try:
             bars = await alpaca.get_bars(symbol.upper(), timeframe="1Day", limit=2)
             if len(bars) >= 2:
@@ -57,7 +60,8 @@ async def get_stock_quote(symbol: str):
             volume=bar["volume"],
             change=change,
             change_percent=change_percent,
-            timestamp=bar["timestamp"],
+            latest_trading_day=latest_trading_day,
+            previous_close=prev_close,
         )
     except HTTPException:
         raise
@@ -88,12 +92,14 @@ async def get_stock_history(
 
         # Map interval to Alpaca timeframe
         timeframe_map = {
-            TimeInterval.ONE_MIN: "1min",
-            TimeInterval.FIVE_MIN: "5min",
-            TimeInterval.FIFTEEN_MIN: "15min",
-            TimeInterval.THIRTY_MIN: "15min",  # Alpaca doesn't have 30min, use 15
-            TimeInterval.SIXTY_MIN: "1hour",
+            TimeInterval.MINUTE_1: "1min",
+            TimeInterval.MINUTE_5: "5min",
+            TimeInterval.MINUTE_15: "15min",
+            TimeInterval.MINUTE_30: "15min",  # Alpaca doesn't have 30min, use 15
+            TimeInterval.MINUTE_60: "1hour",
             TimeInterval.DAILY: "1day",
+            TimeInterval.WEEKLY: "1day",  # Use daily for weekly (aggregate client-side)
+            TimeInterval.MONTHLY: "1day",  # Use daily for monthly (aggregate client-side)
         }
 
         timeframe = timeframe_map.get(interval, "1day")
