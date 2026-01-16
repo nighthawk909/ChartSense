@@ -24,13 +24,19 @@ async def get_stock_quote(symbol: str):
     Get real-time quote for a stock symbol.
     Uses Alpaca (unlimited) as primary source.
     """
+    symbol_upper = symbol.upper()
+    logger.info(f"[QUOTE] Fetching quote for {symbol_upper}")
+
     try:
         alpaca = get_alpaca_service()
+        logger.debug(f"[QUOTE] Alpaca service initialized, fetching latest bar for {symbol_upper}")
 
         # Get latest bar from Alpaca (includes OHLCV)
-        bar = await alpaca.get_latest_bar(symbol.upper())
+        bar = await alpaca.get_latest_bar(symbol_upper)
+        logger.debug(f"[QUOTE] Got bar for {symbol_upper}: {bar}")
 
         if not bar:
+            logger.warning(f"[QUOTE] No bar data returned for {symbol_upper}")
             raise HTTPException(status_code=404, detail=f"Symbol {symbol} not found")
 
         # Get previous close to calculate change
@@ -38,21 +44,26 @@ async def get_stock_quote(symbol: str):
         latest_trading_day = bar["timestamp"].split("T")[0] if "T" in bar["timestamp"] else bar["timestamp"]
 
         try:
-            bars = await alpaca.get_bars(symbol.upper(), timeframe="1Day", limit=2)
+            logger.debug(f"[QUOTE] Fetching 2-day bars for {symbol_upper} to calculate change")
+            bars = await alpaca.get_bars(symbol_upper, timeframe="1Day", limit=2)
+            logger.debug(f"[QUOTE] Got {len(bars)} bars for {symbol_upper}")
             if len(bars) >= 2:
                 prev_close = bars[-2]["close"]
                 current_price = bar["close"]
                 change = current_price - prev_close
                 change_percent = (change / prev_close * 100) if prev_close else 0
+                logger.debug(f"[QUOTE] {symbol_upper}: prev_close=${prev_close:.2f}, current=${current_price:.2f}, change={change_percent:.2f}%")
             else:
                 change = 0
                 change_percent = 0
-        except:
+                logger.debug(f"[QUOTE] {symbol_upper}: Not enough bars for change calculation")
+        except Exception as bar_err:
+            logger.warning(f"[QUOTE] Error fetching bars for {symbol_upper}: {bar_err}")
             change = 0
             change_percent = 0
 
-        return StockQuote(
-            symbol=symbol.upper(),
+        quote = StockQuote(
+            symbol=symbol_upper,
             price=bar["close"],
             open=bar["open"],
             high=bar["high"],
@@ -63,10 +74,13 @@ async def get_stock_quote(symbol: str):
             latest_trading_day=latest_trading_day,
             previous_close=prev_close,
         )
+        logger.info(f"[QUOTE] Successfully returned quote for {symbol_upper}: ${bar['close']:.2f}")
+        return quote
+
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Alpaca quote failed for {symbol}: {e}")
+        logger.error(f"[QUOTE] Alpaca quote failed for {symbol}: {e}", exc_info=True)
         # Fallback to Alpha Vantage
         try:
             quote = await av_service.get_quote(symbol.upper())
@@ -87,6 +101,9 @@ async def get_stock_history(
     Get historical price data for a stock.
     Uses Alpaca (unlimited) as primary source.
     """
+    symbol_upper = symbol.upper()
+    logger.info(f"[HISTORY] Fetching history for {symbol_upper}, interval={interval.value}, outputsize={outputsize}")
+
     try:
         alpaca = get_alpaca_service()
 
@@ -113,15 +130,20 @@ async def get_stock_history(
         else:
             start = datetime.now() - timedelta(days=7)
 
+        logger.debug(f"[HISTORY] Fetching {limit} {timeframe} bars for {symbol_upper} from {start}")
+
         bars = await alpaca.get_bars(
-            symbol.upper(),
+            symbol_upper,
             timeframe=timeframe,
             limit=limit,
             start=start
         )
 
         if not bars:
+            logger.warning(f"[HISTORY] No bars returned for {symbol_upper}")
             raise HTTPException(status_code=404, detail=f"No history found for {symbol}")
+
+        logger.info(f"[HISTORY] Got {len(bars)} bars for {symbol_upper}")
 
         # Transform to format expected by frontend StockChart component
         # Frontend expects: { history: [{ date, open, high, low, close, volume }, ...] }
@@ -145,8 +167,9 @@ async def get_stock_history(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Alpaca history failed for {symbol}: {e}")
+        logger.error(f"[HISTORY] Alpaca history failed for {symbol}: {e}", exc_info=True)
         # Fallback to Alpha Vantage
+        logger.info(f"[HISTORY] Attempting Alpha Vantage fallback for {symbol}")
         try:
             history = await av_service.get_history(
                 symbol.upper(),

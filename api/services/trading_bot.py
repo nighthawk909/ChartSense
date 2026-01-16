@@ -1056,11 +1056,12 @@ class TradingBot:
         Crypto markets are 24/7, so this runs regardless of stock market hours.
         Uses the same risk parameters as stocks (as requested by user).
         """
-        logger.debug("Running crypto trading cycle...")
+        from .crypto_service import get_crypto_service
+        logger.info("Running crypto trading cycle (24/7)...")
 
         try:
-            # Initialize crypto service
-            crypto_service = CryptoService()
+            # Get singleton crypto service
+            crypto_service = get_crypto_service()
 
             # Get current account to check buying power
             account = await self.alpaca.get_account()
@@ -1119,12 +1120,15 @@ class TradingBot:
                                 logger.debug(f"Insufficient buying power for {symbol}")
                                 continue
 
+                            # Calculate quantity from dollar amount
+                            qty = position_value / price
+
                             # Place crypto buy order
-                            logger.info(f"Crypto BUY signal for {symbol}: confidence={confidence:.1f}, price=${price:.2f}")
+                            logger.info(f"Crypto BUY signal for {symbol}: confidence={confidence:.1f}, price=${price:.2f}, qty={qty:.6f}")
 
                             order = await crypto_service.place_crypto_order(
                                 symbol=symbol,
-                                notional=position_value,  # Dollar amount
+                                qty=qty,
                                 side="buy"
                             )
 
