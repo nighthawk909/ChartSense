@@ -138,6 +138,11 @@ class TradingBot:
             "next_scan_in_seconds": 0,
         }
 
+        # 24/7 Auto Mode Settings
+        self.auto_247_mode = True  # Automatically switch between stocks and crypto
+        self.crypto_only_after_hours = True  # Focus on crypto when stock market closed
+        self.aggressive_crypto_after_hours = True  # Increase crypto activity when stocks unavailable
+
         # Track partial sells
         self._partial_sold: Dict[str, bool] = {}  # Symbol -> has taken partial profit
 
@@ -469,12 +474,21 @@ class TradingBot:
                     self.current_cycle = "off_hours_analysis"
                     await self._run_off_hours_cycle()
 
-                    # Crypto trades 24/7 - run crypto cycle even during stock market off hours!
+                    # 24/7 Mode: Crypto trades around the clock!
+                    # When stock market is closed, focus more heavily on crypto
                     if self.crypto_trading_enabled:
-                        self.current_cycle = "crypto_trading"
-                        await self._run_crypto_cycle()
+                        self.current_cycle = "crypto_24/7_active"
+                        # Run crypto cycle more frequently when it's the only game in town
+                        if self.aggressive_crypto_after_hours:
+                            await self._run_crypto_cycle()
+                            await asyncio.sleep(60)  # Check crypto every minute when markets closed
+                            await self._run_crypto_cycle()  # Double scan
+                        else:
+                            await self._run_crypto_cycle()
 
-                    await asyncio.sleep(300)  # Check every 5 minutes during off hours
+                    # Shorter sleep when actively trading crypto
+                    sleep_time = 60 if self.crypto_trading_enabled and self.aggressive_crypto_after_hours else 300
+                    await asyncio.sleep(sleep_time)
 
                 elif self.current_session == "regular":
                     # Normal trading hours - full trading cycle
@@ -1139,6 +1153,15 @@ class TradingBot:
             "last_crypto_analysis_time": self._last_crypto_analysis_time.isoformat() if self._last_crypto_analysis_time else None,
             # Crypto scan progress tracking
             "crypto_scan_progress": self._crypto_scan_progress,
+            # 24/7 Mode
+            "auto_247_mode": self.auto_247_mode,
+            "crypto_only_after_hours": self.crypto_only_after_hours,
+            "aggressive_crypto_after_hours": self.aggressive_crypto_after_hours,
+            "is_247_crypto_active": (
+                self.crypto_trading_enabled and
+                self.current_session in ["overnight", "weekend", "after_hours"] and
+                self.aggressive_crypto_after_hours
+            ),
             # AI Decision Tracking
             "last_ai_decision": self._last_ai_decision,
             "ai_decisions_history": self._ai_decisions[-10:],  # Last 10 decisions for UI
