@@ -175,6 +175,15 @@ class BotConfiguration(Base):
     risk_per_trade_pct = Column(Float, default=0.02)  # 2% risk per trade
     max_daily_loss_pct = Column(Float, default=0.03)  # 3% daily loss limit
     default_stop_loss_pct = Column(Float, default=0.05)  # 5% default stop
+    default_take_profit_pct = Column(Float, default=0.10)  # 10% default take profit
+
+    # Exit Strategies
+    trailing_stop_enabled = Column(Boolean, default=False)
+    trailing_stop_pct = Column(Float, default=0.03)  # 3% trailing stop
+    trailing_stop_activation_pct = Column(Float, default=0.05)  # Activate at 5% profit
+    partial_profit_enabled = Column(Boolean, default=False)
+    partial_profit_pct = Column(Float, default=0.50)  # Sell 50% at partial target
+    partial_profit_at = Column(Float, default=0.05)  # Partial at 5% profit
 
     # Strategy parameters
     entry_score_threshold = Column(Float, default=70.0)  # Min score to enter
@@ -191,6 +200,27 @@ class BotConfiguration(Base):
     # Self-optimization settings
     auto_optimize = Column(Boolean, default=True)  # Enable self-optimization
     optimization_lookback_days = Column(Integer, default=30)  # Days to analyze
+
+    # Profit Reinvestment
+    reinvest_profits = Column(Boolean, default=True)  # Reinvest profits
+    compounding_enabled = Column(Boolean, default=True)  # Compound growth
+
+    # Intraday Trading
+    intraday_enabled = Column(Boolean, default=False)
+    intraday_timeframe = Column(String(10), default="5min")
+    max_trades_per_day = Column(Integer, default=10)
+
+    # Auto Trade Mode (AI controlled)
+    auto_trade_mode = Column(Boolean, default=False)
+    ai_risk_tolerance = Column(String(20), default="moderate")
+
+    # Broker
+    broker = Column(String(20), default="alpaca")
+
+    # Crypto Trading
+    crypto_trading_enabled = Column(Boolean, default=False)
+    crypto_symbols = Column(JSON, default=["BTC/USD", "ETH/USD"])
+    crypto_max_positions = Column(Integer, default=2)
 
     # Active flag
     is_active = Column(Boolean, default=True)  # Currently active configuration

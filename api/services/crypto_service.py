@@ -86,35 +86,68 @@ class CryptoService:
 
     async def get_crypto_quote(self, symbol: str) -> Optional[Dict[str, Any]]:
         """
-        Get real-time quote for a cryptocurrency.
+        Get real-time quote for a cryptocurrency with 24h stats.
 
         Args:
             symbol: Crypto symbol like "BTC/USD" or "BTCUSD"
         """
         # Normalize symbol to format: BTC/USD (Alpaca requires slash format)
+        original_symbol = symbol
         symbol = symbol.upper().replace("/", "")
         if symbol.endswith("USD"):
             symbol = symbol[:-3] + "/USD"
         else:
             symbol = symbol + "/USD"
 
-        endpoint = f"/v1beta3/crypto/us/latest/quotes"
+        # Get current quote
+        endpoint = "/v1beta3/crypto/us/latest/quotes"
         params = {"symbols": symbol}
-
         data = await self._make_request("GET", endpoint, base_url=self.data_url, params=params)
 
-        if data and "quotes" in data and symbol in data["quotes"]:
-            quote = data["quotes"][symbol]
-            return {
-                "symbol": symbol,
-                "bid_price": float(quote.get("bp", 0)),
-                "ask_price": float(quote.get("ap", 0)),
-                "bid_size": float(quote.get("bs", 0)),
-                "ask_size": float(quote.get("as", 0)),
-                "timestamp": quote.get("t"),
-                "mid_price": (float(quote.get("bp", 0)) + float(quote.get("ap", 0))) / 2,
-            }
-        return None
+        if not data or "quotes" not in data or symbol not in data["quotes"]:
+            return None
+
+        quote = data["quotes"][symbol]
+        bid_price = float(quote.get("bp", 0))
+        ask_price = float(quote.get("ap", 0))
+        current_price = (bid_price + ask_price) / 2 if bid_price and ask_price else 0
+
+        # Get 24h bars to calculate change
+        bars = await self.get_crypto_bars(symbol, timeframe="1Hour", limit=24)
+
+        change_24h = 0.0
+        change_percent_24h = 0.0
+        high_24h = current_price
+        low_24h = current_price
+        volume_24h = 0.0
+
+        if bars and len(bars) > 0:
+            # Get price from 24 hours ago (or oldest available)
+            price_24h_ago = bars[0]["open"] if bars else current_price
+            change_24h = current_price - price_24h_ago
+            change_percent_24h = (change_24h / price_24h_ago * 100) if price_24h_ago else 0
+
+            # Calculate 24h high/low/volume
+            high_24h = max(bar["high"] for bar in bars)
+            low_24h = min(bar["low"] for bar in bars)
+            volume_24h = sum(bar["volume"] for bar in bars)
+
+        return {
+            "symbol": symbol,
+            "price": current_price,
+            "bid_price": bid_price,
+            "ask_price": ask_price,
+            "bid_size": float(quote.get("bs", 0)),
+            "ask_size": float(quote.get("as", 0)),
+            "timestamp": quote.get("t"),
+            "mid_price": current_price,
+            # 24h stats for frontend
+            "change_24h": change_24h,
+            "change_percent_24h": change_percent_24h,
+            "high_24h": high_24h,
+            "low_24h": low_24h,
+            "volume_24h": volume_24h,
+        }
 
     async def get_crypto_bars(
         self,

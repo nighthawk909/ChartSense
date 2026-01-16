@@ -37,6 +37,7 @@ export default function Crypto() {
   const [marketStatus, setMarketStatus] = useState<MarketStatus | null>(null)
   const [selectedCrypto, setSelectedCrypto] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [lastUpdated, setLastUpdated] = useState<Date | null>(null)
 
   const fetchMarketStatus = async () => {
     try {
@@ -84,7 +85,9 @@ export default function Crypto() {
     })
 
     if (Object.keys(newQuotes).length === 0) {
-      setError('Unable to fetch crypto prices. Make sure the API is running.')
+      setError('Unable to fetch crypto prices. Make sure the API is running and Alpaca credentials are configured.')
+    } else {
+      setLastUpdated(new Date())
     }
 
     setQuotes(newQuotes)
@@ -136,7 +139,17 @@ export default function Crypto() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold">Cryptocurrency</h1>
-          <p className="text-slate-400">24/7 crypto markets via Alpaca</p>
+          <div className="flex items-center gap-3">
+            <p className="text-slate-400">24/7 crypto markets via Alpaca</p>
+            {lastUpdated && (
+              <div className="flex items-center gap-1.5">
+                <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></span>
+                <span className="text-xs text-green-400">
+                  Updated {lastUpdated.toLocaleTimeString()}
+                </span>
+              </div>
+            )}
+          </div>
         </div>
         <div className="flex items-center gap-4">
           {marketStatus && (

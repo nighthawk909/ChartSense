@@ -227,8 +227,36 @@ class BotSettings(BaseModel):
         description="Maximum daily loss before bot pauses"
     )
     default_stop_loss_pct: float = Field(
-        0.05, ge=0.02, le=0.15,
+        0.05, ge=0.01, le=0.20,
         description="Default stop loss percentage"
+    )
+    default_take_profit_pct: float = Field(
+        0.10, ge=0.02, le=0.50,
+        description="Default take profit percentage"
+    )
+
+    # Exit Strategies
+    trailing_stop_enabled: bool = Field(
+        False, description="Enable trailing stop loss"
+    )
+    trailing_stop_pct: float = Field(
+        0.03, ge=0.01, le=0.10,
+        description="Trailing stop percentage from peak"
+    )
+    trailing_stop_activation_pct: float = Field(
+        0.05, ge=0.02, le=0.20,
+        description="Profit percentage to activate trailing stop"
+    )
+    partial_profit_enabled: bool = Field(
+        False, description="Enable partial profit taking"
+    )
+    partial_profit_pct: float = Field(
+        0.50, ge=0.25, le=0.75,
+        description="Portion of position to sell at partial target"
+    )
+    partial_profit_at: float = Field(
+        0.05, ge=0.02, le=0.25,
+        description="Profit percentage to trigger partial sell"
     )
 
     # Strategy parameters
@@ -249,6 +277,50 @@ class BotSettings(BaseModel):
     paper_trading: bool = Field(False, description="Use paper trading (simulated)")
     trading_hours_only: bool = Field(True, description="Only trade during market hours")
     auto_optimize: bool = Field(True, description="Enable self-optimization")
+
+    # Profit Reinvestment
+    reinvest_profits: bool = Field(
+        True, description="Reinvest profits back into trading"
+    )
+    compounding_enabled: bool = Field(
+        True, description="Enable compound growth (increase position sizes with equity growth)"
+    )
+
+    # Intraday Trading
+    intraday_enabled: bool = Field(
+        False, description="Enable intraday (day trading) mode"
+    )
+    intraday_timeframe: str = Field(
+        "5min", description="Timeframe for intraday analysis (1min, 5min, 15min, 30min, 1hour)"
+    )
+    max_trades_per_day: int = Field(
+        10, ge=1, le=50, description="Maximum trades per day in intraday mode"
+    )
+
+    # Auto Trade Mode (AI controlled)
+    auto_trade_mode: bool = Field(
+        False, description="Let AI control trading parameters"
+    )
+    ai_risk_tolerance: str = Field(
+        "moderate", description="AI risk tolerance (conservative, moderate, aggressive)"
+    )
+
+    # Broker
+    broker: str = Field(
+        "alpaca", description="Active broker (alpaca, robinhood, fidelity)"
+    )
+
+    # Crypto Trading
+    crypto_trading_enabled: bool = Field(
+        False, description="Enable cryptocurrency trading (24/7)"
+    )
+    crypto_symbols: List[str] = Field(
+        default=["BTC/USD", "ETH/USD"],
+        description="Crypto pairs to trade"
+    )
+    crypto_max_positions: int = Field(
+        2, ge=1, le=10, description="Maximum concurrent crypto positions"
+    )
 
 
 class BotSettingsResponse(BaseModel):

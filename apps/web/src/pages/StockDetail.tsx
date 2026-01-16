@@ -60,8 +60,11 @@ export default function StockDetail() {
   const [loading, setLoading] = useState(true)
   const [chartType, setChartType] = useState<'candlestick' | 'line'>('candlestick')
   const [period, setPeriod] = useState('1M')
+  const [interval, setInterval] = useState<'1min' | '5min' | '15min' | '30min' | '60min' | 'daily'>('daily')
   const [watchlisted, setWatchlisted] = useState(false)
   const [refreshing, setRefreshing] = useState(false)
+  const [lastQuoteUpdate, setLastQuoteUpdate] = useState<Date | null>(null)
+  const [secondsAgo, setSecondsAgo] = useState(0)
 
   const fetchQuote = async () => {
     if (!symbol) return
@@ -70,6 +73,8 @@ export default function StockDetail() {
       if (response.ok) {
         const data = await response.json()
         setQuote(data)
+        setLastQuoteUpdate(new Date())
+        setSecondsAgo(0)
       }
     } catch (error) {
       console.error('Failed to fetch quote:', error)
@@ -161,8 +166,17 @@ export default function StockDetail() {
     Promise.all([fetchQuote(), fetchTechnicals(), fetchAdvancedAnalysis()])
       .finally(() => setLoading(false))
 
-    const interval = setInterval(fetchQuote, 30000)
-    return () => clearInterval(interval)
+    const quoteInterval = window.setInterval(fetchQuote, 30000)
+
+    // Update "seconds ago" counter every second
+    const timerInterval = window.setInterval(() => {
+      setSecondsAgo(prev => prev + 1)
+    }, 1000)
+
+    return () => {
+      clearInterval(quoteInterval)
+      clearInterval(timerInterval)
+    }
   }, [symbol])
 
   if (loading) {
@@ -200,9 +214,17 @@ export default function StockDetail() {
               <RefreshCw className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} />
             </button>
           </div>
-          <p className="text-slate-400">
-            Last updated: {quote?.latest_trading_day || 'N/A'}
-          </p>
+          <div className="flex items-center gap-3 mt-1">
+            <span className="text-slate-500 text-sm">Trading day: {quote?.latest_trading_day || 'N/A'}</span>
+            {lastQuoteUpdate && (
+              <div className="flex items-center gap-1.5">
+                <span className={`w-2 h-2 rounded-full ${secondsAgo < 10 ? 'bg-green-500' : secondsAgo < 30 ? 'bg-yellow-500' : 'bg-orange-500'} ${secondsAgo < 30 ? 'animate-pulse' : ''}`}></span>
+                <span className={`text-xs ${secondsAgo < 10 ? 'text-green-400' : secondsAgo < 30 ? 'text-yellow-400' : 'text-orange-400'}`}>
+                  {secondsAgo < 60 ? `${secondsAgo}s ago` : `${Math.floor(secondsAgo / 60)}m ago`}
+                </span>
+              </div>
+            )}
+          </div>
         </div>
         <div className="text-right">
           <p className="text-3xl font-bold">${quote?.price?.toFixed(2) || '—'}</p>
@@ -221,41 +243,72 @@ export default function StockDetail() {
         {/* Chart */}
         <div className="col-span-2 space-y-6">
           <div className="bg-slate-800 rounded-lg p-4 border border-slate-700">
-            <div className="flex items-center justify-between mb-4">
-              <div className="flex gap-2">
-                {['1D', '1W', '1M', '3M', '1Y', 'ALL'].map((p) => (
+            {/* Chart Controls */}
+            <div className="flex flex-col gap-3 mb-4">
+              {/* Interval selector (granularity) */}
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-slate-400 w-16">Interval:</span>
+                <div className="flex gap-1">
+                  {[
+                    { value: '1min', label: '1m' },
+                    { value: '5min', label: '5m' },
+                    { value: '15min', label: '15m' },
+                    { value: '30min', label: '30m' },
+                    { value: '60min', label: '1h' },
+                    { value: 'daily', label: '1D' },
+                  ].map((i) => (
+                    <button
+                      key={i.value}
+                      onClick={() => setInterval(i.value as typeof interval)}
+                      className={`px-2 py-1 text-xs rounded transition-colors ${
+                        interval === i.value ? 'bg-green-600 text-white' : 'bg-slate-700 hover:bg-slate-600'
+                      }`}
+                    >
+                      {i.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              {/* Period and chart type */}
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-slate-400 w-16">Period:</span>
+                  <div className="flex gap-1">
+                    {['1D', '1W', '1M', '3M', '1Y', 'ALL'].map((p) => (
+                      <button
+                        key={p}
+                        onClick={() => setPeriod(p)}
+                        className={`px-2 py-1 text-xs rounded transition-colors ${
+                          period === p ? 'bg-blue-600 text-white' : 'bg-slate-700 hover:bg-slate-600'
+                        }`}
+                      >
+                        {p}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <div className="flex gap-2">
                   <button
-                    key={p}
-                    onClick={() => setPeriod(p)}
+                    onClick={() => setChartType('candlestick')}
                     className={`px-3 py-1 text-sm rounded transition-colors ${
-                      period === p ? 'bg-blue-600 text-white' : 'bg-slate-700 hover:bg-slate-600'
+                      chartType === 'candlestick' ? 'bg-blue-600 text-white' : 'bg-slate-700 hover:bg-slate-600'
                     }`}
                   >
-                    {p}
+                    Candlestick
                   </button>
-                ))}
-              </div>
-              <div className="flex gap-2">
-                <button
-                  onClick={() => setChartType('candlestick')}
-                  className={`px-3 py-1 text-sm rounded transition-colors ${
-                    chartType === 'candlestick' ? 'bg-blue-600 text-white' : 'bg-slate-700 hover:bg-slate-600'
-                  }`}
-                >
-                  Candlestick
-                </button>
-                <button
-                  onClick={() => setChartType('line')}
-                  className={`px-3 py-1 text-sm rounded transition-colors ${
-                    chartType === 'line' ? 'bg-blue-600 text-white' : 'bg-slate-700 hover:bg-slate-600'
-                  }`}
-                >
-                  Line
-                </button>
+                  <button
+                    onClick={() => setChartType('line')}
+                    className={`px-3 py-1 text-sm rounded transition-colors ${
+                      chartType === 'line' ? 'bg-blue-600 text-white' : 'bg-slate-700 hover:bg-slate-600'
+                    }`}
+                  >
+                    Line
+                  </button>
+                </div>
               </div>
             </div>
             <div className="h-96">
-              <StockChart symbol={symbol || 'AAPL'} chartType={chartType} period={period} />
+              <StockChart symbol={symbol || 'AAPL'} chartType={chartType} period={period} interval={interval} />
             </div>
           </div>
 

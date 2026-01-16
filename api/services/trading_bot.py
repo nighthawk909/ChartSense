@@ -21,6 +21,7 @@ from .strategy_engine import StrategyEngine, SignalType, TradeType
 from .risk_manager import RiskManager
 from .indicators import IndicatorService
 from .ai_advisor import get_ai_advisor
+from .crypto_service import CryptoService
 from database.models import Trade, Position, BotConfiguration, StockRepository, UserWatchlist
 from database.connection import SessionLocal
 
@@ -79,6 +80,37 @@ class TradingBot:
         self.cycle_interval_seconds = 60  # How often to run analysis
         self.use_ai_discovery = True  # Use AI to discover stocks
         self.last_discovery_time: Optional[datetime] = None
+
+        # Exit Strategy Settings
+        self.trailing_stop_enabled = False
+        self.trailing_stop_pct = 0.03
+        self.trailing_stop_activation_pct = 0.05
+        self.partial_profit_enabled = False
+        self.partial_profit_pct = 0.50  # Portion to sell
+        self.partial_profit_at = 0.05  # Profit level to trigger
+
+        # Profit Reinvestment
+        self.reinvest_profits = True
+        self.compounding_enabled = True
+
+        # Intraday Settings
+        self.intraday_enabled = False
+        self.intraday_timeframe = "5min"
+        self.max_trades_per_day = 10
+        self.trades_today = 0
+
+        # Auto Trade Mode
+        self.auto_trade_mode = False
+        self.ai_risk_tolerance = "moderate"
+
+        # Crypto Trading Settings
+        self.crypto_trading_enabled = False
+        self.crypto_symbols: List[str] = ["BTC/USD", "ETH/USD"]
+        self.crypto_max_positions = 2
+        self._crypto_positions: Dict[str, Dict] = {}  # Track crypto positions
+
+        # Track partial sells
+        self._partial_sold: Dict[str, bool] = {}  # Symbol -> has taken partial profit
 
         # Stock repository
         self._stock_scores: Dict[str, float] = {}  # Symbol -> last score
@@ -190,6 +222,88 @@ class TradingBot:
             self.risk_manager.risk_per_trade_pct = config["risk_per_trade_pct"]
         if "max_daily_loss_pct" in config:
             self.risk_manager.max_daily_loss_pct = config["max_daily_loss_pct"]
+        if "default_stop_loss_pct" in config:
+            self.risk_manager.default_stop_loss_pct = config["default_stop_loss_pct"]
+
+        # Exit Strategies
+        if "trailing_stop_enabled" in config:
+            self.trailing_stop_enabled = config["trailing_stop_enabled"]
+        if "trailing_stop_pct" in config:
+            self.trailing_stop_pct = config["trailing_stop_pct"]
+        if "trailing_stop_activation_pct" in config:
+            self.trailing_stop_activation_pct = config["trailing_stop_activation_pct"]
+        if "partial_profit_enabled" in config:
+            self.partial_profit_enabled = config["partial_profit_enabled"]
+        if "partial_profit_pct" in config:
+            self.partial_profit_pct = config["partial_profit_pct"]
+        if "partial_profit_at" in config:
+            self.partial_profit_at = config["partial_profit_at"]
+
+        # Profit Reinvestment
+        if "reinvest_profits" in config:
+            self.reinvest_profits = config["reinvest_profits"]
+        if "compounding_enabled" in config:
+            self.compounding_enabled = config["compounding_enabled"]
+
+        # Intraday
+        if "intraday_enabled" in config:
+            self.intraday_enabled = config["intraday_enabled"]
+        if "intraday_timeframe" in config:
+            self.intraday_timeframe = config["intraday_timeframe"]
+        if "max_trades_per_day" in config:
+            self.max_trades_per_day = config["max_trades_per_day"]
+
+        # Auto Trade Mode
+        if "auto_trade_mode" in config:
+            self.auto_trade_mode = config["auto_trade_mode"]
+        if "ai_risk_tolerance" in config:
+            self.ai_risk_tolerance = config["ai_risk_tolerance"]
+            # Apply AI risk tolerance presets
+            if self.auto_trade_mode:
+                self._apply_ai_risk_preset(config["ai_risk_tolerance"])
+
+        # Crypto Trading
+        if "crypto_trading_enabled" in config:
+            self.crypto_trading_enabled = config["crypto_trading_enabled"]
+        if "crypto_symbols" in config:
+            self.crypto_symbols = config["crypto_symbols"]
+        if "crypto_max_positions" in config:
+            self.crypto_max_positions = config["crypto_max_positions"]
+
+    def _apply_ai_risk_preset(self, risk_level: str):
+        """Apply AI-controlled risk presets based on risk tolerance"""
+        presets = {
+            "conservative": {
+                "risk_per_trade_pct": 0.01,
+                "max_positions": 3,
+                "entry_threshold": 80.0,
+                "trailing_stop_pct": 0.02,
+                "partial_profit_at": 0.03,
+            },
+            "moderate": {
+                "risk_per_trade_pct": 0.02,
+                "max_positions": 5,
+                "entry_threshold": 70.0,
+                "trailing_stop_pct": 0.03,
+                "partial_profit_at": 0.05,
+            },
+            "aggressive": {
+                "risk_per_trade_pct": 0.03,
+                "max_positions": 8,
+                "entry_threshold": 65.0,
+                "trailing_stop_pct": 0.05,
+                "partial_profit_at": 0.08,
+            },
+        }
+
+        preset = presets.get(risk_level, presets["moderate"])
+        self.risk_manager.risk_per_trade_pct = preset["risk_per_trade_pct"]
+        self.risk_manager.max_positions = preset["max_positions"]
+        self.strategy.entry_threshold = preset["entry_threshold"]
+        self.trailing_stop_pct = preset["trailing_stop_pct"]
+        self.partial_profit_at = preset["partial_profit_at"]
+
+        logger.info(f"Applied AI risk preset: {risk_level}")
 
     async def _load_db_config(self):
         """Load configuration from database including user watchlist and stock repository"""
@@ -214,7 +328,38 @@ class TradingBot:
                 self.risk_manager.max_daily_loss_pct = config.max_daily_loss_pct
                 self.risk_manager.default_stop_loss_pct = config.default_stop_loss_pct
 
+                # Exit Strategies
+                self.trailing_stop_enabled = getattr(config, 'trailing_stop_enabled', False)
+                self.trailing_stop_pct = getattr(config, 'trailing_stop_pct', 0.03)
+                self.trailing_stop_activation_pct = getattr(config, 'trailing_stop_activation_pct', 0.05)
+                self.partial_profit_enabled = getattr(config, 'partial_profit_enabled', False)
+                self.partial_profit_pct = getattr(config, 'partial_profit_pct', 0.50)
+                self.partial_profit_at = getattr(config, 'partial_profit_at', 0.05)
+
+                # Profit Reinvestment
+                self.reinvest_profits = getattr(config, 'reinvest_profits', True)
+                self.compounding_enabled = getattr(config, 'compounding_enabled', True)
+
+                # Intraday
+                self.intraday_enabled = getattr(config, 'intraday_enabled', False)
+                self.intraday_timeframe = getattr(config, 'intraday_timeframe', "5min")
+                self.max_trades_per_day = getattr(config, 'max_trades_per_day', 10)
+
+                # Auto Trade Mode
+                self.auto_trade_mode = getattr(config, 'auto_trade_mode', False)
+                self.ai_risk_tolerance = getattr(config, 'ai_risk_tolerance', "moderate")
+
+                if self.auto_trade_mode:
+                    self._apply_ai_risk_preset(self.ai_risk_tolerance)
+
+                # Crypto Trading
+                self.crypto_trading_enabled = getattr(config, 'crypto_trading_enabled', False)
+                self.crypto_symbols = getattr(config, 'crypto_symbols', ["BTC/USD", "ETH/USD"])
+                self.crypto_max_positions = getattr(config, 'crypto_max_positions', 2)
+
                 logger.info(f"Loaded config '{config.name}' from database")
+                if self.crypto_trading_enabled:
+                    logger.info(f"Crypto trading enabled for: {self.crypto_symbols}")
 
             # Load user watchlist (highest priority stocks)
             user_stocks = db.query(UserWatchlist).filter(UserWatchlist.auto_trade == True).all()
@@ -281,14 +426,26 @@ class TradingBot:
 
                 # Determine what to do based on session
                 if self.current_session in ["overnight", "weekend"]:
-                    # Can't trade, but stay active - do analysis and discovery
+                    # Can't trade stocks, but stay active - do analysis and discovery
                     self.current_cycle = "off_hours_analysis"
                     await self._run_off_hours_cycle()
+
+                    # Crypto trades 24/7 - run crypto cycle even during stock market off hours!
+                    if self.crypto_trading_enabled:
+                        self.current_cycle = "crypto_trading"
+                        await self._run_crypto_cycle()
+
                     await asyncio.sleep(300)  # Check every 5 minutes during off hours
 
                 elif self.current_session == "regular":
                     # Normal trading hours - full trading cycle
                     await self._run_trading_cycle(extended_hours=False)
+
+                    # Also run crypto if enabled (crypto is 24/7)
+                    if self.crypto_trading_enabled:
+                        self.current_cycle = "crypto_trading"
+                        await self._run_crypto_cycle()
+
                     await asyncio.sleep(self.cycle_interval_seconds)
 
                 elif self.current_session in ["pre_market", "after_hours"]:
@@ -298,11 +455,19 @@ class TradingBot:
                     else:
                         self.current_cycle = "extended_hours_waiting"
                         await self._run_off_hours_cycle()
+
+                    # Crypto trades 24/7
+                    if self.crypto_trading_enabled:
+                        self.current_cycle = "crypto_trading"
+                        await self._run_crypto_cycle()
+
                     await asyncio.sleep(self.cycle_interval_seconds * 2)  # Slower during extended
 
                 else:
-                    # Unknown session - be cautious
+                    # Unknown session - be cautious, but still do crypto if enabled
                     self.current_cycle = "unknown_session"
+                    if self.crypto_trading_enabled:
+                        await self._run_crypto_cycle()
                     await asyncio.sleep(60)
 
             except asyncio.CancelledError:
@@ -525,7 +690,7 @@ class TradingBot:
             return None
 
     async def _check_exit_signals(self, positions: List[Dict]):
-        """Check existing positions for exit signals"""
+        """Check existing positions for exit signals including trailing stops and partial profits"""
         for pos in positions:
             symbol = pos["symbol"]
 
@@ -533,9 +698,9 @@ class TradingBot:
                 # Get our tracked position data from database
                 db = SessionLocal()
                 db_position = db.query(Position).filter(Position.symbol == symbol).first()
-                db.close()
 
                 if not db_position:
+                    db.close()
                     logger.warning(f"Position {symbol} not in database, skipping exit check")
                     continue
 
@@ -543,6 +708,7 @@ class TradingBot:
                 bars = await self.alpaca.get_bars(symbol, timeframe="1day", limit=100)
 
                 if len(bars) < 20:
+                    db.close()
                     continue
 
                 prices = [b["close"] for b in bars]
@@ -550,17 +716,65 @@ class TradingBot:
                 lows = [b["low"] for b in bars]
                 volumes = [b["volume"] for b in bars]
 
+                entry_price = db_position.entry_price
+                current_price = pos["current_price"]
+                current_pnl_pct = (current_price - entry_price) / entry_price
+
+                # Check for partial profit taking first
+                if (self.partial_profit_enabled and
+                    current_pnl_pct >= self.partial_profit_at and
+                    symbol not in self._partial_sold):
+
+                    partial_qty = int(pos["quantity"] * self.partial_profit_pct)
+                    if partial_qty > 0:
+                        logger.info(f"Taking partial profit on {symbol}: {partial_qty} shares at {current_pnl_pct*100:.1f}% profit")
+                        await self._execute_partial_exit(symbol, partial_qty, "PARTIAL_PROFIT")
+                        self._partial_sold[symbol] = True
+                        db.close()
+                        continue
+
+                # Check trailing stop logic
+                current_stop = db_position.stop_loss_price or entry_price * 0.95
+
+                if self.trailing_stop_enabled:
+                    # Activate trailing stop when profit threshold is reached
+                    if current_pnl_pct >= self.trailing_stop_activation_pct:
+                        new_stop = self.risk_manager.calculate_trailing_stop(
+                            entry_price=entry_price,
+                            current_price=current_price,
+                            current_stop=current_stop,
+                            trailing_pct=self.trailing_stop_pct,
+                        )
+
+                        if new_stop > current_stop:
+                            # Update stop loss in database
+                            db_position.stop_loss_price = new_stop
+                            db_position.trailing_stop_pct = self.trailing_stop_pct
+                            db.commit()
+                            current_stop = new_stop
+                            logger.info(f"Trailing stop updated for {symbol}: ${new_stop:.2f}")
+
+                # Check if trailing stop is hit
+                if current_price <= current_stop:
+                    db.close()
+                    await self._execute_exit(symbol, pos["quantity"], "TRAILING_STOP")
+                    # Clean up partial sold tracking
+                    self._partial_sold.pop(symbol, None)
+                    continue
+
+                db.close()
+
                 # Calculate days held
                 entry_time = db_position.entry_time
                 days_held = (datetime.now() - entry_time).days
 
-                # Check exit conditions
+                # Check standard exit conditions
                 should_exit, exit_reason = self.strategy.should_exit(
                     symbol=symbol,
-                    entry_price=db_position.entry_price,
-                    current_price=pos["current_price"],
-                    stop_loss=db_position.stop_loss_price or db_position.entry_price * 0.95,
-                    profit_target=db_position.profit_target_price or db_position.entry_price * 1.10,
+                    entry_price=entry_price,
+                    current_price=current_price,
+                    stop_loss=current_stop,
+                    profit_target=db_position.profit_target_price or entry_price * 1.10,
                     trade_type=TradeType(db_position.trade_type) if db_position.trade_type else TradeType.SWING,
                     entry_time_days=days_held,
                     prices=prices,
@@ -571,6 +785,8 @@ class TradingBot:
 
                 if should_exit:
                     await self._execute_exit(symbol, pos["quantity"], exit_reason)
+                    # Clean up partial sold tracking
+                    self._partial_sold.pop(symbol, None)
 
             except Exception as e:
                 logger.error(f"Error checking exit for {symbol}: {e}")
@@ -670,6 +886,68 @@ class TradingBot:
             logger.error(f"Failed to execute entry for {symbol}: {e}")
             raise
 
+    async def _execute_partial_exit(self, symbol: str, quantity: int, reason: str):
+        """Execute partial exit trade (for partial profit taking)"""
+        try:
+            logger.info(f"PARTIAL EXIT: {symbol} - {quantity} shares (reason: {reason})")
+
+            # Submit partial sell order
+            order = await self.alpaca.submit_market_order(
+                symbol=symbol,
+                quantity=quantity,
+                side="sell",
+                time_in_force="day"
+            )
+
+            # Wait for fill
+            exit_price = None
+            for _ in range(10):
+                await asyncio.sleep(1)
+                order_status = await self.alpaca.get_order(order["id"])
+                if order_status and order_status["status"] == "filled":
+                    exit_price = order_status["filled_avg_price"]
+                    break
+
+            # Update database - reduce position quantity
+            db = SessionLocal()
+            try:
+                position = db.query(Position).filter(Position.symbol == symbol).first()
+                if position:
+                    position.quantity -= quantity
+
+                # Record partial trade
+                trade = Trade(
+                    symbol=symbol,
+                    side="SELL",
+                    quantity=quantity,
+                    entry_price=position.entry_price if position else 0,
+                    entry_time=position.entry_time if position else datetime.now(),
+                    exit_price=exit_price,
+                    exit_time=datetime.now(),
+                    exit_order_id=order["id"],
+                    exit_reason=reason,
+                    profit_loss=(exit_price - position.entry_price) * quantity if position and exit_price else 0,
+                    profit_loss_pct=(exit_price - position.entry_price) / position.entry_price if position and exit_price else 0,
+                    strategy_name="default",
+                    trade_type="PARTIAL",
+                )
+                db.add(trade)
+                db.commit()
+
+                # Record P&L for risk manager
+                if trade.profit_loss:
+                    self.risk_manager.record_trade_pnl(trade.profit_loss)
+
+            finally:
+                db.close()
+
+            self.last_trade_time = datetime.now()
+            logger.info(f"Partial exit executed: {symbol} {quantity} shares @ ${exit_price:.2f if exit_price else 'N/A'} ({reason})")
+
+        except Exception as e:
+            logger.error(f"Failed to execute partial exit for {symbol}: {e}")
+            raise
+
     async def _execute_exit(self, symbol: str, quantity: float, reason: str):
         """Execute exit trade"""
         try:
@@ -749,7 +1027,178 @@ class TradingBot:
             "ready_stocks": self._ready_stocks,  # Stocks ready for entry
             "ai_enabled": self.ai_advisor.enabled,
             "last_discovery_time": self.last_discovery_time.isoformat() if self.last_discovery_time else None,
+            # Exit strategy settings
+            "trailing_stop_enabled": self.trailing_stop_enabled,
+            "trailing_stop_pct": self.trailing_stop_pct,
+            "partial_profit_enabled": self.partial_profit_enabled,
+            "partial_profit_pct": self.partial_profit_pct,
+            # Profit reinvestment
+            "reinvest_profits": self.reinvest_profits,
+            "compounding_enabled": self.compounding_enabled,
+            # Intraday
+            "intraday_enabled": self.intraday_enabled,
+            "intraday_timeframe": self.intraday_timeframe,
+            "trades_today": self.trades_today,
+            "max_trades_per_day": self.max_trades_per_day,
+            # Auto trade
+            "auto_trade_mode": self.auto_trade_mode,
+            "ai_risk_tolerance": self.ai_risk_tolerance,
+            # Crypto trading
+            "crypto_trading_enabled": self.crypto_trading_enabled,
+            "crypto_symbols": self.crypto_symbols,
+            "crypto_max_positions": self.crypto_max_positions,
+            "crypto_positions": len(self._crypto_positions),
         }
+
+    async def _run_crypto_cycle(self):
+        """
+        Run crypto trading cycle.
+        Crypto markets are 24/7, so this runs regardless of stock market hours.
+        Uses the same risk parameters as stocks (as requested by user).
+        """
+        logger.debug("Running crypto trading cycle...")
+
+        try:
+            # Initialize crypto service
+            crypto_service = CryptoService()
+
+            # Get current account to check buying power
+            account = await self.alpaca.get_account()
+            buying_power = float(account.get("buying_power", 0))
+
+            # Get current crypto positions from Alpaca
+            positions = await self.alpaca.get_positions()
+            current_crypto_positions = {}
+            for pos in positions:
+                symbol = pos.get("symbol", "")
+                # Crypto symbols in Alpaca contain "/" like "BTC/USD"
+                if "/" in symbol or symbol.endswith("USD") and len(symbol) <= 7:
+                    current_crypto_positions[symbol] = pos
+
+            self._crypto_positions = current_crypto_positions
+            num_crypto_positions = len(current_crypto_positions)
+
+            logger.debug(f"Current crypto positions: {num_crypto_positions}/{self.crypto_max_positions}")
+
+            # Check existing crypto positions for exit signals
+            for symbol, position in list(current_crypto_positions.items()):
+                try:
+                    await self._check_crypto_exit(crypto_service, symbol, position)
+                except Exception as e:
+                    logger.error(f"Error checking crypto exit for {symbol}: {e}")
+
+            # If we have room for more positions, look for entry opportunities
+            if num_crypto_positions < self.crypto_max_positions:
+                for symbol in self.crypto_symbols:
+                    if symbol in current_crypto_positions:
+                        continue  # Already have position
+
+                    try:
+                        # Analyze crypto for entry
+                        analysis = await crypto_service.analyze_crypto(symbol)
+                        if not analysis:
+                            continue
+
+                        signal = analysis.get("signal", "NEUTRAL")
+                        confidence = analysis.get("confidence", 0)
+
+                        # Use same entry threshold as stocks
+                        if signal == "BUY" and confidence >= self.strategy.entry_threshold:
+                            # Calculate position size using same risk params as stocks
+                            quote = await crypto_service.get_crypto_quote(symbol)
+                            if not quote or quote.get("price", 0) <= 0:
+                                continue
+
+                            price = quote["price"]
+
+                            # Position size based on risk per trade
+                            position_value = buying_power * self.risk_manager.risk_per_trade_pct
+                            position_value = min(position_value, buying_power * self.risk_manager.max_position_size_pct)
+
+                            if position_value < 10:  # Minimum $10 for crypto
+                                logger.debug(f"Insufficient buying power for {symbol}")
+                                continue
+
+                            # Place crypto buy order
+                            logger.info(f"Crypto BUY signal for {symbol}: confidence={confidence:.1f}, price=${price:.2f}")
+
+                            order = await crypto_service.place_crypto_order(
+                                symbol=symbol,
+                                notional=position_value,  # Dollar amount
+                                side="buy"
+                            )
+
+                            if order:
+                                logger.info(f"Crypto order placed for {symbol}: ${position_value:.2f}")
+                                num_crypto_positions += 1
+
+                                if num_crypto_positions >= self.crypto_max_positions:
+                                    break
+
+                    except Exception as e:
+                        logger.error(f"Error analyzing crypto {symbol}: {e}")
+
+            logger.debug("Crypto trading cycle complete")
+
+        except Exception as e:
+            logger.error(f"Error in crypto trading cycle: {e}")
+
+    async def _check_crypto_exit(self, crypto_service: CryptoService, symbol: str, position: Dict):
+        """Check if a crypto position should be exited"""
+        try:
+            qty = float(position.get("qty", 0))
+            entry_price = float(position.get("avg_entry_price", 0))
+            current_price = float(position.get("current_price", 0))
+            unrealized_pnl_pct = float(position.get("unrealized_plpc", 0)) * 100
+
+            if entry_price <= 0 or qty <= 0:
+                return
+
+            # Get fresh quote
+            quote = await crypto_service.get_crypto_quote(symbol)
+            if quote:
+                current_price = quote.get("price", current_price)
+                unrealized_pnl_pct = ((current_price - entry_price) / entry_price) * 100
+
+            # Check exit conditions using same parameters as stocks
+            should_exit = False
+            exit_reason = ""
+
+            # Stop loss check
+            if unrealized_pnl_pct <= -self.risk_manager.default_stop_loss_pct * 100:
+                should_exit = True
+                exit_reason = "stop_loss"
+
+            # Take profit check
+            if unrealized_pnl_pct >= self.strategy.swing_profit_target_pct * 100:
+                should_exit = True
+                exit_reason = "profit_target"
+
+            # Trailing stop check (if enabled and in profit)
+            if self.trailing_stop_enabled and unrealized_pnl_pct > self.trailing_stop_activation_pct * 100:
+                # Simple trailing stop - check if price dropped from high
+                # In production, you'd track the high watermark
+                if unrealized_pnl_pct < (self.trailing_stop_activation_pct - self.trailing_stop_pct) * 100:
+                    should_exit = True
+                    exit_reason = "trailing_stop"
+
+            if should_exit:
+                logger.info(f"Crypto EXIT signal for {symbol}: reason={exit_reason}, P&L={unrealized_pnl_pct:.2f}%")
+
+                # Place sell order
+                order = await crypto_service.place_crypto_order(
+                    symbol=symbol,
+                    qty=qty,
+                    side="sell"
+                )
+
+                if order:
+                    logger.info(f"Crypto sell order placed for {symbol}: {qty} units")
+                    if symbol in self._crypto_positions:
+                        del self._crypto_positions[symbol]
+
+        except Exception as e:
+            logger.error(f"Error checking crypto exit for {symbol}: {e}")
 
 
 # Global bot instance

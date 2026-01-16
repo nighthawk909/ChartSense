@@ -3,10 +3,13 @@ import { createChart, ColorType, IChartApi, ISeriesApi, CandlestickData, LineDat
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
 
+type TimeInterval = '1min' | '5min' | '15min' | '30min' | '60min' | 'daily' | 'weekly' | 'monthly'
+
 interface StockChartProps {
   symbol: string
   chartType?: 'candlestick' | 'line'
   period?: string
+  interval?: TimeInterval
 }
 
 interface HistoricalData {
@@ -18,11 +21,13 @@ interface HistoricalData {
   volume: number
 }
 
-export default function StockChart({ symbol, chartType = 'candlestick', period = '1M' }: StockChartProps) {
+export default function StockChart({ symbol, chartType = 'candlestick', period = '1M', interval = 'daily' }: StockChartProps) {
   const chartContainerRef = useRef<HTMLDivElement>(null)
   const chartRef = useRef<IChartApi | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [lastUpdated, setLastUpdated] = useState<Date | null>(null)
+  const [dataPoints, setDataPoints] = useState<number>(0)
 
   // Filter data based on period
   const filterByPeriod = (data: HistoricalData[], period: string): HistoricalData[] => {
@@ -85,7 +90,7 @@ export default function StockChart({ symbol, chartType = 'candlestick', period =
 
       try {
         const outputsize = ['1Y', 'ALL'].includes(period) ? 'full' : 'compact'
-        const response = await fetch(`${API_URL}/api/stocks/history/${symbol}?outputsize=${outputsize}`)
+        const response = await fetch(`${API_URL}/api/stocks/history/${symbol}?outputsize=${outputsize}&interval=${interval}`)
 
         if (!response.ok) throw new Error('Failed to fetch stock data')
 
@@ -103,6 +108,10 @@ export default function StockChart({ symbol, chartType = 'candlestick', period =
         if (sortedData.length === 0) {
           throw new Error('No data for selected period')
         }
+
+        // Track data freshness
+        setLastUpdated(new Date())
+        setDataPoints(sortedData.length)
 
         if (chartType === 'candlestick') {
           const series = chart.addCandlestickSeries({
@@ -163,7 +172,7 @@ export default function StockChart({ symbol, chartType = 'candlestick', period =
       window.removeEventListener('resize', handleResize)
       chart.remove()
     }
-  }, [symbol, chartType, period])
+  }, [symbol, chartType, period, interval])
 
   if (loading) {
     return (
@@ -181,5 +190,28 @@ export default function StockChart({ symbol, chartType = 'candlestick', period =
     )
   }
 
-  return <div ref={chartContainerRef} className="w-full" />
+  const formatLastUpdated = () => {
+    if (!lastUpdated) return ''
+    const now = new Date()
+    const diffSeconds = Math.floor((now.getTime() - lastUpdated.getTime()) / 1000)
+    if (diffSeconds < 60) return `${diffSeconds}s ago`
+    const diffMinutes = Math.floor(diffSeconds / 60)
+    if (diffMinutes < 60) return `${diffMinutes}m ago`
+    return lastUpdated.toLocaleTimeString()
+  }
+
+  return (
+    <div className="w-full">
+      <div ref={chartContainerRef} className="w-full" />
+      {lastUpdated && (
+        <div className="flex items-center justify-between mt-2 px-1 text-xs text-slate-500">
+          <span>{dataPoints} data points</span>
+          <div className="flex items-center gap-1">
+            <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></span>
+            <span>Updated {formatLastUpdated()}</span>
+          </div>
+        </div>
+      )}
+    </div>
+  )
 }
