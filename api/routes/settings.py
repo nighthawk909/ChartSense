@@ -14,6 +14,7 @@ from models.bot import (
 from database.connection import SessionLocal
 from database.models import BotConfiguration
 from services.trading_bot import get_trading_bot
+from services.alpaca_service import set_trading_mode, get_trading_mode
 
 router = APIRouter()
 
@@ -213,6 +214,8 @@ async def update_settings(request: UpdateSettingsRequest):
             config.longterm_profit_target_pct = settings.longterm_profit_target_pct
             # Behavior
             config.paper_trading = settings.paper_trading
+            # Update global trading mode for Alpaca service
+            set_trading_mode(settings.paper_trading)
             config.trading_hours_only = settings.trading_hours_only
             config.auto_optimize = settings.auto_optimize
             # Profit Reinvestment
@@ -435,3 +438,50 @@ async def apply_preset(preset_name: str):
         }
     finally:
         db.close()
+
+
+@router.get("/trading-mode")
+async def get_trading_mode_status():
+    """
+    Get current trading mode (paper or live).
+    Also returns account info to show which mode is active.
+    """
+    from services.alpaca_service import get_alpaca_service
+
+    is_paper = get_trading_mode()
+    alpaca = get_alpaca_service(paper_trading=is_paper)
+
+    account_info = {}
+    try:
+        account = await alpaca.get_account()
+        account_info = {
+            "equity": account.get("equity"),
+            "cash": account.get("cash"),
+            "buying_power": account.get("buying_power"),
+        }
+    except Exception as e:
+        account_info = {"error": str(e)}
+
+    return {
+        "paper_trading": is_paper,
+        "mode": "paper" if is_paper else "live",
+        "mode_label": "Paper Trading" if is_paper else "LIVE Trading",
+        "account": account_info,
+    }
+
+
+@router.post("/trading-mode")
+async def set_trading_mode_endpoint(paper_trading: bool):
+    """
+    Switch between paper and live trading mode.
+
+    WARNING: Switching to live mode will use real money!
+    """
+    set_trading_mode(paper_trading)
+
+    return {
+        "success": True,
+        "paper_trading": paper_trading,
+        "mode": "paper" if paper_trading else "live",
+        "message": f"Switched to {'paper' if paper_trading else 'LIVE'} trading mode",
+    }

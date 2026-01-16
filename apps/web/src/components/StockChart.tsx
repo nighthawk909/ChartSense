@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { createChart, ColorType, IChartApi } from 'lightweight-charts'
+import { createChart, ColorType, IChartApi, UTCTimestamp } from 'lightweight-charts'
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
 
@@ -21,6 +21,17 @@ interface HistoricalData {
   volume: number
 }
 
+// Convert date string to timestamp for lightweight-charts
+// Handles both "YYYY-MM-DD" and ISO "YYYY-MM-DDTHH:MM:SSZ" formats
+const parseTimestamp = (dateStr: string): UTCTimestamp => {
+  // For ISO timestamps (intraday), convert to Unix seconds
+  if (dateStr.includes('T')) {
+    return Math.floor(new Date(dateStr).getTime() / 1000) as UTCTimestamp
+  }
+  // For date-only strings (daily), return as-is (lightweight-charts accepts YYYY-MM-DD)
+  return dateStr as unknown as UTCTimestamp
+}
+
 export default function StockChart({ symbol, chartType = 'candlestick', period = '1M', interval = 'daily' }: StockChartProps) {
   const chartContainerRef = useRef<HTMLDivElement>(null)
   const chartRef = useRef<IChartApi | null>(null)
@@ -28,6 +39,7 @@ export default function StockChart({ symbol, chartType = 'candlestick', period =
   const [error, setError] = useState<string | null>(null)
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null)
   const [dataPoints, setDataPoints] = useState<number>(0)
+  const [chartData, setChartData] = useState<HistoricalData[] | null>(null)
 
   // Filter data based on period
   const filterByPeriod = (data: HistoricalData[], period: string): HistoricalData[] => {
@@ -58,10 +70,71 @@ export default function StockChart({ symbol, chartType = 'candlestick', period =
     return data.filter(item => new Date(item.date) >= cutoffDate)
   }
 
+  // Effect 1: Fetch data
   useEffect(() => {
-    if (!chartContainerRef.current) return
+    let isCancelled = false
 
-    // Create chart
+    const fetchData = async () => {
+      setLoading(true)
+      setError(null)
+      setChartData(null)
+
+      try {
+        const outputsize = ['1Y', 'ALL'].includes(period) ? 'full' : 'compact'
+        const response = await fetch(`${API_URL}/api/stocks/history/${symbol}?outputsize=${outputsize}&interval=${interval}`)
+
+        if (!response.ok) throw new Error('Failed to fetch stock data')
+
+        const data = await response.json()
+        if (!data.history || data.history.length === 0) {
+          throw new Error('No historical data available')
+        }
+
+        if (isCancelled) return
+
+        // Filter and sort
+        const filteredData = filterByPeriod(data.history, period)
+        const sortedData = [...filteredData].sort((a: HistoricalData, b: HistoricalData) =>
+          new Date(a.date).getTime() - new Date(b.date).getTime()
+        )
+
+        if (sortedData.length === 0) {
+          throw new Error('No data for selected period')
+        }
+
+        setChartData(sortedData)
+        setLastUpdated(new Date())
+        setDataPoints(sortedData.length)
+      } catch (err) {
+        if (!isCancelled) {
+          console.error('Chart error:', err)
+          setError(err instanceof Error ? err.message : 'Failed to load chart')
+        }
+      } finally {
+        if (!isCancelled) {
+          setLoading(false)
+        }
+      }
+    }
+
+    fetchData()
+
+    return () => {
+      isCancelled = true
+    }
+  }, [symbol, period, interval])
+
+  // Effect 2: Create/update chart when data is ready
+  useEffect(() => {
+    if (!chartContainerRef.current || !chartData || chartData.length === 0) return
+
+    // Clean up previous chart
+    if (chartRef.current) {
+      chartRef.current.remove()
+      chartRef.current = null
+    }
+
+    // Create new chart
     const chart = createChart(chartContainerRef.current, {
       layout: {
         background: { type: ColorType.Solid, color: 'transparent' },
@@ -83,84 +156,47 @@ export default function StockChart({ symbol, chartType = 'candlestick', period =
 
     chartRef.current = chart
 
-    // Load data
-    const loadChart = async () => {
-      setLoading(true)
-      setError(null)
-
-      try {
-        const outputsize = ['1Y', 'ALL'].includes(period) ? 'full' : 'compact'
-        const response = await fetch(`${API_URL}/api/stocks/history/${symbol}?outputsize=${outputsize}&interval=${interval}`)
-
-        if (!response.ok) throw new Error('Failed to fetch stock data')
-
-        const data = await response.json()
-        if (!data.history || data.history.length === 0) {
-          throw new Error('No historical data available')
-        }
-
-        // Filter and sort
-        const filteredData = filterByPeriod(data.history, period)
-        const sortedData = [...filteredData].sort((a: HistoricalData, b: HistoricalData) =>
-          new Date(a.date).getTime() - new Date(b.date).getTime()
-        )
-
-        if (sortedData.length === 0) {
-          throw new Error('No data for selected period')
-        }
-
-        // Track data freshness
-        setLastUpdated(new Date())
-        setDataPoints(sortedData.length)
-
-        if (chartType === 'candlestick') {
-          const series = chart.addCandlestickSeries({
-            upColor: '#22c55e',
-            downColor: '#ef4444',
-            borderDownColor: '#ef4444',
-            borderUpColor: '#22c55e',
-            wickDownColor: '#ef4444',
-            wickUpColor: '#22c55e',
-          })
-          series.setData(sortedData.map((d: HistoricalData) => ({
-            time: d.date,
-            open: d.open,
-            high: d.high,
-            low: d.low,
-            close: d.close,
-          })))
-        } else {
-          const series = chart.addLineSeries({ color: '#3b82f6', lineWidth: 2 })
-          series.setData(sortedData.map((d: HistoricalData) => ({
-            time: d.date,
-            value: d.close,
-          })))
-        }
-
-        // Volume
-        const volumeSeries = chart.addHistogramSeries({
-          color: '#3b82f6',
-          priceFormat: { type: 'volume' },
-          priceScaleId: '',
-        })
-        volumeSeries.priceScale().applyOptions({ scaleMargins: { top: 0.8, bottom: 0 } })
-        volumeSeries.setData(sortedData.map((d: HistoricalData) => ({
-          time: d.date,
-          value: d.volume,
-          color: d.close >= d.open ? '#22c55e40' : '#ef444440',
-        })))
-
-        chart.timeScale().fitContent()
-      } catch (err) {
-        console.error('Chart error:', err)
-        setError(err instanceof Error ? err.message : 'Failed to load chart')
-      } finally {
-        setLoading(false)
-      }
+    // Add data series
+    if (chartType === 'candlestick') {
+      const series = chart.addCandlestickSeries({
+        upColor: '#22c55e',
+        downColor: '#ef4444',
+        borderDownColor: '#ef4444',
+        borderUpColor: '#22c55e',
+        wickDownColor: '#ef4444',
+        wickUpColor: '#22c55e',
+      })
+      series.setData(chartData.map((d: HistoricalData) => ({
+        time: parseTimestamp(d.date),
+        open: d.open,
+        high: d.high,
+        low: d.low,
+        close: d.close,
+      })))
+    } else {
+      const series = chart.addLineSeries({ color: '#3b82f6', lineWidth: 2 })
+      series.setData(chartData.map((d: HistoricalData) => ({
+        time: parseTimestamp(d.date),
+        value: d.close,
+      })))
     }
 
-    loadChart()
+    // Volume
+    const volumeSeries = chart.addHistogramSeries({
+      color: '#3b82f6',
+      priceFormat: { type: 'volume' },
+      priceScaleId: '',
+    })
+    volumeSeries.priceScale().applyOptions({ scaleMargins: { top: 0.8, bottom: 0 } })
+    volumeSeries.setData(chartData.map((d: HistoricalData) => ({
+      time: parseTimestamp(d.date),
+      value: d.volume,
+      color: d.close >= d.open ? '#22c55e40' : '#ef444440',
+    })))
 
+    chart.timeScale().fitContent()
+
+    // Resize handler
     const handleResize = () => {
       if (chartContainerRef.current && chartRef.current) {
         chartRef.current.applyOptions({ width: chartContainerRef.current.clientWidth })
@@ -170,25 +206,12 @@ export default function StockChart({ symbol, chartType = 'candlestick', period =
 
     return () => {
       window.removeEventListener('resize', handleResize)
-      chart.remove()
+      if (chartRef.current) {
+        chartRef.current.remove()
+        chartRef.current = null
+      }
     }
-  }, [symbol, chartType, period, interval])
-
-  if (loading) {
-    return (
-      <div className="w-full h-[350px] flex items-center justify-center">
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500"></div>
-      </div>
-    )
-  }
-
-  if (error) {
-    return (
-      <div className="w-full h-[350px] flex items-center justify-center text-red-400">
-        <p>{error}</p>
-      </div>
-    )
-  }
+  }, [chartData, chartType])
 
   const formatLastUpdated = () => {
     if (!lastUpdated) return ''
@@ -202,15 +225,34 @@ export default function StockChart({ symbol, chartType = 'candlestick', period =
 
   return (
     <div className="w-full">
-      <div ref={chartContainerRef} className="w-full" />
-      {lastUpdated && (
-        <div className="flex items-center justify-between mt-2 px-1 text-xs text-slate-500">
-          <span>{dataPoints} data points</span>
-          <div className="flex items-center gap-1">
-            <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></span>
-            <span>Updated {formatLastUpdated()}</span>
-          </div>
+      {/* Loading state */}
+      {loading && (
+        <div className="w-full h-[350px] flex items-center justify-center">
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500"></div>
         </div>
+      )}
+
+      {/* Error state */}
+      {error && (
+        <div className="w-full h-[350px] flex items-center justify-center text-red-400">
+          <p>{error}</p>
+        </div>
+      )}
+
+      {/* Chart container - only rendered when we have data */}
+      {!loading && !error && chartData && (
+        <>
+          <div ref={chartContainerRef} className="w-full" />
+          {lastUpdated && (
+            <div className="flex items-center justify-between mt-2 px-1 text-xs text-slate-500">
+              <span>{dataPoints} data points</span>
+              <div className="flex items-center gap-1">
+                <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></span>
+                <span>Updated {formatLastUpdated()}</span>
+              </div>
+            </div>
+          )}
+        </>
       )}
     </div>
   )

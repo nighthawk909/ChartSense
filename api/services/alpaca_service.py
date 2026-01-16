@@ -583,12 +583,12 @@ class AlpacaService:
         """
         try:
             from alpaca.data.requests import StockBarsRequest
-            from alpaca.data.timeframe import TimeFrame
+            from alpaca.data.timeframe import TimeFrame, TimeFrameUnit
 
             timeframe_map = {
                 "1min": TimeFrame.Minute,
-                "5min": TimeFrame(5, "Min"),
-                "15min": TimeFrame(15, "Min"),
+                "5min": TimeFrame(5, TimeFrameUnit.Minute),
+                "15min": TimeFrame(15, TimeFrameUnit.Minute),
                 "1hour": TimeFrame.Hour,
                 "1day": TimeFrame.Day,
             }
@@ -786,13 +786,46 @@ class AlpacaService:
             raise
 
 
-# Singleton instance
-_alpaca_service: Optional[AlpacaService] = None
+# Singleton instances for paper and live trading
+_alpaca_paper_service: Optional[AlpacaService] = None
+_alpaca_live_service: Optional[AlpacaService] = None
+_current_trading_mode: bool = True  # True = paper, False = live
 
 
-def get_alpaca_service(paper_trading: bool = True) -> AlpacaService:
-    """Get or create Alpaca service singleton"""
-    global _alpaca_service
-    if _alpaca_service is None:
-        _alpaca_service = AlpacaService(paper_trading=paper_trading)
-    return _alpaca_service
+def get_alpaca_service(paper_trading: bool = None) -> AlpacaService:
+    """
+    Get Alpaca service for the specified trading mode.
+
+    If paper_trading is None, uses the current global trading mode.
+    Paper and live services are maintained separately as singletons.
+    """
+    global _alpaca_paper_service, _alpaca_live_service, _current_trading_mode
+
+    # Use current mode if not specified
+    if paper_trading is None:
+        paper_trading = _current_trading_mode
+
+    if paper_trading:
+        if _alpaca_paper_service is None:
+            _alpaca_paper_service = AlpacaService(paper_trading=True)
+            logger.info("Created Alpaca PAPER trading service")
+        return _alpaca_paper_service
+    else:
+        if _alpaca_live_service is None:
+            _alpaca_live_service = AlpacaService(paper_trading=False)
+            logger.info("Created Alpaca LIVE trading service")
+        return _alpaca_live_service
+
+
+def set_trading_mode(paper_trading: bool) -> None:
+    """Set the global trading mode (paper or live)"""
+    global _current_trading_mode
+    old_mode = "paper" if _current_trading_mode else "live"
+    new_mode = "paper" if paper_trading else "live"
+    _current_trading_mode = paper_trading
+    logger.info(f"Trading mode changed from {old_mode} to {new_mode}")
+
+
+def get_trading_mode() -> bool:
+    """Get current trading mode. Returns True for paper, False for live."""
+    return _current_trading_mode

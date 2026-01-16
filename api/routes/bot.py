@@ -10,6 +10,9 @@ from models.bot import (
     BotStartRequest,
     BotActionResponse,
     BotState,
+    CryptoAnalysisResult,
+    CryptoScanProgress,
+    CryptoBestOpportunity,
 )
 from services.trading_bot import get_trading_bot
 
@@ -26,14 +29,54 @@ async def get_bot_status():
     bot = get_trading_bot()
     status = bot.get_status()
 
+    # Convert crypto analysis results to Pydantic models
+    crypto_results = {}
+    for symbol, result in status.get("crypto_analysis_results", {}).items():
+        crypto_results[symbol] = CryptoAnalysisResult(
+            signal=result.get("signal", "NEUTRAL"),
+            confidence=result.get("confidence", 0),
+            threshold=result.get("threshold", 70),
+            meets_threshold=result.get("meets_threshold", False),
+            reason=result.get("reason", ""),
+            timestamp=result.get("timestamp", ""),
+            indicators=result.get("indicators", {}),
+            signals=result.get("signals", []),
+        )
+
+    # Build crypto scan progress if available
+    scan_progress = None
+    raw_progress = status.get("crypto_scan_progress")
+    if raw_progress:
+        best_opp = None
+        if raw_progress.get("best_opportunity"):
+            best_opp = CryptoBestOpportunity(**raw_progress["best_opportunity"])
+        scan_progress = CryptoScanProgress(
+            total=raw_progress.get("total", 0),
+            scanned=raw_progress.get("scanned", 0),
+            current_symbol=raw_progress.get("current_symbol"),
+            signals_found=raw_progress.get("signals_found", 0),
+            best_opportunity=best_opp,
+            scan_status=raw_progress.get("scan_status", "idle"),
+            scan_summary=raw_progress.get("scan_summary", ""),
+            last_scan_completed=raw_progress.get("last_scan_completed"),
+            next_scan_in_seconds=raw_progress.get("next_scan_in_seconds", 0),
+        )
+
     return BotStatusResponse(
         state=BotState(status["state"]),
         uptime_seconds=status["uptime_seconds"],
         last_trade_time=status["last_trade_time"],
         current_cycle=status["current_cycle"],
+        current_session=status.get("current_session"),
         error_message=status["error_message"],
         paper_trading=status["paper_trading"],
         active_symbols=status["active_symbols"],
+        crypto_trading_enabled=status.get("crypto_trading_enabled", False),
+        crypto_symbols=status.get("crypto_symbols", []),
+        crypto_positions=status.get("crypto_positions", 0),
+        crypto_analysis_results=crypto_results,
+        last_crypto_analysis_time=status.get("last_crypto_analysis_time"),
+        crypto_scan_progress=scan_progress,
     )
 
 

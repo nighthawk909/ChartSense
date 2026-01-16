@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { Save, RefreshCw, AlertCircle, CheckCircle, Shield, TrendingUp, Clock, Zap, DollarSign, Target, Activity, Bitcoin } from 'lucide-react'
+import CryptoSelector, { AVAILABLE_CRYPTOS } from '../components/CryptoSelector'
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
 
@@ -716,35 +717,34 @@ export default function Settings() {
 
               {settings.crypto_trading_enabled && (
                 <>
-                  <div>
-                    <label className="block text-sm text-slate-400 mb-3">Crypto Symbols</label>
-                    <input
-                      type="text"
-                      value={settings.crypto_symbols?.join(', ') || ''}
-                      onChange={(e) => setSettings({
-                        ...settings,
-                        crypto_symbols: e.target.value.split(',').map(s => s.trim().toUpperCase()).filter(s => s)
-                      })}
-                      className="w-full px-4 py-2 bg-slate-700 border border-slate-600 rounded-lg focus:ring-2 focus:ring-orange-500 focus:outline-none"
-                      placeholder="BTC/USD, ETH/USD, SOL/USD"
-                    />
-                    <p className="text-xs text-slate-500 mt-2">Enter crypto pairs separated by commas (e.g., BTC/USD, ETH/USD)</p>
-                  </div>
+                  {/* Crypto Selector Grid */}
+                  <CryptoSelector
+                    selected={settings.crypto_symbols || []}
+                    onChange={(selected) => setSettings({ ...settings, crypto_symbols: selected })}
+                  />
 
-                  <div>
-                    <label className="block text-sm text-slate-400 mb-2">Max Crypto Positions</label>
+                  {/* Max positions slider */}
+                  <div className="pt-4 border-t border-slate-700">
+                    <label className="block text-sm text-slate-400 mb-2">
+                      Max Concurrent Positions
+                      <span className="ml-2 text-xs text-slate-500">
+                        (Hold up to {settings.crypto_max_positions} cryptos at once)
+                      </span>
+                    </label>
                     <div className="flex items-center gap-4">
                       <input
                         type="range"
                         min="1"
-                        max="10"
+                        max={Math.min(10, settings.crypto_symbols?.length || 10)}
                         value={settings.crypto_max_positions}
                         onChange={(e) => setSettings({ ...settings, crypto_max_positions: parseInt(e.target.value) })}
                         className="flex-1 h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-orange-500"
                       />
                       <span className="text-lg font-semibold w-12 text-right">{settings.crypto_max_positions}</span>
                     </div>
-                    <p className="text-xs text-slate-500 mt-1">Maximum number of crypto positions at once</p>
+                    <p className="text-xs text-slate-500 mt-1">
+                      The bot will scan all {settings.crypto_symbols?.length || 0} selected cryptos, but only hold up to {settings.crypto_max_positions} positions simultaneously.
+                    </p>
                   </div>
                 </>
               )}

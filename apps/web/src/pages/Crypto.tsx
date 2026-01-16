@@ -66,7 +66,9 @@ export default function Crypto() {
 
   const fetchQuote = async (symbol: string): Promise<CryptoQuote | null> => {
     try {
-      const response = await fetch(`${API_URL}/api/crypto/quote/${encodeURIComponent(symbol)}`)
+      // Remove slash from symbol for API call (BTC/USD -> BTCUSD)
+      const apiSymbol = symbol.replace('/', '')
+      const response = await fetch(`${API_URL}/api/crypto/quote/${apiSymbol}`)
       if (response.ok) {
         return await response.json()
       }
@@ -248,7 +250,7 @@ export default function Crypto() {
       {/* Selected Crypto Chart and Details */}
       {selectedCrypto && (
         <div className="bg-slate-800 rounded-lg p-6 border border-slate-700">
-          <div className="flex items-center justify-between mb-4">
+          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 mb-4">
             <div className="flex items-center gap-3">
               <BarChart3 className="h-5 w-5 text-blue-400" />
               <h2 className="text-lg font-semibold">
@@ -256,12 +258,12 @@ export default function Crypto() {
               </h2>
             </div>
             {/* Timeframe selector */}
-            <div className="flex gap-1 bg-slate-900 rounded-lg p-1">
+            <div className="flex flex-wrap gap-1 bg-slate-900 rounded-lg p-1">
               {timeframes.map((tf) => (
                 <button
                   key={tf.value}
                   onClick={() => setSelectedTimeframe(tf.value)}
-                  className={`px-3 py-1 text-xs rounded transition-colors ${
+                  className={`px-2 sm:px-3 py-1 text-xs rounded transition-colors whitespace-nowrap ${
                     selectedTimeframe === tf.value
                       ? 'bg-blue-600 text-white'
                       : 'text-slate-400 hover:text-white hover:bg-slate-700'

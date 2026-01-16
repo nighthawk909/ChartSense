@@ -31,7 +31,15 @@
       "Bash(powershell:*)",
       "Bash(forfiles /S /M * /C \"cmd /c if @fsize GEQ 1048576 echo @fsize @path\")",
       "Bash(xargs:*)",
-      "Bash(npm run build:*)"
+      "Bash(npm run build:*)",
+      "Bash(start cmd /k \"python -m uvicorn main:app --reload --port 8000\")",
+      "Bash(cmd //c \"start cmd /k python -m uvicorn main:app --reload --port 8000\")",
+      "Bash(ping:*)",
+      "Bash(start:*)",
+      "Bash(python3:*)",
+      "Bash(for pid in 29408 120784 128120 87476)",
+      "Bash(do taskkill //F //PID $pid)",
+      "Bash(done)"
     ]
   }
 }

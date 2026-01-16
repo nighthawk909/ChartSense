@@ -31,6 +31,8 @@ export default function CryptoChart({ symbol, chartType = 'candlestick', timefra
   useEffect(() => {
     if (!chartContainerRef.current) return
 
+    let isCleanedUp = false
+
     // Create chart
     const chart = createChart(chartContainerRef.current, {
       layout: {
@@ -47,7 +49,13 @@ export default function CryptoChart({ symbol, chartType = 'candlestick', timefra
         vertLine: { color: '#64748b', labelBackgroundColor: '#1e293b' },
         horzLine: { color: '#64748b', labelBackgroundColor: '#1e293b' },
       },
-      timeScale: { borderColor: '#334155', timeVisible: true },
+      timeScale: {
+        borderColor: '#334155',
+        timeVisible: true,
+        secondsVisible: false,
+        // The chart displays timestamps in local timezone automatically
+        // UTC timestamps from API are converted to local time for display
+      },
       rightPriceScale: { borderColor: '#334155' },
     })
 
@@ -59,7 +67,21 @@ export default function CryptoChart({ symbol, chartType = 'candlestick', timefra
       setError(null)
 
       try {
-        const response = await fetch(`${API_URL}/api/crypto/bars/${encodeURIComponent(symbol)}?timeframe=${timeframe}&limit=100`)
+        // Remove slash from symbol for API call (BTC/USD -> BTCUSD)
+        const apiSymbol = symbol.replace('/', '')
+
+        // Determine appropriate limit based on timeframe
+        // Larger timeframes need more historical data to be useful
+        const limitByTimeframe: Record<TimeInterval, number> = {
+          '1Min': 100,    // ~1.6 hours of 1-min bars
+          '5Min': 100,    // ~8 hours of 5-min bars
+          '15Min': 100,   // ~25 hours of 15-min bars
+          '1Hour': 168,   // 1 week of hourly bars
+          '1Day': 365,    // 1 year of daily bars
+        }
+        const limit = limitByTimeframe[timeframe] || 100
+
+        const response = await fetch(`${API_URL}/api/crypto/bars/${apiSymbol}?timeframe=${timeframe}&limit=${limit}`)
 
         if (!response.ok) throw new Error('Failed to fetch crypto data')
 
@@ -67,6 +89,9 @@ export default function CryptoChart({ symbol, chartType = 'candlestick', timefra
         if (!data.bars || data.bars.length === 0) {
           throw new Error('No historical data available')
         }
+
+        // Check if component was unmounted during fetch
+        if (isCleanedUp) return
 
         // Sort by timestamp
         const sortedData = [...data.bars].sort((a: BarData, b: BarData) =>
@@ -116,10 +141,13 @@ export default function CryptoChart({ symbol, chartType = 'candlestick', timefra
 
         chart.timeScale().fitContent()
       } catch (err) {
+        if (isCleanedUp) return
         console.error('Crypto chart error:', err)
         setError(err instanceof Error ? err.message : 'Failed to load chart')
       } finally {
-        setLoading(false)
+        if (!isCleanedUp) {
+          setLoading(false)
+        }
       }
     }
 
@@ -133,31 +161,37 @@ export default function CryptoChart({ symbol, chartType = 'candlestick', timefra
     window.addEventListener('resize', handleResize)
 
     return () => {
+      isCleanedUp = true
       window.removeEventListener('resize', handleResize)
       chart.remove()
     }
   }, [symbol, chartType, timeframe])
 
-  if (loading) {
-    return (
-      <div className="w-full h-[300px] flex items-center justify-center">
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500"></div>
-      </div>
-    )
-  }
-
-  if (error) {
-    return (
-      <div className="w-full h-[300px] flex items-center justify-center text-red-400">
-        <p>{error}</p>
-      </div>
-    )
-  }
-
   return (
     <div className="w-full">
-      <div ref={chartContainerRef} className="w-full" />
-      {lastUpdated && (
+      {/* Chart container - always rendered so ref is available */}
+      <div
+        ref={chartContainerRef}
+        className="w-full"
+        style={{ display: loading || error ? 'none' : 'block' }}
+      />
+
+      {/* Loading state */}
+      {loading && (
+        <div className="w-full h-[300px] flex items-center justify-center">
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500"></div>
+        </div>
+      )}
+
+      {/* Error state */}
+      {error && (
+        <div className="w-full h-[300px] flex items-center justify-center text-red-400">
+          <p>{error}</p>
+        </div>
+      )}
+
+      {/* Data freshness indicator */}
+      {!loading && !error && lastUpdated && (
         <div className="flex items-center justify-between mt-2 px-1 text-xs text-slate-500">
           <span>{dataPoints} data points</span>
           <div className="flex items-center gap-1">

@@ -229,7 +229,10 @@ class BotConfiguration(Base):
 
     # Crypto Trading
     crypto_trading_enabled = Column(Boolean, default=False)
-    crypto_symbols = Column(JSON, default=["BTC/USD", "ETH/USD"])
+    crypto_symbols = Column(JSON, default=[
+        "BTC/USD", "ETH/USD", "SOL/USD", "DOGE/USD", "ADA/USD", "XRP/USD",
+        "AVAX/USD", "LINK/USD", "DOT/USD", "MATIC/USD", "LTC/USD", "UNI/USD"
+    ])
     crypto_max_positions = Column(Integer, default=2)
 
     # Active flag

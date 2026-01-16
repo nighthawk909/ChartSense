@@ -383,6 +383,354 @@ FUNDAMENTALS:
             "ai_generated": False,
         }
 
+    async def evaluate_stock_trade(
+        self,
+        symbol: str,
+        signal_data: Dict[str, Any],
+        current_price: float,
+        account_info: Dict[str, Any],
+        existing_positions: List[str] = [],
+    ) -> Dict[str, Any]:
+        """
+        AI evaluates whether to execute a stock trade.
+        This is the TRUE AI control for stocks - the AI makes the final decision.
+
+        Args:
+            symbol: Stock symbol (e.g., "AAPL")
+            signal_data: Trading signal with score, indicators, etc.
+            current_price: Current stock price
+            account_info: Account equity, buying power, etc.
+            existing_positions: List of stocks already held
+
+        Returns:
+            Dict with AI decision, reasoning, and trade parameters
+        """
+        if not self.enabled:
+            return self._fallback_stock_decision(symbol, signal_data)
+
+        client = self._get_client()
+        if not client:
+            return self._fallback_stock_decision(symbol, signal_data)
+
+        try:
+            # Build comprehensive prompt for AI evaluation
+            prompt = f"""You are a stock trading AI making a real trading decision. Evaluate this opportunity carefully.
+
+STOCK: {symbol}
+CURRENT PRICE: ${current_price:,.2f}
+
+TRADING SIGNAL:
+- Signal Type: {signal_data.get('signal_type', 'N/A')}
+- Score: {signal_data.get('score', 'N/A')}/100
+- Trade Type: {signal_data.get('trade_type', 'N/A')}
+- Suggested Stop Loss: ${signal_data.get('suggested_stop_loss', 'N/A')}
+- Suggested Target: ${signal_data.get('suggested_profit_target', 'N/A')}
+
+TECHNICAL INDICATORS:
+- RSI: {signal_data.get('indicators', {}).get('rsi_14', 'N/A')}
+- MACD: {signal_data.get('indicators', {}).get('macd_histogram', 'N/A')}
+- Trend (SMA): {signal_data.get('indicators', {}).get('trend', 'N/A')}
+- Volume Ratio: {signal_data.get('indicators', {}).get('volume_ratio', 'N/A')}x
+- ATR: {signal_data.get('indicators', {}).get('atr', 'N/A')}
+
+ACCOUNT STATUS:
+- Equity: ${account_info.get('equity', 0):,.2f}
+- Buying Power: ${account_info.get('buying_power', 0):,.2f}
+- Current Positions: {len(existing_positions)} ({', '.join(existing_positions[:5]) if existing_positions else 'None'})
+
+DECISION REQUIRED:
+Should we BUY {symbol} right now? Consider:
+1. Is the technical setup strong enough?
+2. Is this a good entry point or should we wait?
+3. Are there any red flags in the indicators?
+4. Portfolio diversification and sector exposure
+5. Market conditions and timing
+
+Respond with JSON:
+{{
+    "decision": "APPROVE" or "REJECT" or "WAIT",
+    "confidence": 0-100,
+    "reasoning": "2-3 sentence explanation of your decision",
+    "concerns": ["list", "of", "concerns"] or [],
+    "suggested_position_size_pct": 0.01-0.05 (if APPROVE),
+    "suggested_stop_loss_pct": 0.02-0.10 (if APPROVE),
+    "suggested_take_profit_pct": 0.05-0.20 (if APPROVE),
+    "wait_for": "condition to wait for" (if WAIT)
+}}"""
+
+            response = client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {
+                        "role": "system",
+                        "content": """You are an expert stock trading AI. You have final authority on trade decisions.
+                        Be conservative - only approve trades with strong setups. It's better to miss an opportunity
+                        than to enter a bad trade. Consider market conditions, technical signals, and portfolio risk.
+                        Always respond in valid JSON format."""
+                    },
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=0.2,  # Low temp for consistent decisions
+                max_tokens=500,
+            )
+
+            result = response.choices[0].message.content
+
+            # Parse JSON response
+            try:
+                decision = json.loads(result)
+            except json.JSONDecodeError:
+                import re
+                json_match = re.search(r'\{.*\}', result, re.DOTALL)
+                if json_match:
+                    decision = json.loads(json_match.group())
+                else:
+                    return self._fallback_stock_decision(symbol, signal_data)
+
+            decision["ai_generated"] = True
+            decision["model"] = self.model
+            decision["timestamp"] = datetime.now().isoformat()
+            decision["symbol"] = symbol
+
+            logger.info(f"AI stock decision for {symbol}: {decision['decision']} ({decision['confidence']}%) - {decision['reasoning'][:100]}")
+            return decision
+
+        except Exception as e:
+            logger.error(f"AI stock evaluation failed for {symbol}: {e}")
+            return self._fallback_stock_decision(symbol, signal_data)
+
+    def _fallback_stock_decision(self, symbol: str, signal_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Fallback decision when AI is unavailable for stocks - uses signal data only"""
+        score = signal_data.get('score', 50)
+        signal_type = signal_data.get('signal_type', 'HOLD')
+
+        # Without AI, we're more conservative
+        if signal_type == 'BUY' and score >= 75:
+            decision = "APPROVE"
+            confidence = min(score, 70)  # Cap confidence without AI
+        elif signal_type == 'BUY' and score >= 65:
+            decision = "WAIT"
+            confidence = 50
+        else:
+            decision = "REJECT"
+            confidence = 60
+
+        return {
+            "decision": decision,
+            "confidence": confidence,
+            "reasoning": f"Based on technical signals only (AI unavailable). Score: {score}, Signal: {signal_type}",
+            "concerns": ["AI evaluation unavailable - using technical signals only"],
+            "suggested_position_size_pct": 0.02,
+            "suggested_stop_loss_pct": 0.05,
+            "suggested_take_profit_pct": 0.10,
+            "ai_generated": False,
+            "symbol": symbol,
+            "timestamp": datetime.now().isoformat(),
+        }
+
+    async def evaluate_crypto_trade(
+        self,
+        symbol: str,
+        technical_analysis: Dict[str, Any],
+        current_price: float,
+        account_info: Dict[str, Any],
+        existing_positions: List[str] = [],
+    ) -> Dict[str, Any]:
+        """
+        AI evaluates whether to execute a crypto trade.
+        This is the TRUE AI control - the AI makes the final decision.
+
+        Args:
+            symbol: Crypto symbol (e.g., "BTC/USD")
+            technical_analysis: Technical indicators and signals
+            current_price: Current price
+            account_info: Account equity, buying power, etc.
+            existing_positions: List of cryptos already held
+
+        Returns:
+            Dict with AI decision, reasoning, and trade parameters
+        """
+        if not self.enabled:
+            return self._fallback_crypto_decision(symbol, technical_analysis)
+
+        client = self._get_client()
+        if not client:
+            return self._fallback_crypto_decision(symbol, technical_analysis)
+
+        try:
+            # Build comprehensive prompt for AI evaluation
+            prompt = f"""You are a crypto trading AI making a real trading decision. Evaluate this opportunity carefully.
+
+CRYPTO: {symbol}
+CURRENT PRICE: ${current_price:,.2f}
+
+TECHNICAL ANALYSIS:
+- Signal: {technical_analysis.get('recommendation', 'N/A')}
+- Score: {technical_analysis.get('score', 'N/A')}/100
+- RSI: {technical_analysis.get('indicators', {}).get('rsi', 'N/A')}
+- MACD Signal: {technical_analysis.get('indicators', {}).get('macd_signal', 'N/A')}
+- Trend: {technical_analysis.get('indicators', {}).get('trend', 'N/A')}
+- Technical Signals: {', '.join(technical_analysis.get('signals', []))}
+
+ACCOUNT STATUS:
+- Equity: ${account_info.get('equity', 0):,.2f}
+- Buying Power: ${account_info.get('buying_power', 0):,.2f}
+- Existing Crypto Positions: {', '.join(existing_positions) if existing_positions else 'None'}
+
+DECISION REQUIRED:
+Should we BUY {symbol} right now? Consider:
+1. Is the technical setup strong enough?
+2. Is this a good entry point or should we wait?
+3. Are there any red flags in the indicators?
+4. Portfolio diversification (already holding: {', '.join(existing_positions) if existing_positions else 'nothing'})
+
+Respond with JSON:
+{{
+    "decision": "APPROVE" or "REJECT" or "WAIT",
+    "confidence": 0-100,
+    "reasoning": "2-3 sentence explanation of your decision",
+    "concerns": ["list", "of", "concerns"] or [],
+    "suggested_position_size_pct": 0.01-0.05 (if APPROVE),
+    "suggested_stop_loss_pct": 0.02-0.10 (if APPROVE),
+    "suggested_take_profit_pct": 0.05-0.20 (if APPROVE),
+    "wait_for": "condition to wait for" (if WAIT)
+}}"""
+
+            response = client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {
+                        "role": "system",
+                        "content": """You are an expert crypto trading AI. You have final authority on trade decisions.
+                        Be conservative - only approve trades with strong setups. It's better to miss an opportunity
+                        than to enter a bad trade. Consider market conditions, technical signals, and portfolio risk.
+                        Always respond in valid JSON format."""
+                    },
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=0.2,  # Low temp for consistent decisions
+                max_tokens=500,
+            )
+
+            result = response.choices[0].message.content
+
+            # Parse JSON response
+            try:
+                decision = json.loads(result)
+            except json.JSONDecodeError:
+                import re
+                json_match = re.search(r'\{.*\}', result, re.DOTALL)
+                if json_match:
+                    decision = json.loads(json_match.group())
+                else:
+                    return self._fallback_crypto_decision(symbol, technical_analysis)
+
+            decision["ai_generated"] = True
+            decision["model"] = self.model
+            decision["timestamp"] = datetime.now().isoformat()
+            decision["symbol"] = symbol
+
+            logger.info(f"AI crypto decision for {symbol}: {decision['decision']} ({decision['confidence']}%) - {decision['reasoning'][:100]}")
+            return decision
+
+        except Exception as e:
+            logger.error(f"AI crypto evaluation failed for {symbol}: {e}")
+            return self._fallback_crypto_decision(symbol, technical_analysis)
+
+    async def get_crypto_market_analysis(self) -> Dict[str, Any]:
+        """
+        Get AI analysis of overall crypto market conditions.
+
+        Returns:
+            Dict with market sentiment, recommendations, and cryptos to watch
+        """
+        if not self.enabled:
+            return {
+                "sentiment": "neutral",
+                "confidence": 50,
+                "recommendation": "Proceed with caution",
+                "cryptos_to_watch": ["BTC/USD", "ETH/USD"],
+                "cryptos_to_avoid": [],
+                "ai_generated": False,
+            }
+
+        client = self._get_client()
+        if not client:
+            return {"sentiment": "neutral", "confidence": 50, "ai_generated": False}
+
+        try:
+            response = client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {
+                        "role": "system",
+                        "content": "You are a crypto market analyst. Provide brief market analysis. Respond in JSON."
+                    },
+                    {
+                        "role": "user",
+                        "content": """Analyze current crypto market conditions. Consider:
+                        - Bitcoin dominance and trend
+                        - Altcoin season indicators
+                        - Market fear/greed
+                        - Recent news and events
+
+                        Respond with JSON containing:
+                        - sentiment: "bullish", "bearish", or "neutral"
+                        - confidence: 0-100
+                        - bitcoin_outlook: brief BTC analysis
+                        - altcoin_outlook: brief altcoin analysis
+                        - recommendation: trading advice (1-2 sentences)
+                        - cryptos_to_watch: array of promising cryptos
+                        - cryptos_to_avoid: array of risky cryptos
+                        - risk_level: "LOW", "MEDIUM", or "HIGH"
+                        - best_strategy: "accumulate", "trade_swings", or "stay_cash" """
+                    }
+                ],
+                temperature=0.3,
+                max_tokens=500,
+            )
+
+            result = response.choices[0].message.content
+            analysis = json.loads(result)
+            analysis["ai_generated"] = True
+            analysis["timestamp"] = datetime.now().isoformat()
+
+            logger.info(f"AI crypto market analysis: {analysis['sentiment']} ({analysis['confidence']}%)")
+            return analysis
+
+        except Exception as e:
+            logger.error(f"Crypto market analysis failed: {e}")
+            return {"sentiment": "neutral", "confidence": 50, "ai_generated": False}
+
+    def _fallback_crypto_decision(self, symbol: str, technical_analysis: Dict[str, Any]) -> Dict[str, Any]:
+        """Fallback decision when AI is unavailable - uses technical analysis only"""
+        score = technical_analysis.get('score', 50)
+        recommendation = technical_analysis.get('recommendation', 'HOLD')
+
+        # Without AI, we're more conservative
+        if recommendation in ['BUY', 'STRONG_BUY'] and score >= 75:
+            decision = "APPROVE"
+            confidence = min(score, 70)  # Cap confidence without AI
+        elif recommendation in ['BUY', 'STRONG_BUY'] and score >= 65:
+            decision = "WAIT"
+            confidence = 50
+        else:
+            decision = "REJECT"
+            confidence = 60
+
+        return {
+            "decision": decision,
+            "confidence": confidence,
+            "reasoning": f"Based on technical analysis only (AI unavailable). Score: {score}, Signal: {recommendation}",
+            "concerns": ["AI evaluation unavailable - using technical signals only"],
+            "suggested_position_size_pct": 0.02,
+            "suggested_stop_loss_pct": 0.05,
+            "suggested_take_profit_pct": 0.10,
+            "ai_generated": False,
+            "symbol": symbol,
+            "timestamp": datetime.now().isoformat(),
+        }
+
     def _get_default_watchlist(self) -> List[Dict[str, Any]]:
         """Return default watchlist when AI is unavailable"""
         return [

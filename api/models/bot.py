@@ -41,15 +41,57 @@ class ExitReason(str, Enum):
 
 # ============== Bot Status ==============
 
+class CryptoAnalysisResult(BaseModel):
+    """Result of crypto analysis for a single symbol"""
+    signal: str  # BUY, SELL, NEUTRAL, NO_DATA
+    confidence: float
+    threshold: float
+    meets_threshold: bool = False
+    reason: str
+    timestamp: str
+    indicators: Dict[str, Any] = {}
+    signals: List[str] = []  # Technical signals detected
+
+
+class CryptoBestOpportunity(BaseModel):
+    """Best crypto opportunity found during scan"""
+    symbol: str
+    confidence: float
+    threshold: float
+    meets_threshold: bool
+
+
+class CryptoScanProgress(BaseModel):
+    """Progress tracking for crypto scanning cycle"""
+    total: int = 0
+    scanned: int = 0
+    current_symbol: Optional[str] = None
+    signals_found: int = 0
+    best_opportunity: Optional[CryptoBestOpportunity] = None
+    scan_status: str = "idle"  # idle, scanning, exhausted, found_opportunity
+    scan_summary: str = ""
+    last_scan_completed: Optional[str] = None
+    next_scan_in_seconds: int = 0
+
+
 class BotStatusResponse(BaseModel):
     """Current bot status"""
     state: BotState
     uptime_seconds: int = 0
     last_trade_time: Optional[datetime] = None
     current_cycle: str = "idle"  # What the bot is currently doing
+    current_session: Optional[str] = None  # pre_market, regular, after_hours, overnight, weekend
     error_message: Optional[str] = None
     paper_trading: bool = True
     active_symbols: List[str] = []
+    # Crypto trading status
+    crypto_trading_enabled: bool = False
+    crypto_symbols: List[str] = []
+    crypto_positions: int = 0
+    crypto_analysis_results: Dict[str, CryptoAnalysisResult] = {}
+    last_crypto_analysis_time: Optional[str] = None
+    # Crypto scan progress tracking
+    crypto_scan_progress: Optional[CryptoScanProgress] = None
 
 
 class BotStartRequest(BaseModel):

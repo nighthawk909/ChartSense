@@ -147,9 +147,17 @@ async def get_stock_history(
 
         # Transform to format expected by frontend StockChart component
         # Frontend expects: { history: [{ date, open, high, low, close, volume }, ...] }
+        # For intraday intervals, keep full timestamp; for daily+, use just date
+        is_intraday = timeframe in ["1min", "5min", "15min", "1hour"]
+        logger.info(f"[HISTORY] timeframe={timeframe}, is_intraday={is_intraday}")
+        if bars:
+            logger.info(f"[HISTORY] Sample timestamp from Alpaca: {bars[0].get('timestamp', 'N/A')}")
+
         history = [
             {
-                "date": bar["timestamp"].split("T")[0] if "T" in bar["timestamp"] else bar["timestamp"],
+                # For intraday: keep full ISO timestamp for unique candles
+                # For daily+: just date (YYYY-MM-DD)
+                "date": bar["timestamp"] if is_intraday else (bar["timestamp"].split("T")[0] if "T" in bar["timestamp"] else bar["timestamp"]),
                 "open": bar["open"],
                 "high": bar["high"],
                 "low": bar["low"],

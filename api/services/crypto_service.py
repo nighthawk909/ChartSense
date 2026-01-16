@@ -170,6 +170,9 @@ class CryptoService:
         else:
             symbol = symbol + "/USD"
 
+        # For crypto bars, we DON'T specify a start date - just use limit
+        # Alpaca returns the most recent bars when no start is specified
+        # Specifying start can cause issues with data gaps for some coins
         endpoint = f"/v1beta3/crypto/us/bars"
         params = {
             "symbols": symbol,
@@ -177,10 +180,12 @@ class CryptoService:
             "limit": limit,
         }
 
+        logger.debug(f"Fetching crypto bars: {symbol}, {timeframe}, limit={limit}")
         data = await self._make_request("GET", endpoint, base_url=self.data_url, params=params)
 
         if data and "bars" in data and symbol in data["bars"]:
             bars = data["bars"][symbol]
+            logger.debug(f"Received {len(bars)} bars for {symbol}")
             return [
                 {
                     "timestamp": bar.get("t"),

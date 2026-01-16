@@ -12,14 +12,78 @@ export type ExitReason = 'PROFIT_TARGET' | 'STOP_LOSS' | 'SIGNAL' | 'MANUAL' | '
 
 // ============== Bot Status ==============
 
+export interface AIDecision {
+  timestamp: string;
+  symbol: string;
+  decision: 'APPROVE' | 'REJECT' | 'WAIT';
+  confidence: number;
+  reasoning: string;
+  concerns: string[];
+  ai_generated: boolean;
+  model: string;
+  technical_score: number;
+  technical_signal: string;
+  suggested_position_size_pct?: number;
+  suggested_stop_loss_pct?: number;
+  suggested_take_profit_pct?: number;
+  wait_for?: string;
+}
+
+export interface CryptoAnalysisResult {
+  signal: string;
+  confidence: number;
+  threshold: number;
+  meets_threshold?: boolean;
+  reason: string;
+  timestamp: string;
+  indicators?: Record<string, number>;
+  signals?: string[];
+  ai_decision?: AIDecision;
+}
+
+export interface CryptoBestOpportunity {
+  symbol: string;
+  confidence: number;
+  threshold: number;
+  meets_threshold: boolean;
+}
+
+export interface CryptoScanProgress {
+  total: number;
+  scanned: number;
+  current_symbol: string | null;
+  signals_found: number;
+  best_opportunity: CryptoBestOpportunity | null;
+  scan_status: 'idle' | 'scanning' | 'exhausted' | 'found_opportunity';
+  scan_summary: string;
+  last_scan_completed: string | null;
+  next_scan_in_seconds: number;
+}
+
 export interface BotStatus {
   state: BotState;
   uptime_seconds: number;
   last_trade_time: string | null;
   current_cycle: string;
+  current_session?: string;
   error_message: string | null;
   paper_trading: boolean;
   active_symbols: string[];
+  // Auto trade mode
+  auto_trade_mode?: boolean;
+  ai_risk_tolerance?: string;
+  // Crypto trading fields
+  crypto_trading_enabled?: boolean;
+  crypto_symbols?: string[];
+  crypto_max_positions?: number;
+  crypto_positions?: number;
+  crypto_analysis_results?: Record<string, CryptoAnalysisResult>;
+  last_crypto_analysis_time?: string | null;
+  // Crypto scan progress tracking
+  crypto_scan_progress?: CryptoScanProgress;
+  // AI Decision Tracking
+  last_ai_decision?: AIDecision | null;
+  ai_decisions_history?: AIDecision[];
 }
 
 export interface BotActionResponse {

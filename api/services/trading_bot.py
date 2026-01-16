@@ -105,9 +105,38 @@ class TradingBot:
 
         # Crypto Trading Settings
         self.crypto_trading_enabled = False
-        self.crypto_symbols: List[str] = ["BTC/USD", "ETH/USD"]
+        # Expanded crypto list - popular trading pairs on Alpaca
+        self.crypto_symbols: List[str] = [
+            "BTC/USD",   # Bitcoin
+            "ETH/USD",   # Ethereum
+            "SOL/USD",   # Solana
+            "DOGE/USD",  # Dogecoin
+            "ADA/USD",   # Cardano
+            "XRP/USD",   # Ripple
+            "AVAX/USD",  # Avalanche
+            "LINK/USD",  # Chainlink
+            "DOT/USD",   # Polkadot
+            "MATIC/USD", # Polygon
+            "LTC/USD",   # Litecoin
+            "UNI/USD",   # Uniswap
+        ]
         self.crypto_max_positions = 2
         self._crypto_positions: Dict[str, Dict] = {}  # Track crypto positions
+        self._crypto_analysis_results: Dict[str, Dict] = {}  # Track latest analysis for each crypto
+        self._last_crypto_analysis_time: Optional[datetime] = None
+
+        # Crypto scan tracking
+        self._crypto_scan_progress: Dict[str, Any] = {
+            "total": 0,
+            "scanned": 0,
+            "current_symbol": None,
+            "signals_found": 0,
+            "best_opportunity": None,  # Best signal even if below threshold
+            "scan_status": "idle",  # idle, scanning, exhausted, found_opportunity
+            "scan_summary": "",
+            "last_scan_completed": None,
+            "next_scan_in_seconds": 0,
+        }
 
         # Track partial sells
         self._partial_sold: Dict[str, bool] = {}  # Symbol -> has taken partial profit
@@ -115,6 +144,10 @@ class TradingBot:
         # Stock repository
         self._stock_scores: Dict[str, float] = {}  # Symbol -> last score
         self._ready_stocks: List[str] = []  # Stocks ready for entry
+
+        # AI Decision Tracking
+        self._ai_decisions: List[Dict[str, Any]] = []  # History of AI decisions
+        self._last_ai_decision: Optional[Dict[str, Any]] = None  # Most recent AI decision
 
         # Tracking
         self._positions_cache: Dict[str, Dict] = {}
@@ -354,7 +387,13 @@ class TradingBot:
 
                 # Crypto Trading
                 self.crypto_trading_enabled = getattr(config, 'crypto_trading_enabled', False)
-                self.crypto_symbols = getattr(config, 'crypto_symbols', ["BTC/USD", "ETH/USD"])
+                db_crypto_symbols = getattr(config, 'crypto_symbols', None)
+                # If database has old minimal list, use expanded default instead
+                if db_crypto_symbols and len(db_crypto_symbols) <= 2:
+                    logger.info(f"Database has minimal crypto list ({db_crypto_symbols}), using expanded default")
+                    # Keep the expanded default from __init__
+                elif db_crypto_symbols:
+                    self.crypto_symbols = db_crypto_symbols
                 self.crypto_max_positions = getattr(config, 'crypto_max_positions', 2)
 
                 logger.info(f"Loaded config '{config.name}' from database")
@@ -588,6 +627,54 @@ class TradingBot:
                         )
 
                         if risk_check.can_trade:
+                            # === TRUE AI CONTROL FOR STOCKS ===
+                            # When auto_trade_mode is enabled, AI makes the final decision
+                            ai_decision = None
+                            if self.auto_trade_mode:
+                                logger.info(f"AI Auto Trade Mode: Evaluating {symbol} stock trade...")
+
+                                # Get existing positions for portfolio context
+                                existing_symbols = list(self._positions_cache.keys())
+
+                                # Build signal data for AI
+                                signal_data = {
+                                    "signal_type": signal.signal_type.value,
+                                    "score": signal.score,
+                                    "trade_type": signal.trade_type.value,
+                                    "suggested_stop_loss": signal.suggested_stop_loss,
+                                    "suggested_profit_target": signal.suggested_profit_target,
+                                    "indicators": signal.indicators,
+                                }
+
+                                # Ask AI to evaluate the trade
+                                ai_decision = await self.ai_advisor.evaluate_stock_trade(
+                                    symbol=symbol,
+                                    signal_data=signal_data,
+                                    current_price=signal.current_price,
+                                    account_info={
+                                        "equity": equity,
+                                        "buying_power": buying_power,
+                                        "positions": len(positions),
+                                        "max_positions": self.risk_manager.max_positions,
+                                    },
+                                    existing_positions=existing_symbols,
+                                )
+
+                                # Log AI decision
+                                self._log_ai_decision(symbol, ai_decision, signal_data)
+
+                                # If AI rejects or says wait, skip this stock
+                                if ai_decision.get("decision") != "APPROVE":
+                                    logger.info(
+                                        f"AI {ai_decision.get('decision', 'REJECTED')} trade for {symbol}: "
+                                        f"{ai_decision.get('reasoning', 'No reason provided')}"
+                                    )
+                                    continue
+
+                                logger.info(
+                                    f"AI APPROVED trade for {symbol}: {ai_decision.get('reasoning', '')}"
+                                )
+
                             await self._execute_entry(symbol, signal, position_size.shares, extended_hours)
                             # Update positions list
                             positions = await self.alpaca.get_positions()
@@ -1048,13 +1135,82 @@ class TradingBot:
             "crypto_symbols": self.crypto_symbols,
             "crypto_max_positions": self.crypto_max_positions,
             "crypto_positions": len(self._crypto_positions),
+            "crypto_analysis_results": self._crypto_analysis_results,
+            "last_crypto_analysis_time": self._last_crypto_analysis_time.isoformat() if self._last_crypto_analysis_time else None,
+            # Crypto scan progress tracking
+            "crypto_scan_progress": self._crypto_scan_progress,
+            # AI Decision Tracking
+            "last_ai_decision": self._last_ai_decision,
+            "ai_decisions_history": self._ai_decisions[-10:],  # Last 10 decisions for UI
         }
+
+    def _get_analysis_reason(self, signal: str, confidence: float, threshold: float) -> str:
+        """Get a human-readable reason for the analysis result"""
+        if signal == "BUY":
+            if confidence >= threshold:
+                return f"Strong buy signal ({confidence:.0f}% confidence)"
+            else:
+                return f"Weak buy signal ({confidence:.0f}% < {threshold:.0f}% threshold)"
+        elif signal == "SELL":
+            return f"Sell signal detected ({confidence:.0f}% confidence)"
+        elif signal == "NEUTRAL":
+            return f"No clear direction ({confidence:.0f}% confidence)"
+        else:
+            return f"Waiting for signal ({signal})"
+
+    def _log_ai_decision(
+        self,
+        symbol: str,
+        ai_decision: Dict[str, Any],
+        technical_analysis: Dict[str, Any],
+    ):
+        """
+        Log AI trading decision for tracking and display.
+
+        Args:
+            symbol: The symbol being evaluated
+            ai_decision: The AI's decision response
+            technical_analysis: The technical analysis that was evaluated
+        """
+        decision_record = {
+            "timestamp": datetime.now().isoformat(),
+            "symbol": symbol,
+            "decision": ai_decision.get("decision", "UNKNOWN"),
+            "confidence": ai_decision.get("confidence", 0),
+            "reasoning": ai_decision.get("reasoning", ""),
+            "concerns": ai_decision.get("concerns", []),
+            "ai_generated": ai_decision.get("ai_generated", False),
+            "model": ai_decision.get("model", "unknown"),
+            "technical_score": technical_analysis.get("score", 0),
+            "technical_signal": technical_analysis.get("recommendation", ""),
+            # Trade parameters if approved
+            "suggested_position_size_pct": ai_decision.get("suggested_position_size_pct"),
+            "suggested_stop_loss_pct": ai_decision.get("suggested_stop_loss_pct"),
+            "suggested_take_profit_pct": ai_decision.get("suggested_take_profit_pct"),
+            # Wait condition if applicable
+            "wait_for": ai_decision.get("wait_for"),
+        }
+
+        # Update last decision
+        self._last_ai_decision = decision_record
+
+        # Add to history (keep last 50 decisions)
+        self._ai_decisions.append(decision_record)
+        if len(self._ai_decisions) > 50:
+            self._ai_decisions = self._ai_decisions[-50:]
+
+        logger.info(
+            f"AI Decision logged: {symbol} - {decision_record['decision']} "
+            f"({decision_record['confidence']}% confidence) - "
+            f"AI: {decision_record['ai_generated']}"
+        )
 
     async def _run_crypto_cycle(self):
         """
         Run crypto trading cycle.
         Crypto markets are 24/7, so this runs regardless of stock market hours.
         Uses the same risk parameters as stocks (as requested by user).
+        Now includes comprehensive scan tracking and progress reporting.
         """
         from .crypto_service import get_crypto_service
         logger.info("Running crypto trading cycle (24/7)...")
@@ -1088,23 +1244,92 @@ class TradingBot:
                 except Exception as e:
                     logger.error(f"Error checking crypto exit for {symbol}: {e}")
 
+            # Initialize scan tracking
+            symbols_to_scan = [s for s in self.crypto_symbols if s not in current_crypto_positions]
+            self._crypto_scan_progress = {
+                "total": len(symbols_to_scan),
+                "scanned": 0,
+                "current_symbol": None,
+                "signals_found": 0,
+                "best_opportunity": None,
+                "scan_status": "scanning",
+                "scan_summary": f"Starting scan of {len(symbols_to_scan)} cryptos...",
+                "last_scan_completed": None,
+                "next_scan_in_seconds": self.cycle_interval_seconds,
+            }
+
+            # Track best opportunity even if below threshold
+            best_buy_signal = None
+            best_buy_confidence = 0
+            signals_above_threshold = 0
+
             # If we have room for more positions, look for entry opportunities
             if num_crypto_positions < self.crypto_max_positions:
-                for symbol in self.crypto_symbols:
-                    if symbol in current_crypto_positions:
-                        continue  # Already have position
+                for idx, symbol in enumerate(symbols_to_scan):
+                    # Update scan progress
+                    self._crypto_scan_progress["current_symbol"] = symbol
+                    self._crypto_scan_progress["scanned"] = idx + 1
+                    self._crypto_scan_progress["scan_summary"] = f"Analyzing {symbol}... ({idx + 1}/{len(symbols_to_scan)})"
 
                     try:
                         # Analyze crypto for entry
                         analysis = await crypto_service.analyze_crypto(symbol)
                         if not analysis:
+                            logger.debug(f"No analysis returned for {symbol}")
+                            # Track that we analyzed but got no data
+                            self._crypto_analysis_results[symbol] = {
+                                "signal": "NO_DATA",
+                                "confidence": 0,
+                                "threshold": self.strategy.entry_threshold,
+                                "reason": "No analysis data available",
+                                "timestamp": datetime.now().isoformat(),
+                            }
                             continue
 
-                        signal = analysis.get("signal", "NEUTRAL")
-                        confidence = analysis.get("confidence", 0)
+                        # Map crypto service response to our format
+                        recommendation = analysis.get("recommendation", "HOLD")
+                        score = analysis.get("score", 50)
+
+                        # Convert recommendation to simple signal
+                        if recommendation in ["BUY", "STRONG_BUY"]:
+                            signal = "BUY"
+                        elif recommendation in ["SELL", "STRONG_SELL"]:
+                            signal = "SELL"
+                        else:
+                            signal = "NEUTRAL"
+
+                        confidence = score
+
+                        # Track best buy opportunity (even if below threshold)
+                        if signal == "BUY" and confidence > best_buy_confidence:
+                            best_buy_confidence = confidence
+                            best_buy_signal = {
+                                "symbol": symbol,
+                                "confidence": confidence,
+                                "threshold": self.strategy.entry_threshold,
+                                "meets_threshold": confidence >= self.strategy.entry_threshold,
+                            }
+
+                        # Track analysis result
+                        self._crypto_analysis_results[symbol] = {
+                            "signal": signal,
+                            "confidence": confidence,
+                            "threshold": self.strategy.entry_threshold,
+                            "meets_threshold": signal == "BUY" and confidence >= self.strategy.entry_threshold,
+                            "reason": self._get_analysis_reason(signal, confidence, self.strategy.entry_threshold),
+                            "timestamp": datetime.now().isoformat(),
+                            "indicators": analysis.get("indicators", {}),
+                            "signals": analysis.get("signals", []),
+                        }
+                        self._last_crypto_analysis_time = datetime.now()
+
+                        logger.info(f"Crypto analysis for {symbol}: signal={signal}, confidence={confidence:.1f}, threshold={self.strategy.entry_threshold}")
 
                         # Use same entry threshold as stocks
                         if signal == "BUY" and confidence >= self.strategy.entry_threshold:
+                            signals_above_threshold += 1
+                            self._crypto_scan_progress["signals_found"] = signals_above_threshold
+
                             # Calculate position size using same risk params as stocks
                             quote = await crypto_service.get_crypto_quote(symbol)
                             if not quote or quote.get("price", 0) <= 0:
@@ -1112,18 +1337,67 @@ class TradingBot:
 
                             price = quote["price"]
 
-                            # Position size based on risk per trade
-                            position_value = buying_power * self.risk_manager.risk_per_trade_pct
+                            # === TRUE AI CONTROL ===
+                            # When auto_trade_mode is enabled, AI makes the final decision
+                            ai_decision = None
+                            if self.auto_trade_mode:
+                                logger.info(f"AI Auto Trade Mode: Evaluating {symbol} trade...")
+                                self._crypto_scan_progress["scan_summary"] = f"AI evaluating {symbol}..."
+
+                                # Get existing crypto positions for portfolio context
+                                existing_crypto_symbols = list(current_crypto_positions.keys())
+
+                                # Ask AI to evaluate the trade
+                                ai_decision = await self.ai_advisor.evaluate_crypto_trade(
+                                    symbol=symbol,
+                                    technical_analysis=analysis,
+                                    current_price=price,
+                                    account_info={
+                                        "equity": float(account.get("equity", 0)),
+                                        "buying_power": buying_power,
+                                        "crypto_positions": num_crypto_positions,
+                                        "max_crypto_positions": self.crypto_max_positions,
+                                    },
+                                    existing_positions=existing_crypto_symbols,
+                                )
+
+                                # Log AI decision
+                                self._log_ai_decision(symbol, ai_decision, analysis)
+
+                                # Update analysis result with AI decision
+                                self._crypto_analysis_results[symbol]["ai_decision"] = ai_decision
+
+                                # If AI rejects or says wait, skip this crypto
+                                if ai_decision.get("decision") != "APPROVE":
+                                    logger.info(
+                                        f"AI {ai_decision.get('decision', 'REJECTED')} trade for {symbol}: "
+                                        f"{ai_decision.get('reasoning', 'No reason provided')}"
+                                    )
+                                    if ai_decision.get("decision") == "WAIT":
+                                        self._crypto_scan_progress["scan_summary"] = (
+                                            f"AI says WAIT on {symbol}: {ai_decision.get('wait_for', 'better entry')}"
+                                        )
+                                    continue
+
+                                logger.info(
+                                    f"AI APPROVED trade for {symbol}: {ai_decision.get('reasoning', '')}"
+                                )
+
+                            # Position size based on risk per trade (or AI-suggested if available)
+                            position_size_pct = self.risk_manager.risk_per_trade_pct
+                            if ai_decision and ai_decision.get("suggested_position_size_pct"):
+                                position_size_pct = ai_decision["suggested_position_size_pct"]
+                                logger.info(f"Using AI-suggested position size: {position_size_pct*100:.1f}%")
+
+                            position_value = buying_power * position_size_pct
                             position_value = min(position_value, buying_power * self.risk_manager.max_position_size_pct)
 
                             if position_value < 10:  # Minimum $10 for crypto
                                 logger.debug(f"Insufficient buying power for {symbol}")
                                 continue
 
-                            # Calculate quantity from dollar amount
                             qty = position_value / price
 
-                            # Place crypto buy order
                             logger.info(f"Crypto BUY signal for {symbol}: confidence={confidence:.1f}, price=${price:.2f}, qty={qty:.6f}")
 
                             order = await crypto_service.place_crypto_order(
@@ -1133,8 +1407,15 @@ class TradingBot:
                             )
 
                             if order:
-                                logger.info(f"Crypto order placed for {symbol}: ${position_value:.2f}")
+                                ai_note = " (AI Approved)" if self.auto_trade_mode and ai_decision else ""
+                                logger.info(f"Crypto order placed for {symbol}: ${position_value:.2f}{ai_note}")
                                 num_crypto_positions += 1
+
+                                # Update scan status to found
+                                self._crypto_scan_progress["scan_status"] = "found_opportunity"
+                                self._crypto_scan_progress["scan_summary"] = (
+                                    f"Entered position: {symbol} at {confidence:.0f}% confidence{ai_note}"
+                                )
 
                                 if num_crypto_positions >= self.crypto_max_positions:
                                     break
@@ -1142,7 +1423,31 @@ class TradingBot:
                     except Exception as e:
                         logger.error(f"Error analyzing crypto {symbol}: {e}")
 
-            logger.debug("Crypto trading cycle complete")
+            # Finalize scan tracking
+            self._crypto_scan_progress["scanned"] = len(symbols_to_scan)
+            self._crypto_scan_progress["current_symbol"] = None
+            self._crypto_scan_progress["best_opportunity"] = best_buy_signal
+            self._crypto_scan_progress["last_scan_completed"] = datetime.now().isoformat()
+
+            # Set final scan status and summary
+            if self._crypto_scan_progress["scan_status"] != "found_opportunity":
+                if signals_above_threshold > 0:
+                    self._crypto_scan_progress["scan_status"] = "found_opportunity"
+                    self._crypto_scan_progress["scan_summary"] = f"Found {signals_above_threshold} signal(s) above threshold"
+                elif best_buy_signal:
+                    self._crypto_scan_progress["scan_status"] = "exhausted"
+                    gap = best_buy_signal["threshold"] - best_buy_signal["confidence"]
+                    self._crypto_scan_progress["scan_summary"] = (
+                        f"Scanned {len(symbols_to_scan)} cryptos - no signals above {self.strategy.entry_threshold:.0f}% threshold. "
+                        f"Best: {best_buy_signal['symbol']} at {best_buy_signal['confidence']:.0f}% ({gap:.0f}% below threshold)"
+                    )
+                else:
+                    self._crypto_scan_progress["scan_status"] = "exhausted"
+                    self._crypto_scan_progress["scan_summary"] = (
+                        f"Scanned {len(symbols_to_scan)} cryptos - no buy signals found. Waiting for next cycle..."
+                    )
+
+            logger.info(f"Crypto scan complete: {self._crypto_scan_progress['scan_summary']}")
 
         except Exception as e:
             logger.error(f"Error in crypto trading cycle: {e}")
