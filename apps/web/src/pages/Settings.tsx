@@ -1,6 +1,30 @@
 import { useState, useEffect } from 'react'
-import { Save, RefreshCw, AlertCircle, CheckCircle, Shield, TrendingUp, Clock, Zap, DollarSign, Target, Activity, Bitcoin } from 'lucide-react'
+import { Save, RefreshCw, AlertCircle, CheckCircle, Shield, TrendingUp, Clock, Zap, DollarSign, Target, Activity, Bitcoin, X, Plus, Search } from 'lucide-react'
 import CryptoSelector, { AVAILABLE_CRYPTOS } from '../components/CryptoSelector'
+
+// Popular stock symbols for quick selection
+const POPULAR_SYMBOLS = [
+  { symbol: 'AAPL', name: 'Apple' },
+  { symbol: 'MSFT', name: 'Microsoft' },
+  { symbol: 'GOOGL', name: 'Alphabet' },
+  { symbol: 'AMZN', name: 'Amazon' },
+  { symbol: 'NVDA', name: 'NVIDIA' },
+  { symbol: 'META', name: 'Meta' },
+  { symbol: 'TSLA', name: 'Tesla' },
+  { symbol: 'JPM', name: 'JPMorgan' },
+  { symbol: 'V', name: 'Visa' },
+  { symbol: 'JNJ', name: 'Johnson & Johnson' },
+  { symbol: 'WMT', name: 'Walmart' },
+  { symbol: 'PG', name: 'Procter & Gamble' },
+  { symbol: 'MA', name: 'Mastercard' },
+  { symbol: 'HD', name: 'Home Depot' },
+  { symbol: 'DIS', name: 'Disney' },
+  { symbol: 'NFLX', name: 'Netflix' },
+  { symbol: 'AMD', name: 'AMD' },
+  { symbol: 'CRM', name: 'Salesforce' },
+  { symbol: 'COST', name: 'Costco' },
+  { symbol: 'PFE', name: 'Pfizer' },
+]
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
 
@@ -371,20 +395,10 @@ export default function Settings() {
             </div>
           </div>
 
-          <div className="bg-slate-800 rounded-lg p-6 border border-slate-700">
-            <h2 className="text-lg font-semibold mb-4">Trading Symbols</h2>
-            <input
-              type="text"
-              value={settings.enabled_symbols?.join(', ') || ''}
-              onChange={(e) => setSettings({
-                ...settings,
-                enabled_symbols: e.target.value.split(',').map(s => s.trim().toUpperCase()).filter(s => s)
-              })}
-              className="w-full px-4 py-2 bg-slate-700 border border-slate-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none"
-              placeholder="AAPL, MSFT, GOOGL, AMZN, NVDA"
-            />
-            <p className="text-xs text-slate-500 mt-2">Enter symbols separated by commas</p>
-          </div>
+          <StockSymbolSelector
+            selected={settings.enabled_symbols || []}
+            onChange={(symbols) => setSettings({ ...settings, enabled_symbols: symbols })}
+          />
         </div>
       )}
 
@@ -905,5 +919,146 @@ function BrokerCard({
       </div>
       <p className="text-sm text-slate-400">{description}</p>
     </button>
+  )
+}
+
+// Stock Symbol Selector Component
+function StockSymbolSelector({
+  selected,
+  onChange
+}: {
+  selected: string[]
+  onChange: (symbols: string[]) => void
+}) {
+  const [customSymbol, setCustomSymbol] = useState('')
+  const [showAll, setShowAll] = useState(false)
+
+  const addSymbol = (symbol: string) => {
+    const upper = symbol.toUpperCase().trim()
+    if (upper && !selected.includes(upper)) {
+      onChange([...selected, upper])
+    }
+    setCustomSymbol('')
+  }
+
+  const removeSymbol = (symbol: string) => {
+    onChange(selected.filter(s => s !== symbol))
+  }
+
+  const toggleSymbol = (symbol: string) => {
+    if (selected.includes(symbol)) {
+      removeSymbol(symbol)
+    } else {
+      addSymbol(symbol)
+    }
+  }
+
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter' && customSymbol.trim()) {
+      e.preventDefault()
+      addSymbol(customSymbol)
+    }
+  }
+
+  const displayedPopular = showAll ? POPULAR_SYMBOLS : POPULAR_SYMBOLS.slice(0, 10)
+
+  return (
+    <div className="bg-slate-800 rounded-lg p-6 border border-slate-700">
+      <div className="flex items-center justify-between mb-4">
+        <div>
+          <h2 className="text-lg font-semibold flex items-center gap-2">
+            <TrendingUp className="h-5 w-5 text-blue-500" />
+            Trading Symbols
+          </h2>
+          <p className="text-sm text-slate-400 mt-1">
+            Select which stocks the bot should analyze and trade
+          </p>
+        </div>
+        <span className="px-3 py-1 bg-blue-600/20 text-blue-400 rounded-full text-sm font-medium">
+          {selected.length} selected
+        </span>
+      </div>
+
+      {/* Selected symbols as tags */}
+      {selected.length > 0 && (
+        <div className="mb-4">
+          <label className="block text-xs text-slate-500 mb-2 uppercase tracking-wider">Active Symbols</label>
+          <div className="flex flex-wrap gap-2">
+            {selected.map(symbol => (
+              <span
+                key={symbol}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-blue-600/20 text-blue-400 rounded-lg text-sm font-medium border border-blue-600/30"
+              >
+                {symbol}
+                <button
+                  onClick={() => removeSymbol(symbol)}
+                  className="hover:bg-blue-600/30 rounded p-0.5 transition-colors"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Add custom symbol */}
+      <div className="mb-4">
+        <label className="block text-xs text-slate-500 mb-2 uppercase tracking-wider">Add Custom Symbol</label>
+        <div className="flex gap-2">
+          <div className="relative flex-1">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-500" />
+            <input
+              type="text"
+              value={customSymbol}
+              onChange={(e) => setCustomSymbol(e.target.value.toUpperCase())}
+              onKeyDown={handleKeyDown}
+              placeholder="Enter symbol (e.g., AAPL)"
+              className="w-full pl-10 pr-4 py-2 bg-slate-700 border border-slate-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none text-sm"
+            />
+          </div>
+          <button
+            onClick={() => addSymbol(customSymbol)}
+            disabled={!customSymbol.trim()}
+            className="px-4 py-2 bg-blue-600 hover:bg-blue-500 disabled:bg-slate-700 disabled:text-slate-500 rounded-lg transition-colors flex items-center gap-2 text-sm font-medium"
+          >
+            <Plus className="h-4 w-4" />
+            Add
+          </button>
+        </div>
+      </div>
+
+      {/* Popular symbols grid */}
+      <div>
+        <label className="block text-xs text-slate-500 mb-2 uppercase tracking-wider">Popular Stocks</label>
+        <div className="grid grid-cols-5 gap-2">
+          {displayedPopular.map(({ symbol, name }) => {
+            const isSelected = selected.includes(symbol)
+            return (
+              <button
+                key={symbol}
+                onClick={() => toggleSymbol(symbol)}
+                className={`p-2 rounded-lg text-left transition-all border ${
+                  isSelected
+                    ? 'bg-blue-600/20 border-blue-500 text-blue-400'
+                    : 'bg-slate-700/50 border-slate-600 hover:border-slate-500 hover:bg-slate-700'
+                }`}
+              >
+                <p className="font-semibold text-sm">{symbol}</p>
+                <p className="text-xs text-slate-500 truncate">{name}</p>
+              </button>
+            )
+          })}
+        </div>
+        {POPULAR_SYMBOLS.length > 10 && (
+          <button
+            onClick={() => setShowAll(!showAll)}
+            className="mt-3 text-sm text-blue-400 hover:text-blue-300 transition-colors"
+          >
+            {showAll ? 'Show less' : `Show ${POPULAR_SYMBOLS.length - 10} more popular stocks`}
+          </button>
+        )}
+      </div>
+    </div>
   )
 }

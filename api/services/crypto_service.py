@@ -163,6 +163,8 @@ class CryptoService:
             timeframe: Bar timeframe (1Min, 5Min, 15Min, 1Hour, 1Day)
             limit: Number of bars to fetch
         """
+        from datetime import datetime, timedelta
+
         # Normalize symbol to format: BTC/USD (Alpaca requires slash format)
         symbol = symbol.upper().replace("/", "")
         if symbol.endswith("USD"):
@@ -170,17 +172,26 @@ class CryptoService:
         else:
             symbol = symbol + "/USD"
 
-        # For crypto bars, we DON'T specify a start date - just use limit
-        # Alpaca returns the most recent bars when no start is specified
-        # Specifying start can cause issues with data gaps for some coins
+        # Calculate start date to get enough historical data
+        # For hourly bars, go back enough days to get the requested limit
+        if timeframe == "1Hour":
+            days_back = max(7, (limit // 24) + 2)  # At least 7 days for indicators
+        elif timeframe == "1Day":
+            days_back = limit + 10
+        else:
+            days_back = 3  # For minute bars, 3 days should be enough
+
+        start_date = (datetime.utcnow() - timedelta(days=days_back)).strftime("%Y-%m-%dT00:00:00Z")
+
         endpoint = f"/v1beta3/crypto/us/bars"
         params = {
             "symbols": symbol,
             "timeframe": timeframe,
             "limit": limit,
+            "start": start_date,
         }
 
-        logger.debug(f"Fetching crypto bars: {symbol}, {timeframe}, limit={limit}")
+        logger.debug(f"Fetching crypto bars: {symbol}, {timeframe}, limit={limit}, start={start_date}")
         data = await self._make_request("GET", endpoint, base_url=self.data_url, params=params)
 
         if data and "bars" in data and symbol in data["bars"]:
@@ -307,10 +318,13 @@ class CryptoService:
         Analyze a cryptocurrency for trading signals.
 
         Returns technical analysis with buy/sell signals.
+        Uses nuanced scoring to differentiate between cryptos even in normal conditions.
         """
-        bars = await self.get_crypto_bars(symbol, "1Hour", 100)
+        # Try to get more bars - request 200 to ensure we have enough for indicators
+        bars = await self.get_crypto_bars(symbol, "1Hour", 200)
 
-        if not bars or len(bars) < 20:
+        # Require at least 10 bars for basic analysis (reduced from 20)
+        if not bars or len(bars) < 10:
             return {"error": "Insufficient data"}
 
         closes = [b["close"] for b in bars]
@@ -331,61 +345,213 @@ class CryptoService:
 
         current_price = closes[-1]
 
-        # Generate signals
+        # Generate signals with nuanced scoring
         signals = []
         score = 50  # Neutral starting score
 
-        # RSI signals
-        if rsi and rsi[-1] < 30:
-            signals.append("RSI oversold - bullish")
-            score += 15
-        elif rsi and rsi[-1] > 70:
-            signals.append("RSI overbought - bearish")
-            score -= 15
+        # === RSI Analysis (more nuanced) ===
+        if rsi and len(rsi) > 0:
+            current_rsi = rsi[-1]
+            # Extreme levels
+            if current_rsi < 30:
+                signals.append(f"RSI oversold ({current_rsi:.1f}) - strong bullish")
+                score += 18
+            elif current_rsi < 40:
+                signals.append(f"RSI approaching oversold ({current_rsi:.1f}) - bullish")
+                score += 10
+            elif current_rsi > 70:
+                signals.append(f"RSI overbought ({current_rsi:.1f}) - strong bearish")
+                score -= 18
+            elif current_rsi > 60:
+                signals.append(f"RSI elevated ({current_rsi:.1f}) - caution")
+                score -= 8
+            elif 45 <= current_rsi <= 55:
+                signals.append(f"RSI neutral ({current_rsi:.1f})")
+                # Neutral RSI - look at RSI trend
+                if len(rsi) >= 3 and rsi[-1] > rsi[-3]:
+                    signals.append("RSI trending up")
+                    score += 5
+                elif len(rsi) >= 3 and rsi[-1] < rsi[-3]:
+                    signals.append("RSI trending down")
+                    score -= 5
 
-        # MACD signals
-        if macd_line and signal_line:
-            if macd_line[-1] > signal_line[-1] and macd_line[-2] <= signal_line[-2]:
-                signals.append("MACD bullish crossover")
+        # === MACD Analysis (more nuanced) ===
+        if macd_line and signal_line and len(macd_line) >= 2:
+            macd_current = macd_line[-1]
+            signal_current = signal_line[-1]
+            macd_prev = macd_line[-2]
+            signal_prev = signal_line[-2]
+
+            # Crossover signals
+            if macd_current > signal_current and macd_prev <= signal_prev:
+                signals.append("MACD bullish crossover - buy signal")
                 score += 20
-            elif macd_line[-1] < signal_line[-1] and macd_line[-2] >= signal_line[-2]:
-                signals.append("MACD bearish crossover")
+            elif macd_current < signal_current and macd_prev >= signal_prev:
+                signals.append("MACD bearish crossover - sell signal")
                 score -= 20
+            else:
+                # No crossover - check positioning and momentum
+                macd_diff = macd_current - signal_current
+                if macd_diff > 0:
+                    signals.append(f"MACD above signal (+{abs(macd_diff):.4f}) - bullish")
+                    score += min(12, abs(macd_diff) * 100)  # Scale by strength
+                else:
+                    signals.append(f"MACD below signal ({macd_diff:.4f}) - bearish")
+                    score -= min(12, abs(macd_diff) * 100)
 
-        # Moving average signals
-        if sma_20 and sma_50:
-            if current_price > sma_20[-1] > sma_50[-1]:
-                signals.append("Price above rising MAs - bullish trend")
-                score += 10
-            elif current_price < sma_20[-1] < sma_50[-1]:
-                signals.append("Price below falling MAs - bearish trend")
-                score -= 10
+                # MACD momentum (is MACD accelerating?)
+                if len(histogram) >= 3:
+                    if histogram[-1] > histogram[-2] > histogram[-3]:
+                        signals.append("MACD momentum accelerating up")
+                        score += 6
+                    elif histogram[-1] < histogram[-2] < histogram[-3]:
+                        signals.append("MACD momentum accelerating down")
+                        score -= 6
 
-        # Bollinger Band signals
-        if upper_bb and lower_bb:
-            if current_price <= lower_bb[-1]:
-                signals.append("Price at lower Bollinger Band - potential bounce")
-                score += 10
-            elif current_price >= upper_bb[-1]:
-                signals.append("Price at upper Bollinger Band - potential pullback")
-                score -= 10
+        # === Moving Average Analysis (more nuanced) ===
+        if sma_20 and sma_50 and len(sma_20) > 0 and len(sma_50) > 0:
+            sma20_val = sma_20[-1]
+            sma50_val = sma_50[-1]
 
-        # Volume analysis
+            # Price vs MAs
+            price_vs_sma20_pct = ((current_price - sma20_val) / sma20_val) * 100
+            price_vs_sma50_pct = ((current_price - sma50_val) / sma50_val) * 100
+
+            # Bullish: price above both MAs, MAs aligned
+            if current_price > sma20_val > sma50_val:
+                signals.append(f"Strong uptrend: price > SMA20 > SMA50")
+                score += 12
+            elif current_price > sma20_val and current_price > sma50_val:
+                signals.append(f"Price above both MAs - bullish")
+                score += 8
+            elif current_price < sma20_val < sma50_val:
+                signals.append(f"Strong downtrend: price < SMA20 < SMA50")
+                score -= 12
+            elif current_price < sma20_val and current_price < sma50_val:
+                signals.append(f"Price below both MAs - bearish")
+                score -= 8
+            else:
+                # Mixed signals - price between MAs
+                if current_price > sma20_val:
+                    signals.append(f"Price above SMA20, below SMA50 - recovering")
+                    score += 4
+                else:
+                    signals.append(f"Price below SMA20, above SMA50 - weakening")
+                    score -= 4
+
+            # Golden/Death cross proximity
+            sma_gap_pct = ((sma20_val - sma50_val) / sma50_val) * 100
+            if -1 < sma_gap_pct < 1:
+                signals.append("MAs converging - potential crossover")
+                score += 3 if sma_gap_pct > 0 else -3
+
+        # === Bollinger Band Analysis (more nuanced) ===
+        if upper_bb and lower_bb and middle_bb:
+            bb_width = upper_bb[-1] - lower_bb[-1]
+            bb_position = (current_price - lower_bb[-1]) / bb_width if bb_width > 0 else 0.5
+
+            if bb_position <= 0.1:
+                signals.append("At lower BB - strong bounce potential")
+                score += 12
+            elif bb_position <= 0.25:
+                signals.append("Near lower BB - bullish opportunity")
+                score += 7
+            elif bb_position >= 0.9:
+                signals.append("At upper BB - pullback likely")
+                score -= 12
+            elif bb_position >= 0.75:
+                signals.append("Near upper BB - caution")
+                score -= 7
+            elif 0.4 <= bb_position <= 0.6:
+                signals.append("Middle of BB range - neutral")
+
+            # BB squeeze detection (volatility)
+            if len(upper_bb) >= 20:
+                avg_width = sum(upper_bb[i] - lower_bb[i] for i in range(-20, 0)) / 20
+                if bb_width < avg_width * 0.7:
+                    signals.append("BB squeeze - breakout expected")
+                    score += 5  # Volatility incoming
+
+        # === Price Momentum (short-term) ===
+        if len(closes) >= 6:
+            # 6-hour momentum
+            momentum_6h = ((closes[-1] - closes[-6]) / closes[-6]) * 100
+            if momentum_6h > 2:
+                signals.append(f"Strong 6h momentum: +{momentum_6h:.1f}%")
+                score += 8
+            elif momentum_6h > 0.5:
+                signals.append(f"Positive 6h momentum: +{momentum_6h:.1f}%")
+                score += 4
+            elif momentum_6h < -2:
+                signals.append(f"Weak 6h momentum: {momentum_6h:.1f}%")
+                score -= 8
+            elif momentum_6h < -0.5:
+                signals.append(f"Negative 6h momentum: {momentum_6h:.1f}%")
+                score -= 4
+
+        # === 24-hour trend ===
+        if len(closes) >= 24:
+            change_24h = ((closes[-1] - closes[-24]) / closes[-24]) * 100
+            if change_24h > 5:
+                signals.append(f"Strong 24h gain: +{change_24h:.1f}%")
+                score += 6
+            elif change_24h > 2:
+                signals.append(f"24h up: +{change_24h:.1f}%")
+                score += 3
+            elif change_24h < -5:
+                signals.append(f"Sharp 24h decline: {change_24h:.1f}%")
+                score -= 6
+            elif change_24h < -2:
+                signals.append(f"24h down: {change_24h:.1f}%")
+                score -= 3
+
+        # === Volume Analysis ===
         avg_volume = sum(volumes[-20:]) / 20 if len(volumes) >= 20 else sum(volumes) / len(volumes)
         volume_ratio = volumes[-1] / avg_volume if avg_volume > 0 else 1
 
-        if volume_ratio > 1.5:
-            signals.append(f"High volume ({volume_ratio:.1f}x average)")
+        if volume_ratio > 2.0:
+            signals.append(f"Very high volume ({volume_ratio:.1f}x) - strong interest")
+            score += 5
+        elif volume_ratio > 1.5:
+            signals.append(f"Elevated volume ({volume_ratio:.1f}x)")
+            score += 3
+        elif volume_ratio < 0.5:
+            signals.append(f"Low volume ({volume_ratio:.1f}x) - weak conviction")
+            score -= 3
 
-        # Determine recommendation
-        if score >= 70:
+        # === Support/Resistance proximity ===
+        if atr and len(atr) > 0:
+            current_atr = atr[-1]
+            # Check if near recent highs/lows (potential S/R)
+            recent_high = max(highs[-20:])
+            recent_low = min(lows[-20:])
+
+            dist_to_high = (recent_high - current_price) / current_atr if current_atr > 0 else 999
+            dist_to_low = (current_price - recent_low) / current_atr if current_atr > 0 else 999
+
+            if dist_to_high < 0.5:
+                signals.append("Near resistance - may face selling")
+                score -= 4
+            if dist_to_low < 0.5:
+                signals.append("Near support - buyers may step in")
+                score += 4
+
+        # Clamp score to 0-100
+        score = max(0, min(100, score))
+
+        # Determine recommendation based on score
+        if score >= 75:
             recommendation = "STRONG_BUY"
-        elif score >= 60:
+        elif score >= 65:
             recommendation = "BUY"
-        elif score <= 30:
+        elif score >= 55:
+            recommendation = "LEAN_BUY"
+        elif score <= 25:
             recommendation = "STRONG_SELL"
-        elif score <= 40:
+        elif score <= 35:
             recommendation = "SELL"
+        elif score <= 45:
+            recommendation = "LEAN_SELL"
         else:
             recommendation = "HOLD"
 
@@ -399,10 +565,12 @@ class CryptoService:
                 "rsi": rsi[-1] if rsi else None,
                 "macd": macd_line[-1] if macd_line else None,
                 "macd_signal": signal_line[-1] if signal_line else None,
+                "macd_histogram": histogram[-1] if histogram else None,
                 "sma_20": sma_20[-1] if sma_20 else None,
                 "sma_50": sma_50[-1] if sma_50 else None,
                 "atr": atr[-1] if atr else None,
                 "volume_ratio": volume_ratio,
+                "bb_position": bb_position if upper_bb and lower_bb else None,
             },
             "support": lower_bb[-1] if lower_bb else None,
             "resistance": upper_bb[-1] if upper_bb else None,

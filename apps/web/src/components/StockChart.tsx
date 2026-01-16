@@ -93,13 +93,27 @@ export default function StockChart({ symbol, chartType = 'candlestick', period =
         if (isCancelled) return
 
         // Filter and sort
-        const filteredData = filterByPeriod(data.history, period)
+        let filteredData = filterByPeriod(data.history, period)
+
+        // If no data for selected period (e.g., before market open), show most recent available data
+        if (filteredData.length === 0 && data.history.length > 0) {
+          // For intraday intervals, show most recent day's data
+          const sortedHistory = [...data.history].sort((a: HistoricalData, b: HistoricalData) =>
+            new Date(b.date).getTime() - new Date(a.date).getTime()
+          )
+          // Get the most recent date and filter to that day
+          const mostRecentDate = new Date(sortedHistory[0].date).toDateString()
+          filteredData = data.history.filter((item: HistoricalData) =>
+            new Date(item.date).toDateString() === mostRecentDate
+          )
+        }
+
         const sortedData = [...filteredData].sort((a: HistoricalData, b: HistoricalData) =>
           new Date(a.date).getTime() - new Date(b.date).getTime()
         )
 
         if (sortedData.length === 0) {
-          throw new Error('No data for selected period')
+          throw new Error('No historical data available')
         }
 
         setChartData(sortedData)
