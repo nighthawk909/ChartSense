@@ -20,7 +20,7 @@ export default function Layout() {
   const [isSearching, setIsSearching] = useState(false)
   const [showResults, setShowResults] = useState(false)
   const searchRef = useRef<HTMLDivElement>(null)
-  const searchTimeout = useRef<NodeJS.Timeout | null>(null)
+  const searchTimeout = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const navItems = [
     { path: '/', icon: LayoutDashboard, label: 'Dashboard' },

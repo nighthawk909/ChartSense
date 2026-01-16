@@ -1,21 +1,38 @@
 import { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
-import { TrendingUp, TrendingDown, Star } from 'lucide-react'
+import { TrendingUp, TrendingDown, RefreshCw, AlertCircle } from 'lucide-react'
 import StockChart from '../components/StockChart'
 
-// Mock data for demonstration
-const mockWatchlist = [
-  { symbol: 'AAPL', name: 'Apple Inc.', price: 178.72, change: 2.34, changePercent: 1.32 },
-  { symbol: 'MSFT', name: 'Microsoft Corp.', price: 378.91, change: -1.23, changePercent: -0.32 },
-  { symbol: 'GOOGL', name: 'Alphabet Inc.', price: 141.80, change: 3.45, changePercent: 2.49 },
-  { symbol: 'AMZN', name: 'Amazon.com Inc.', price: 178.25, change: -2.15, changePercent: -1.19 },
-  { symbol: 'NVDA', name: 'NVIDIA Corp.', price: 875.28, change: 15.67, changePercent: 1.82 },
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
+
+interface StockQuote {
+  symbol: string
+  price: number
+  change: number
+  change_percent: number
+}
+
+interface WatchlistStock {
+  symbol: string
+  name: string
+  price: number
+  change: number
+  changePercent: number
+}
+
+// Default watchlist (will be updated with live data)
+const defaultWatchlist: WatchlistStock[] = [
+  { symbol: 'AAPL', name: 'Apple Inc.', price: 0, change: 0, changePercent: 0 },
+  { symbol: 'MSFT', name: 'Microsoft Corp.', price: 0, change: 0, changePercent: 0 },
+  { symbol: 'GOOGL', name: 'Alphabet Inc.', price: 0, change: 0, changePercent: 0 },
+  { symbol: 'AMZN', name: 'Amazon.com Inc.', price: 0, change: 0, changePercent: 0 },
+  { symbol: 'NVDA', name: 'NVIDIA Corp.', price: 0, change: 0, changePercent: 0 },
 ]
 
 const marketIndices = [
-  { symbol: 'SPY', name: 'S&P 500', price: 4783.45, change: 12.34, changePercent: 0.26 },
-  { symbol: 'QQQ', name: 'Nasdaq 100', price: 16234.56, change: 45.67, changePercent: 0.28 },
-  { symbol: 'DIA', name: 'Dow Jones', price: 37689.12, change: -23.45, changePercent: -0.06 },
+  { symbol: 'SPY', name: 'S&P 500' },
+  { symbol: 'QQQ', name: 'Nasdaq 100' },
+  { symbol: 'DIA', name: 'Dow Jones' },
 ]
 
 type TimeInterval = '1min' | '5min' | '15min' | '30min' | '60min' | 'daily'
@@ -24,6 +41,75 @@ export default function Dashboard() {
   const [selectedStock, setSelectedStock] = useState('AAPL')
   const [selectedPeriod, setSelectedPeriod] = useState('1M')
   const [selectedInterval, setSelectedInterval] = useState<TimeInterval>('daily')
+  const [watchlist, setWatchlist] = useState<WatchlistStock[]>(defaultWatchlist)
+  const [indices, setIndices] = useState<Record<string, StockQuote>>({})
+  const [lastUpdated, setLastUpdated] = useState<Date | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const [refreshing, setRefreshing] = useState(false)
+
+  // Fetch live stock quotes
+  const fetchQuotes = async () => {
+    setError(null)
+    try {
+      // Fetch index quotes
+      const indexPromises = marketIndices.map(async (idx) => {
+        const response = await fetch(`${API_URL}/api/stocks/quote/${idx.symbol}`)
+        if (response.ok) {
+          const data = await response.json()
+          return { symbol: idx.symbol, data }
+        }
+        return null
+      })
+
+      // Fetch watchlist quotes
+      const watchlistPromises = defaultWatchlist.map(async (stock) => {
+        const response = await fetch(`${API_URL}/api/stocks/quote/${stock.symbol}`)
+        if (response.ok) {
+          const data = await response.json()
+          return { ...stock, price: data.price, change: data.change, changePercent: data.change_percent }
+        }
+        return stock
+      })
+
+      const [indexResults, watchlistResults] = await Promise.all([
+        Promise.all(indexPromises),
+        Promise.all(watchlistPromises)
+      ])
+
+      // Update indices
+      const newIndices: Record<string, StockQuote> = {}
+      indexResults.forEach((result) => {
+        if (result) {
+          newIndices[result.symbol] = result.data
+        }
+      })
+      setIndices(newIndices)
+
+      // Update watchlist
+      setWatchlist(watchlistResults)
+      setLastUpdated(new Date())
+    } catch (err) {
+      console.error('Failed to fetch quotes:', err)
+      setError('Failed to fetch live data. Make sure the API is running.')
+    } finally {
+      setLoading(false)
+      setRefreshing(false)
+    }
+  }
+
+  // Initial fetch and auto-refresh
+  useEffect(() => {
+    fetchQuotes()
+    // Refresh every 30 seconds
+    const interval = setInterval(fetchQuotes, 30000)
+    return () => clearInterval(interval)
+  }, [])
+
+  const handleRefresh = () => {
+    setRefreshing(true)
+    fetchQuotes()
+  }
 
   // Available intervals with labels
   const intervals: { value: TimeInterval; label: string }[] = [
@@ -38,38 +124,81 @@ export default function Dashboard() {
 
   return (
     <div className="space-y-6">
+      {/* Header with timestamp and refresh */}
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-bold">Dashboard</h1>
+          <div className="flex items-center gap-3 mt-1">
+            {lastUpdated && (
+              <div className="flex items-center gap-1.5">
+                <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></span>
+                <span className="text-sm text-green-400">
+                  Live data updated: {lastUpdated.toLocaleTimeString()}
+                </span>
+              </div>
+            )}
+            {loading && (
+              <span className="text-sm text-slate-400">Loading...</span>
+            )}
+          </div>
+        </div>
+        <button
+          onClick={handleRefresh}
+          disabled={refreshing}
+          className="flex items-center gap-2 px-4 py-2 bg-slate-700 hover:bg-slate-600 rounded-lg transition-colors"
+        >
+          <RefreshCw className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} />
+          Refresh
+        </button>
+      </div>
+
+      {/* Error banner */}
+      {error && (
+        <div className="bg-red-900/50 border border-red-700 rounded-lg p-4 flex items-center gap-3">
+          <AlertCircle className="h-5 w-5 text-red-500" />
+          <span>{error}</span>
+        </div>
+      )}
+
       {/* Market Overview */}
       <section>
         <h2 className="text-lg font-semibold mb-4">Market Overview</h2>
         <div className="grid grid-cols-3 gap-4">
-          {marketIndices.map((index) => (
-            <div
-              key={index.symbol}
-              className="bg-slate-800 rounded-lg p-4 border border-slate-700"
-            >
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm text-slate-400">{index.name}</p>
-                  <p className="text-xl font-semibold">{index.price.toLocaleString()}</p>
-                </div>
-                <div
-                  className={`flex items-center gap-1 ${
-                    index.change >= 0 ? 'text-green-500' : 'text-red-500'
-                  }`}
-                >
-                  {index.change >= 0 ? (
-                    <TrendingUp className="h-4 w-4" />
-                  ) : (
-                    <TrendingDown className="h-4 w-4" />
+          {marketIndices.map((idx) => {
+            const quote = indices[idx.symbol]
+            return (
+              <div
+                key={idx.symbol}
+                className="bg-slate-800 rounded-lg p-4 border border-slate-700"
+              >
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm text-slate-400">{idx.name}</p>
+                    <p className="text-xl font-semibold">
+                      {quote ? `$${quote.price.toFixed(2)}` : '--'}
+                    </p>
+                  </div>
+                  {quote && (
+                    <div
+                      className={`flex items-center gap-1 ${
+                        quote.change_percent >= 0 ? 'text-green-500' : 'text-red-500'
+                      }`}
+                    >
+                      {quote.change_percent >= 0 ? (
+                        <TrendingUp className="h-4 w-4" />
+                      ) : (
+                        <TrendingDown className="h-4 w-4" />
+                      )}
+                      <span className="font-medium">
+                        {quote.change_percent >= 0 ? '+' : ''}
+                        {quote.change_percent.toFixed(2)}%
+                      </span>
+                    </div>
                   )}
-                  <span className="font-medium">
-                    {index.change >= 0 ? '+' : ''}
-                    {index.changePercent.toFixed(2)}%
-                  </span>
                 </div>
               </div>
-            </div>
-          ))}
+            )
+          })}
         </div>
       </section>
 
@@ -137,7 +266,7 @@ export default function Dashboard() {
               </Link>
             </div>
             <div className="space-y-2">
-              {mockWatchlist.map((stock) => (
+              {watchlist.map((stock) => (
                 <button
                   key={stock.symbol}
                   onClick={() => setSelectedStock(stock.symbol)}
@@ -152,14 +281,20 @@ export default function Dashboard() {
                     <p className="text-sm text-slate-400">{stock.name}</p>
                   </div>
                   <div className="text-right">
-                    <p className="font-medium">${stock.price.toFixed(2)}</p>
+                    <p className="font-medium">
+                      {stock.price > 0 ? `$${stock.price.toFixed(2)}` : '--'}
+                    </p>
                     <p
                       className={`text-sm ${
-                        stock.change >= 0 ? 'text-green-500' : 'text-red-500'
+                        stock.changePercent >= 0 ? 'text-green-500' : 'text-red-500'
                       }`}
                     >
-                      {stock.change >= 0 ? '+' : ''}
-                      {stock.changePercent.toFixed(2)}%
+                      {stock.price > 0 ? (
+                        <>
+                          {stock.changePercent >= 0 ? '+' : ''}
+                          {stock.changePercent.toFixed(2)}%
+                        </>
+                      ) : '--'}
                     </p>
                   </div>
                 </button>

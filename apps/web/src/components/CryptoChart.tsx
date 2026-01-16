@@ -1,19 +1,18 @@
 import { useEffect, useRef, useState } from 'react'
-import { createChart, ColorType, IChartApi } from 'lightweight-charts'
+import { createChart, ColorType, IChartApi, UTCTimestamp } from 'lightweight-charts'
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
 
-type TimeInterval = '1min' | '5min' | '15min' | '30min' | '60min' | 'daily' | 'weekly' | 'monthly'
+type TimeInterval = '1Min' | '5Min' | '15Min' | '1Hour' | '1Day'
 
-interface StockChartProps {
+interface CryptoChartProps {
   symbol: string
   chartType?: 'candlestick' | 'line'
-  period?: string
-  interval?: TimeInterval
+  timeframe?: TimeInterval
 }
 
-interface HistoricalData {
-  date: string
+interface BarData {
+  timestamp: string
   open: number
   high: number
   low: number
@@ -21,42 +20,13 @@ interface HistoricalData {
   volume: number
 }
 
-export default function StockChart({ symbol, chartType = 'candlestick', period = '1M', interval = 'daily' }: StockChartProps) {
+export default function CryptoChart({ symbol, chartType = 'candlestick', timeframe = '1Hour' }: CryptoChartProps) {
   const chartContainerRef = useRef<HTMLDivElement>(null)
   const chartRef = useRef<IChartApi | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null)
   const [dataPoints, setDataPoints] = useState<number>(0)
-
-  // Filter data based on period
-  const filterByPeriod = (data: HistoricalData[], period: string): HistoricalData[] => {
-    const now = new Date()
-    let cutoffDate: Date
-
-    switch (period) {
-      case '1D':
-        cutoffDate = new Date(now.getTime() - 1 * 24 * 60 * 60 * 1000)
-        break
-      case '1W':
-        cutoffDate = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000)
-        break
-      case '1M':
-        cutoffDate = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000)
-        break
-      case '3M':
-        cutoffDate = new Date(now.getTime() - 90 * 24 * 60 * 60 * 1000)
-        break
-      case '1Y':
-        cutoffDate = new Date(now.getTime() - 365 * 24 * 60 * 60 * 1000)
-        break
-      case 'ALL':
-      default:
-        return data
-    }
-
-    return data.filter(item => new Date(item.date) >= cutoffDate)
-  }
 
   useEffect(() => {
     if (!chartContainerRef.current) return
@@ -72,7 +42,7 @@ export default function StockChart({ symbol, chartType = 'candlestick', period =
         horzLines: { color: '#334155' },
       },
       width: chartContainerRef.current.clientWidth,
-      height: 350,
+      height: 300,
       crosshair: {
         vertLine: { color: '#64748b', labelBackgroundColor: '#1e293b' },
         horzLine: { color: '#64748b', labelBackgroundColor: '#1e293b' },
@@ -89,25 +59,19 @@ export default function StockChart({ symbol, chartType = 'candlestick', period =
       setError(null)
 
       try {
-        const outputsize = ['1Y', 'ALL'].includes(period) ? 'full' : 'compact'
-        const response = await fetch(`${API_URL}/api/stocks/history/${symbol}?outputsize=${outputsize}&interval=${interval}`)
+        const response = await fetch(`${API_URL}/api/crypto/bars/${encodeURIComponent(symbol)}?timeframe=${timeframe}&limit=100`)
 
-        if (!response.ok) throw new Error('Failed to fetch stock data')
+        if (!response.ok) throw new Error('Failed to fetch crypto data')
 
         const data = await response.json()
-        if (!data.history || data.history.length === 0) {
+        if (!data.bars || data.bars.length === 0) {
           throw new Error('No historical data available')
         }
 
-        // Filter and sort
-        const filteredData = filterByPeriod(data.history, period)
-        const sortedData = [...filteredData].sort((a: HistoricalData, b: HistoricalData) =>
-          new Date(a.date).getTime() - new Date(b.date).getTime()
+        // Sort by timestamp
+        const sortedData = [...data.bars].sort((a: BarData, b: BarData) =>
+          new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
         )
-
-        if (sortedData.length === 0) {
-          throw new Error('No data for selected period')
-        }
 
         // Track data freshness
         setLastUpdated(new Date())
@@ -122,8 +86,8 @@ export default function StockChart({ symbol, chartType = 'candlestick', period =
             wickDownColor: '#ef4444',
             wickUpColor: '#22c55e',
           })
-          series.setData(sortedData.map((d: HistoricalData) => ({
-            time: d.date,
+          series.setData(sortedData.map((d: BarData) => ({
+            time: Math.floor(new Date(d.timestamp).getTime() / 1000) as UTCTimestamp,
             open: d.open,
             high: d.high,
             low: d.low,
@@ -131,8 +95,8 @@ export default function StockChart({ symbol, chartType = 'candlestick', period =
           })))
         } else {
           const series = chart.addLineSeries({ color: '#3b82f6', lineWidth: 2 })
-          series.setData(sortedData.map((d: HistoricalData) => ({
-            time: d.date,
+          series.setData(sortedData.map((d: BarData) => ({
+            time: Math.floor(new Date(d.timestamp).getTime() / 1000) as UTCTimestamp,
             value: d.close,
           })))
         }
@@ -144,15 +108,15 @@ export default function StockChart({ symbol, chartType = 'candlestick', period =
           priceScaleId: '',
         })
         volumeSeries.priceScale().applyOptions({ scaleMargins: { top: 0.8, bottom: 0 } })
-        volumeSeries.setData(sortedData.map((d: HistoricalData) => ({
-          time: d.date,
+        volumeSeries.setData(sortedData.map((d: BarData) => ({
+          time: Math.floor(new Date(d.timestamp).getTime() / 1000) as UTCTimestamp,
           value: d.volume,
           color: d.close >= d.open ? '#22c55e40' : '#ef444440',
         })))
 
         chart.timeScale().fitContent()
       } catch (err) {
-        console.error('Chart error:', err)
+        console.error('Crypto chart error:', err)
         setError(err instanceof Error ? err.message : 'Failed to load chart')
       } finally {
         setLoading(false)
@@ -172,11 +136,11 @@ export default function StockChart({ symbol, chartType = 'candlestick', period =
       window.removeEventListener('resize', handleResize)
       chart.remove()
     }
-  }, [symbol, chartType, period, interval])
+  }, [symbol, chartType, timeframe])
 
   if (loading) {
     return (
-      <div className="w-full h-[350px] flex items-center justify-center">
+      <div className="w-full h-[300px] flex items-center justify-center">
         <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500"></div>
       </div>
     )
@@ -184,20 +148,10 @@ export default function StockChart({ symbol, chartType = 'candlestick', period =
 
   if (error) {
     return (
-      <div className="w-full h-[350px] flex items-center justify-center text-red-400">
+      <div className="w-full h-[300px] flex items-center justify-center text-red-400">
         <p>{error}</p>
       </div>
     )
-  }
-
-  const formatLastUpdated = () => {
-    if (!lastUpdated) return ''
-    const now = new Date()
-    const diffSeconds = Math.floor((now.getTime() - lastUpdated.getTime()) / 1000)
-    if (diffSeconds < 60) return `${diffSeconds}s ago`
-    const diffMinutes = Math.floor(diffSeconds / 60)
-    if (diffMinutes < 60) return `${diffMinutes}m ago`
-    return lastUpdated.toLocaleTimeString()
   }
 
   return (
@@ -208,7 +162,7 @@ export default function StockChart({ symbol, chartType = 'candlestick', period =
           <span>{dataPoints} data points</span>
           <div className="flex items-center gap-1">
             <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></span>
-            <span>Updated {formatLastUpdated()}</span>
+            <span>Updated {lastUpdated.toLocaleTimeString()}</span>
           </div>
         </div>
       )}

@@ -25,7 +25,8 @@ const mockWatchlist: WatchlistStock[] = [
 export default function Watchlist() {
   const [watchlist, setWatchlist] = useState(mockWatchlist)
   const [searchQuery, setSearchQuery] = useState('')
-  const [showAddModal, setShowAddModal] = useState(false)
+  // TODO: Implement add modal
+  const [, setShowAddModal] = useState(false)
 
   const filteredWatchlist = watchlist.filter(
     (stock) =>

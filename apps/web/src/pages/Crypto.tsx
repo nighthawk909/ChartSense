@@ -1,7 +1,10 @@
 import { useState, useEffect } from 'react'
-import { TrendingUp, TrendingDown, RefreshCw, AlertCircle, Activity, DollarSign, Clock } from 'lucide-react'
+import { TrendingUp, TrendingDown, RefreshCw, AlertCircle, Activity, DollarSign, Clock, BarChart3 } from 'lucide-react'
+import CryptoChart from '../components/CryptoChart'
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
+
+type CryptoTimeframe = '1Min' | '5Min' | '15Min' | '1Hour' | '1Day'
 
 interface CryptoQuote {
   symbol: string
@@ -35,9 +38,18 @@ export default function Crypto() {
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
   const [marketStatus, setMarketStatus] = useState<MarketStatus | null>(null)
-  const [selectedCrypto, setSelectedCrypto] = useState<string | null>(null)
+  const [selectedCrypto, setSelectedCrypto] = useState<string | null>('BTC/USD')
   const [error, setError] = useState<string | null>(null)
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null)
+  const [selectedTimeframe, setSelectedTimeframe] = useState<CryptoTimeframe>('1Hour')
+
+  const timeframes: { value: CryptoTimeframe; label: string }[] = [
+    { value: '1Min', label: '1m' },
+    { value: '5Min', label: '5m' },
+    { value: '15Min', label: '15m' },
+    { value: '1Hour', label: '1h' },
+    { value: '1Day', label: '1D' },
+  ]
 
   const fetchMarketStatus = async () => {
     try {
@@ -232,78 +244,112 @@ export default function Crypto() {
         })}
       </div>
 
-      {/* Selected Crypto Details */}
-      {selectedCrypto && quotes[selectedCrypto] && (
+      {/* Selected Crypto Chart and Details */}
+      {selectedCrypto && (
         <div className="bg-slate-800 rounded-lg p-6 border border-slate-700">
-          <h2 className="text-lg font-semibold mb-4">
-            {POPULAR_CRYPTOS.find(c => c.symbol === selectedCrypto)?.name} Details
-          </h2>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
-            <div>
-              <div className="flex items-center gap-2 text-slate-400 text-sm mb-1">
-                <DollarSign className="h-4 w-4" />
-                24h High
-              </div>
-              <p className="text-lg font-semibold text-green-500">
-                ${formatPrice(quotes[selectedCrypto].high_24h)}
-              </p>
+          <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center gap-3">
+              <BarChart3 className="h-5 w-5 text-blue-400" />
+              <h2 className="text-lg font-semibold">
+                {POPULAR_CRYPTOS.find(c => c.symbol === selectedCrypto)?.name} Chart
+              </h2>
             </div>
-            <div>
-              <div className="flex items-center gap-2 text-slate-400 text-sm mb-1">
-                <DollarSign className="h-4 w-4" />
-                24h Low
-              </div>
-              <p className="text-lg font-semibold text-red-500">
-                ${formatPrice(quotes[selectedCrypto].low_24h)}
-              </p>
-            </div>
-            <div>
-              <div className="flex items-center gap-2 text-slate-400 text-sm mb-1">
-                <Activity className="h-4 w-4" />
-                24h Volume
-              </div>
-              <p className="text-lg font-semibold">
-                {formatVolume(quotes[selectedCrypto].volume_24h)}
-              </p>
-            </div>
-            <div>
-              <div className="flex items-center gap-2 text-slate-400 text-sm mb-1">
-                <Clock className="h-4 w-4" />
-                Last Update
-              </div>
-              <p className="text-lg font-semibold">
-                {new Date().toLocaleTimeString()}
-              </p>
+            {/* Timeframe selector */}
+            <div className="flex gap-1 bg-slate-900 rounded-lg p-1">
+              {timeframes.map((tf) => (
+                <button
+                  key={tf.value}
+                  onClick={() => setSelectedTimeframe(tf.value)}
+                  className={`px-3 py-1 text-xs rounded transition-colors ${
+                    selectedTimeframe === tf.value
+                      ? 'bg-blue-600 text-white'
+                      : 'text-slate-400 hover:text-white hover:bg-slate-700'
+                  }`}
+                >
+                  {tf.label}
+                </button>
+              ))}
             </div>
           </div>
 
-          {/* Price Range Bar */}
-          <div className="mt-6">
-            <p className="text-sm text-slate-400 mb-2">24h Price Range</p>
-            <div className="relative h-2 bg-slate-700 rounded-full overflow-hidden">
-              {(() => {
-                const quote = quotes[selectedCrypto]
-                const range = quote.high_24h - quote.low_24h
-                const position = range > 0 ? ((quote.price - quote.low_24h) / range) * 100 : 50
-                return (
-                  <>
-                    <div
-                      className="absolute h-full bg-gradient-to-r from-red-500 via-yellow-500 to-green-500"
-                      style={{ width: '100%' }}
-                    />
-                    <div
-                      className="absolute w-3 h-3 bg-white rounded-full -top-0.5 transform -translate-x-1/2 shadow-lg"
-                      style={{ left: `${Math.min(Math.max(position, 2), 98)}%` }}
-                    />
-                  </>
-                )
-              })()}
-            </div>
-            <div className="flex justify-between mt-1 text-xs text-slate-500">
-              <span>${formatPrice(quotes[selectedCrypto].low_24h)}</span>
-              <span>${formatPrice(quotes[selectedCrypto].high_24h)}</span>
-            </div>
-          </div>
+          {/* Crypto Chart */}
+          <CryptoChart
+            symbol={selectedCrypto}
+            timeframe={selectedTimeframe}
+            chartType="candlestick"
+          />
+
+          {/* Stats */}
+          {quotes[selectedCrypto] && (
+            <>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-6 mt-6 pt-6 border-t border-slate-700">
+                <div>
+                  <div className="flex items-center gap-2 text-slate-400 text-sm mb-1">
+                    <DollarSign className="h-4 w-4" />
+                    24h High
+                  </div>
+                  <p className="text-lg font-semibold text-green-500">
+                    ${formatPrice(quotes[selectedCrypto].high_24h)}
+                  </p>
+                </div>
+                <div>
+                  <div className="flex items-center gap-2 text-slate-400 text-sm mb-1">
+                    <DollarSign className="h-4 w-4" />
+                    24h Low
+                  </div>
+                  <p className="text-lg font-semibold text-red-500">
+                    ${formatPrice(quotes[selectedCrypto].low_24h)}
+                  </p>
+                </div>
+                <div>
+                  <div className="flex items-center gap-2 text-slate-400 text-sm mb-1">
+                    <Activity className="h-4 w-4" />
+                    24h Volume
+                  </div>
+                  <p className="text-lg font-semibold">
+                    {formatVolume(quotes[selectedCrypto].volume_24h)}
+                  </p>
+                </div>
+                <div>
+                  <div className="flex items-center gap-2 text-slate-400 text-sm mb-1">
+                    <Clock className="h-4 w-4" />
+                    Last Update
+                  </div>
+                  <p className="text-lg font-semibold">
+                    {lastUpdated ? lastUpdated.toLocaleTimeString() : '--'}
+                  </p>
+                </div>
+              </div>
+
+              {/* Price Range Bar */}
+              <div className="mt-6">
+                <p className="text-sm text-slate-400 mb-2">24h Price Range</p>
+                <div className="relative h-2 bg-slate-700 rounded-full overflow-hidden">
+                  {(() => {
+                    const quote = quotes[selectedCrypto]
+                    const range = quote.high_24h - quote.low_24h
+                    const position = range > 0 ? ((quote.price - quote.low_24h) / range) * 100 : 50
+                    return (
+                      <>
+                        <div
+                          className="absolute h-full bg-gradient-to-r from-red-500 via-yellow-500 to-green-500"
+                          style={{ width: '100%' }}
+                        />
+                        <div
+                          className="absolute w-3 h-3 bg-white rounded-full -top-0.5 transform -translate-x-1/2 shadow-lg"
+                          style={{ left: `${Math.min(Math.max(position, 2), 98)}%` }}
+                        />
+                      </>
+                    )
+                  })()}
+                </div>
+                <div className="flex justify-between mt-1 text-xs text-slate-500">
+                  <span>${formatPrice(quotes[selectedCrypto].low_24h)}</span>
+                  <span>${formatPrice(quotes[selectedCrypto].high_24h)}</span>
+                </div>
+              </div>
+            </>
+          )}
         </div>
       )}
 

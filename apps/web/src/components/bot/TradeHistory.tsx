@@ -31,12 +31,10 @@ interface TradeHistoryProps {
 
 // Post-mortem analysis panel component
 function PostMortemPanel({
-  trade,
   analysis,
   loading,
   onReanalyze
 }: {
-  trade: Trade;
   analysis: TradeAnalysis | null;
   loading: boolean;
   onReanalyze: () => void;
@@ -374,7 +372,6 @@ export default function TradeHistory({
                       <tr key={`${trade.id}-analysis`}>
                         <td colSpan={8} className="p-0">
                           <PostMortemPanel
-                            trade={trade}
                             analysis={analysisData[trade.id]}
                             loading={analysisLoading[trade.id] || false}
                             onReanalyze={() => reanalyze(trade.id)}
