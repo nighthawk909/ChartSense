@@ -39,7 +39,31 @@
       "Bash(python3:*)",
       "Bash(for pid in 29408 120784 128120 87476)",
       "Bash(do taskkill //F //PID $pid)",
-      "Bash(done)"
+      "Bash(done)",
+      "Bash(npm install:*)",
+      "Bash(railway login:*)",
+      "Bash(railway whoami:*)",
+      "Bash(vercel:*)",
+      "Bash(ls:*)",
+      "Bash(rm:*)",
+      "Bash(cmd //c \"start ChartSense.bat\")",
+      "Bash(venvScriptspython -c \"from services.crypto_service import CryptoService; print\\(''Import OK''\\)\")",
+      "Bash(cmd //c \"venv\\\\Scripts\\\\python -c \"\"from services.crypto_service import CryptoService; print\\(''Import OK''\\)\"\"\")",
+      "Bash(cmd //c \"venv\\\\Scripts\\\\python -c \"\"print\\(''test''\\)\"\"\")",
+      "Bash(cmd //c \"venv\\\\Scripts\\\\python -c \"\"from services.crypto_service import CryptoService\"\"\")",
+      "Bash(venv\\\\Scripts\\\\python.exe:*)",
+      "Bash(cmd //c \"venv\\\\Scripts\\\\python.exe test_crypto_analysis.py\")",
+      "Bash(python -m json.tool:*)",
+      "Bash(tasklist /FI \"IMAGENAME eq python.exe\")",
+      "Bash(start /B python -m uvicorn:*)"
+    ]
+  },
+  "hooks": {
+    "SessionStart": [
+      {
+        "type": "command",
+        "command": "rm -f tmpclaude-*-cwd 2>/dev/null; exit 0"
+      }
     ]
   }
 }

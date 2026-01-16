@@ -3,7 +3,7 @@
  * Main interface for controlling and monitoring the automated trading bot
  */
 import { useState, useEffect, useCallback } from 'react';
-import { RefreshCw } from 'lucide-react';
+import { RefreshCw, Brain, BarChart3 } from 'lucide-react';
 
 import BotStatusCard from '../components/bot/BotStatusCard';
 import BotControls from '../components/bot/BotControls';
@@ -12,6 +12,9 @@ import CurrentPositions from '../components/bot/CurrentPositions';
 import TradeHistory from '../components/bot/TradeHistory';
 import PerformanceStats from '../components/bot/PerformanceStats';
 import ActivityLog from '../components/bot/ActivityLog';
+import AssetClassToggle, { type AssetClassMode } from '../components/bot/AssetClassToggle';
+import TickerCarousel from '../components/bot/TickerCarousel';
+import AIIntelligenceSidebar from '../components/bot/AIIntelligenceSidebar';
 
 import { botApi, positionsApi, performanceApi } from '../services/botApi';
 import type {
@@ -31,6 +34,8 @@ interface ActivityItem {
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
+type StrategyOverride = 'none' | 'conservative' | 'moderate' | 'aggressive';
+
 export default function TradingBot() {
   // State
   const [status, setStatus] = useState<BotStatus | null>(null);
@@ -41,6 +46,14 @@ export default function TradingBot() {
   const [tradesPage, setTradesPage] = useState(1);
   const [metrics, setMetrics] = useState<PerformanceMetrics | null>(null);
   const [activities, setActivities] = useState<ActivityItem[]>([]);
+
+  // New UI state
+  const [assetMode, setAssetMode] = useState<AssetClassMode>('both');
+  const [showAISidebar, setShowAISidebar] = useState(false);
+  const [carouselIndex, setCarouselIndex] = useState(0);
+  const [newEntriesPaused, setNewEntriesPaused] = useState(false);
+  const [currentStrategy, setCurrentStrategy] = useState<StrategyOverride>('moderate');
+  const [scanCount, setScanCount] = useState(0);
 
   // Loading states
   const [statusLoading, setStatusLoading] = useState(true);
@@ -56,6 +69,16 @@ export default function TradingBot() {
     try {
       const data = await botApi.getStatus();
       setStatus(data);
+      // Update tactical control states from status
+      if (data.new_entries_paused !== undefined) {
+        setNewEntriesPaused(data.new_entries_paused);
+      }
+      if (data.strategy_override) {
+        setCurrentStrategy(data.strategy_override as StrategyOverride);
+      }
+      if (data.total_scans_today !== undefined) {
+        setScanCount(data.total_scans_today);
+      }
     } catch (err) {
       console.error('Failed to fetch status:', err);
     } finally {
@@ -214,23 +237,107 @@ export default function TradingBot() {
     }
   };
 
+  // Tactical control handlers
+  const handleEmergencyCloseAll = async () => {
+    try {
+      const response = await fetch(`${API_URL}/api/bot/emergency-close-all`, { method: 'POST' });
+      if (response.ok) {
+        setTimeout(() => {
+          fetchPositions();
+          fetchStatus();
+        }, 1000);
+      }
+    } catch (err) {
+      console.error('Failed to emergency close all:', err);
+    }
+  };
+
+  const handlePauseNewEntries = async () => {
+    try {
+      const response = await fetch(`${API_URL}/api/bot/pause-entries`, { method: 'POST' });
+      if (response.ok) {
+        const data = await response.json();
+        setNewEntriesPaused(data.new_entries_paused);
+      }
+    } catch (err) {
+      console.error('Failed to toggle pause entries:', err);
+    }
+  };
+
+  const handleStrategyOverride = async (strategy: StrategyOverride) => {
+    try {
+      const response = await fetch(`${API_URL}/api/bot/strategy-override?strategy=${strategy}`, { method: 'POST' });
+      if (response.ok) {
+        const data = await response.json();
+        setCurrentStrategy(data.strategy_override || 'moderate');
+      }
+    } catch (err) {
+      console.error('Failed to set strategy override:', err);
+    }
+  };
+
+  const handleAssetModeChange = (mode: AssetClassMode) => {
+    setAssetMode(mode);
+    // TODO: Call API to update bot's asset class focus
+  };
+
+  // Build carousel items from crypto analysis results
+  const carouselItems = status?.crypto_analysis_results
+    ? Object.entries(status.crypto_analysis_results).map(([symbol, result]) => ({
+        symbol,
+        analysis: result,
+        aiDecision: result.ai_decision,
+      }))
+    : [];
+
   return (
     <div className="space-y-6">
-      {/* Header */}
-      <div className="flex items-center justify-between">
+      {/* Header with Asset Toggle and Stats */}
+      <div className="flex flex-col lg:flex-row items-start lg:items-center justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold text-white">Trading Bot</h1>
           <p className="text-slate-400">Automated trading powered by AI</p>
         </div>
-        <button
-          onClick={refreshAll}
-          className="flex items-center gap-2 px-4 py-2 text-slate-400 hover:text-white
-                   hover:bg-slate-700 rounded-lg transition-colors"
-        >
-          <RefreshCw className="w-4 h-4" />
-          Refresh
-        </button>
+        <div className="flex items-center gap-4">
+          {/* Asset Class Toggle */}
+          <AssetClassToggle
+            mode={assetMode}
+            onChange={handleAssetModeChange}
+            scanCount={scanCount}
+            isActive={status?.state === 'RUNNING'}
+          />
+          {/* AI Sidebar Toggle */}
+          <button
+            onClick={() => setShowAISidebar(!showAISidebar)}
+            className={`flex items-center gap-2 px-3 py-2 rounded-lg transition-colors ${
+              showAISidebar
+                ? 'bg-purple-600 text-white'
+                : 'bg-slate-700 text-slate-400 hover:text-white hover:bg-slate-600'
+            }`}
+          >
+            <Brain className="w-4 h-4" />
+            <span className="hidden sm:inline">AI Panel</span>
+          </button>
+          {/* Refresh */}
+          <button
+            onClick={refreshAll}
+            className="flex items-center gap-2 px-4 py-2 text-slate-400 hover:text-white
+                     hover:bg-slate-700 rounded-lg transition-colors"
+          >
+            <RefreshCw className="w-4 h-4" />
+            Refresh
+          </button>
+        </div>
       </div>
+
+      {/* Quick Navigation Carousel */}
+      {carouselItems.length > 0 && (
+        <TickerCarousel
+          items={carouselItems}
+          currentIndex={carouselIndex}
+          onIndexChange={setCarouselIndex}
+        />
+      )}
 
       {/* Top Row - Status, Controls, Account */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -241,7 +348,13 @@ export default function TradingBot() {
           onStop={handleStop}
           onPause={handlePause}
           onResume={handleResume}
+          onEmergencyCloseAll={handleEmergencyCloseAll}
+          onPauseNewEntries={handlePauseNewEntries}
+          onStrategyOverride={handleStrategyOverride}
           loading={actionLoading}
+          newEntriesPaused={newEntriesPaused}
+          currentStrategy={currentStrategy}
+          hasOpenPositions={positions.length > 0}
         />
         <AccountSummary account={account} loading={accountLoading} />
       </div>
@@ -265,6 +378,18 @@ export default function TradingBot() {
         pageSize={10}
         onPageChange={fetchTrades}
         loading={tradesLoading}
+      />
+
+      {/* AI Intelligence Sidebar */}
+      <AIIntelligenceSidebar
+        isOpen={showAISidebar}
+        onToggle={() => setShowAISidebar(!showAISidebar)}
+        lastDecision={status?.last_ai_decision}
+        decisionHistory={status?.ai_decisions_history || []}
+        analysisResults={status?.crypto_analysis_results || {}}
+        scanProgress={status?.crypto_scan_progress}
+        scanCount={scanCount}
+        lastScanTime={status?.crypto_scan_progress?.last_scan_completed}
       />
     </div>
   );

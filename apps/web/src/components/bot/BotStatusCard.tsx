@@ -2,9 +2,11 @@
  * Bot Status Card Component
  * Shows current bot state, uptime, and activity
  */
-import { Activity, Clock, AlertCircle, Zap, TrendingUp, TrendingDown, Minus, Search, Loader2, CheckCircle2, XCircle, Target, Brain, ThumbsUp, ThumbsDown, Pause } from 'lucide-react';
-import type { BotStatus, CryptoAnalysisResult, CryptoScanProgress, AIDecision } from '../../types/bot';
+import { useState } from 'react';
+import { Activity, Clock, AlertCircle, Zap, TrendingUp, TrendingDown, Minus, Search, Loader2, CheckCircle2, XCircle, Target, Brain, ThumbsUp, ThumbsDown, Pause, Timer, Crosshair } from 'lucide-react';
+import type { BotStatus, CryptoAnalysisResult, CryptoScanProgress, AIDecision, TimeHorizon } from '../../types/bot';
 import { formatUptime, getStateColor } from '../../services/botApi';
+import ConfidenceReasoningModal from './ConfidenceReasoningModal';
 
 interface BotStatusCardProps {
   status: BotStatus | null;
@@ -291,6 +293,8 @@ function CryptoAnalysisItem({ symbol, result }: { symbol: string; result: Crypto
 }
 
 function AIDecisionCard({ decision }: { decision: AIDecision }) {
+  const [showReasoningModal, setShowReasoningModal] = useState(false);
+
   const getDecisionIcon = () => {
     switch (decision.decision) {
       case 'APPROVE':
@@ -317,87 +321,133 @@ function AIDecisionCard({ decision }: { decision: AIDecision }) {
     }
   };
 
+  const getHorizonBadge = (horizon?: TimeHorizon) => {
+    switch (horizon) {
+      case 'SCALP':
+        return (
+          <span className="px-1.5 py-0.5 text-xs font-medium bg-red-500/20 text-red-400 rounded flex items-center gap-1">
+            <Timer className="w-3 h-3" />
+            Scalp
+          </span>
+        );
+      case 'INTRADAY':
+        return (
+          <span className="px-1.5 py-0.5 text-xs font-medium bg-orange-500/20 text-orange-400 rounded flex items-center gap-1">
+            <Crosshair className="w-3 h-3" />
+            Intraday
+          </span>
+        );
+      case 'SWING':
+        return (
+          <span className="px-1.5 py-0.5 text-xs font-medium bg-blue-500/20 text-blue-400 rounded flex items-center gap-1">
+            <TrendingUp className="w-3 h-3" />
+            Swing
+          </span>
+        );
+      default:
+        return null;
+    }
+  };
+
   return (
-    <div className={`mt-4 p-3 rounded-lg border ${getDecisionColor()}`}>
-      <div className="flex items-center gap-2 mb-2">
-        <Brain className="w-4 h-4 text-purple-400" />
-        <span className="text-sm font-medium text-white">Latest AI Decision</span>
-        <span className="text-xs text-slate-400 ml-auto">
-          {new Date(decision.timestamp).toLocaleTimeString()}
-        </span>
-      </div>
-
-      <div className="flex items-center gap-2 mb-2">
-        {getDecisionIcon()}
-        <span className="text-lg font-bold text-white">{decision.symbol}</span>
-        <span className={`px-2 py-0.5 text-xs font-medium rounded ${
-          decision.decision === 'APPROVE' ? 'bg-green-500/30 text-green-400' :
-          decision.decision === 'WAIT' ? 'bg-yellow-500/30 text-yellow-400' :
-          'bg-red-500/30 text-red-400'
-        }`}>
-          {decision.decision}
-        </span>
-        <span className="text-xs text-slate-400 ml-auto">
-          {decision.confidence}% confidence
-        </span>
-      </div>
-
-      <p className="text-sm text-slate-300 mb-2">{decision.reasoning}</p>
-
-      {decision.concerns && decision.concerns.length > 0 && (
-        <div className="mb-2">
-          <span className="text-xs text-slate-500">Concerns:</span>
-          <ul className="list-disc list-inside text-xs text-slate-400 ml-2">
-            {decision.concerns.map((concern, i) => (
-              <li key={i}>{concern}</li>
-            ))}
-          </ul>
+    <>
+      <div className={`mt-4 p-3 rounded-lg border ${getDecisionColor()}`}>
+        <div className="flex items-center gap-2 mb-2">
+          <Brain className="w-4 h-4 text-purple-400" />
+          <span className="text-sm font-medium text-white">Latest AI Decision</span>
+          <span className="text-xs text-slate-400 ml-auto">
+            {new Date(decision.timestamp).toLocaleTimeString()}
+          </span>
         </div>
-      )}
 
-      {decision.wait_for && (
-        <div className="text-xs text-yellow-400">
-          Waiting for: {decision.wait_for}
+        <div className="flex items-center gap-2 mb-2">
+          {getDecisionIcon()}
+          <span className="text-lg font-bold text-white">{decision.symbol}</span>
+          <span className={`px-2 py-0.5 text-xs font-medium rounded ${
+            decision.decision === 'APPROVE' ? 'bg-green-500/30 text-green-400' :
+            decision.decision === 'WAIT' ? 'bg-yellow-500/30 text-yellow-400' :
+            'bg-red-500/30 text-red-400'
+          }`}>
+            {decision.decision}
+          </span>
+          {/* Time Horizon Badge */}
+          {decision.time_horizon && getHorizonBadge(decision.time_horizon)}
+          {/* Clickable Confidence Score */}
+          <button
+            onClick={() => setShowReasoningModal(true)}
+            className="ml-auto px-2 py-0.5 text-xs rounded bg-purple-500/20 text-purple-400
+                     hover:bg-purple-500/30 transition-colors cursor-pointer flex items-center gap-1"
+            title="Click to see confidence breakdown"
+          >
+            <Target className="w-3 h-3" />
+            {decision.confidence}%
+          </button>
         </div>
-      )}
 
-      {decision.decision === 'APPROVE' && (
-        <div className="mt-2 grid grid-cols-3 gap-2 text-xs">
-          {decision.suggested_position_size_pct && (
-            <div className="bg-slate-700/50 rounded p-1 text-center">
-              <span className="text-slate-400">Size</span>
-              <p className="text-white font-medium">{(decision.suggested_position_size_pct * 100).toFixed(1)}%</p>
-            </div>
-          )}
-          {decision.suggested_stop_loss_pct && (
-            <div className="bg-slate-700/50 rounded p-1 text-center">
-              <span className="text-slate-400">Stop</span>
-              <p className="text-white font-medium">{(decision.suggested_stop_loss_pct * 100).toFixed(1)}%</p>
-            </div>
-          )}
-          {decision.suggested_take_profit_pct && (
-            <div className="bg-slate-700/50 rounded p-1 text-center">
-              <span className="text-slate-400">Target</span>
-              <p className="text-white font-medium">{(decision.suggested_take_profit_pct * 100).toFixed(1)}%</p>
-            </div>
-          )}
-        </div>
-      )}
+        <p className="text-sm text-slate-300 mb-2">{decision.reasoning}</p>
 
-      <div className="mt-2 flex items-center gap-1 text-xs text-slate-500">
-        {decision.ai_generated ? (
-          <>
-            <CheckCircle2 className="w-3 h-3 text-purple-400" />
-            <span>AI Generated ({decision.model})</span>
-          </>
-        ) : (
-          <>
-            <AlertCircle className="w-3 h-3 text-yellow-400" />
-            <span>Technical Fallback (AI unavailable)</span>
-          </>
+        {decision.concerns && decision.concerns.length > 0 && (
+          <div className="mb-2">
+            <span className="text-xs text-slate-500">Concerns:</span>
+            <ul className="list-disc list-inside text-xs text-slate-400 ml-2">
+              {decision.concerns.map((concern, i) => (
+                <li key={i}>{concern}</li>
+              ))}
+            </ul>
+          </div>
         )}
+
+        {decision.wait_for && (
+          <div className="text-xs text-yellow-400">
+            Waiting for: {decision.wait_for}
+          </div>
+        )}
+
+        {decision.decision === 'APPROVE' && (
+          <div className="mt-2 grid grid-cols-3 gap-2 text-xs">
+            {decision.suggested_position_size_pct && (
+              <div className="bg-slate-700/50 rounded p-1 text-center">
+                <span className="text-slate-400">Size</span>
+                <p className="text-white font-medium">{(decision.suggested_position_size_pct * 100).toFixed(1)}%</p>
+              </div>
+            )}
+            {decision.suggested_stop_loss_pct && (
+              <div className="bg-slate-700/50 rounded p-1 text-center">
+                <span className="text-slate-400">Stop</span>
+                <p className="text-white font-medium">{(decision.suggested_stop_loss_pct * 100).toFixed(1)}%</p>
+              </div>
+            )}
+            {decision.suggested_take_profit_pct && (
+              <div className="bg-slate-700/50 rounded p-1 text-center">
+                <span className="text-slate-400">Target</span>
+                <p className="text-white font-medium">{(decision.suggested_take_profit_pct * 100).toFixed(1)}%</p>
+              </div>
+            )}
+          </div>
+        )}
+
+        <div className="mt-2 flex items-center gap-1 text-xs text-slate-500">
+          {decision.ai_generated ? (
+            <>
+              <CheckCircle2 className="w-3 h-3 text-purple-400" />
+              <span>AI Generated ({decision.model})</span>
+            </>
+          ) : (
+            <>
+              <AlertCircle className="w-3 h-3 text-yellow-400" />
+              <span>Technical Fallback (AI unavailable)</span>
+            </>
+          )}
+        </div>
       </div>
-    </div>
+
+      {/* Confidence Reasoning Modal */}
+      <ConfidenceReasoningModal
+        decision={decision}
+        isOpen={showReasoningModal}
+        onClose={() => setShowReasoningModal(false)}
+      />
+    </>
   );
 }
 

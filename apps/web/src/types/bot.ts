@@ -6,11 +6,13 @@
 // ============== Enums ==============
 
 export type BotState = 'RUNNING' | 'STOPPED' | 'PAUSED' | 'ERROR';
-export type TradeType = 'SWING' | 'LONG_TERM';
+export type TradeType = 'SCALP' | 'INTRADAY' | 'SWING' | 'LONG_TERM';
 export type OrderSide = 'BUY' | 'SELL';
 export type ExitReason = 'PROFIT_TARGET' | 'STOP_LOSS' | 'SIGNAL' | 'MANUAL' | 'TIME_STOP';
 
 // ============== Bot Status ==============
+
+export type TimeHorizon = 'SCALP' | 'INTRADAY' | 'SWING';
 
 export interface AIDecision {
   timestamp: string;
@@ -27,6 +29,18 @@ export interface AIDecision {
   suggested_stop_loss_pct?: number;
   suggested_take_profit_pct?: number;
   wait_for?: string;
+  // Time horizon for the trade strategy
+  time_horizon?: TimeHorizon;
+  // Confidence breakdown for reasoning modal
+  confidence_breakdown?: {
+    technical_weight: number;
+    technical_contribution: string;
+    sentiment_weight: number;
+    sentiment_contribution: string;
+    historical_accuracy: number;
+    volume_weight: number;
+    volume_contribution: string;
+  };
 }
 
 export interface CryptoAnalysisResult {
@@ -60,9 +74,34 @@ export interface CryptoScanProgress {
   next_scan_in_seconds: number;
 }
 
+export interface ExecutionLogEntry {
+  timestamp: string;
+  symbol: string;
+  event_type: string;
+  executed: boolean;
+  reason: string;
+  details: Record<string, unknown>;
+}
+
+export interface PriorityTierSummary {
+  total_symbols: number;
+  tier_distribution: {
+    high: number;
+    standard: number;
+    low: number;
+  };
+  total_scans: number;
+  scans_by_tier: {
+    high: number;
+    standard: number;
+    low: number;
+  };
+}
+
 export interface BotStatus {
   state: BotState;
   uptime_seconds: number;
+  uptime_formatted?: string;
   last_trade_time: string | null;
   current_cycle: string;
   current_session?: string;
@@ -84,6 +123,12 @@ export interface BotStatus {
   // AI Decision Tracking
   last_ai_decision?: AIDecision | null;
   ai_decisions_history?: AIDecision[];
+  // Tactical Controls
+  execution_log?: ExecutionLogEntry[];
+  new_entries_paused?: boolean;
+  strategy_override?: string | null;
+  total_scans_today?: number;
+  priority_tier_summary?: PriorityTierSummary;
 }
 
 export interface BotActionResponse {

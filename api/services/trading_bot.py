@@ -22,6 +22,7 @@ from .risk_manager import RiskManager
 from .indicators import IndicatorService
 from .ai_advisor import get_ai_advisor
 from .crypto_service import CryptoService
+from .priority_scanner import PriorityScannerService, get_priority_scanner, PriorityTier
 from database.models import Trade, Position, BotConfiguration, StockRepository, UserWatchlist
 from database.connection import SessionLocal
 
@@ -157,6 +158,21 @@ class TradingBot:
         # Tracking
         self._positions_cache: Dict[str, Dict] = {}
         self._running_task: Optional[asyncio.Task] = None
+
+        # Priority Scanner for smart scanning
+        self.priority_scanner = get_priority_scanner()
+
+        # Execution Log - tracks why trades were/weren't executed
+        self._execution_log: List[Dict[str, Any]] = []
+        self._max_execution_log_size = 100
+
+        # Tactical Controls
+        self.new_entries_paused = False  # Pause new entries but monitor existing
+        self.strategy_override: Optional[str] = None  # conservative, moderate, aggressive
+
+        # Scan statistics
+        self._total_scans_today = 0
+        self._last_scan_reset_date: Optional[datetime] = None
 
     async def start(self, config: Optional[Dict[str, Any]] = None):
         """
@@ -1165,6 +1181,15 @@ class TradingBot:
             # AI Decision Tracking
             "last_ai_decision": self._last_ai_decision,
             "ai_decisions_history": self._ai_decisions[-10:],  # Last 10 decisions for UI
+            # Execution Log
+            "execution_log": self._execution_log[-20:],  # Last 20 execution events
+            # Tactical Controls
+            "new_entries_paused": self.new_entries_paused,
+            "strategy_override": self.strategy_override,
+            # Scan Statistics
+            "total_scans_today": self._total_scans_today,
+            # Priority Tier Summary
+            "priority_tier_summary": self.priority_scanner.get_tier_summary(),
         }
 
     def _get_analysis_reason(self, signal: str, confidence: float, threshold: float) -> str:
@@ -1180,6 +1205,70 @@ class TradingBot:
             return f"No clear direction ({confidence:.0f}% confidence)"
         else:
             return f"Waiting for signal ({signal})"
+
+    def _log_execution_event(
+        self,
+        symbol: str,
+        event_type: str,
+        executed: bool,
+        reason: str,
+        details: Optional[Dict[str, Any]] = None,
+    ):
+        """
+        Log an execution event for debugging paper trade failures.
+
+        Args:
+            symbol: The symbol involved
+            event_type: Type of event (ENTRY_SIGNAL, ENTRY_ATTEMPT, ENTRY_SKIPPED, EXIT_SIGNAL, etc.)
+            executed: Whether the trade was actually executed
+            reason: Human-readable reason for the outcome
+            details: Additional details (prices, scores, etc.)
+        """
+        event = {
+            "timestamp": datetime.now().isoformat(),
+            "symbol": symbol,
+            "event_type": event_type,
+            "executed": executed,
+            "reason": reason,
+            "details": details or {},
+        }
+
+        self._execution_log.append(event)
+
+        # Keep log size bounded
+        if len(self._execution_log) > self._max_execution_log_size:
+            self._execution_log = self._execution_log[-self._max_execution_log_size:]
+
+        # Log to standard logger as well
+        log_msg = f"EXECUTION LOG [{event_type}] {symbol}: {reason}"
+        if executed:
+            logger.info(log_msg)
+        else:
+            logger.warning(log_msg)
+
+    def get_execution_log(self, symbol: Optional[str] = None, limit: int = 20) -> List[Dict[str, Any]]:
+        """
+        Get recent execution log entries, optionally filtered by symbol.
+
+        Args:
+            symbol: Filter to specific symbol (optional)
+            limit: Maximum entries to return
+        """
+        log = self._execution_log
+        if symbol:
+            log = [e for e in log if e["symbol"] == symbol]
+        return log[-limit:]
+
+    def get_strong_buy_trace(self, limit: int = 5) -> List[Dict[str, Any]]:
+        """
+        Get trace of last N 'Strong Buy' signals to diagnose execution failures.
+        """
+        strong_buys = [
+            e for e in self._execution_log
+            if e["event_type"] in ["ENTRY_SIGNAL", "ENTRY_ATTEMPT", "ENTRY_SKIPPED"]
+            and e.get("details", {}).get("signal_strength") in ["STRONG_BUY", "BUY"]
+        ]
+        return strong_buys[-limit:]
 
     def _log_ai_decision(
         self,

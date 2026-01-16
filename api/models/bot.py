@@ -20,8 +20,10 @@ class BotState(str, Enum):
 
 class TradeType(str, Enum):
     """Type of trade based on holding period"""
-    SWING = "SWING"
-    LONG_TERM = "LONG_TERM"
+    SCALP = "SCALP"        # < 5 minutes
+    INTRADAY = "INTRADAY"  # Same day, < 1 hour
+    SWING = "SWING"        # 1-5 days
+    LONG_TERM = "LONG_TERM"  # > 5 days
 
 
 class OrderSide(str, Enum):

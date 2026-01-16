@@ -221,6 +221,148 @@ async def bot_health():
         }
 
 
+@router.get("/execution-log")
+async def get_execution_log(symbol: str = None, limit: int = 20):
+    """
+    Get execution log for debugging paper trade failures.
+
+    Shows why trades were or weren't executed.
+    """
+    bot = get_trading_bot()
+    return {
+        "log": bot.get_execution_log(symbol=symbol, limit=limit),
+        "total_entries": len(bot._execution_log),
+    }
+
+
+@router.get("/strong-buy-trace")
+async def get_strong_buy_trace(limit: int = 5):
+    """
+    Get trace of last N 'Strong Buy' signals to diagnose execution failures.
+
+    Paper Trading Troubleshooting:
+    1. Balance & Allocation: Check if paper account has enough buying power
+    2. Order Type Mismatch: Check if AI is sending market orders when limit required
+    3. Spread Filter: Check if spread threshold is too tight
+    4. Signal Expiry: Check if signals are stale by execution time
+    5. API Permissions: Ensure paper trading API keys have trade permission
+    """
+    bot = get_trading_bot()
+    return {
+        "trace": bot.get_strong_buy_trace(limit=limit),
+        "troubleshooting_tips": [
+            "Check buying power vs minimum position size",
+            "Verify order type matches asset class requirements",
+            "Check if bid/ask spread is within threshold",
+            "Ensure signal isn't expired before execution",
+            "Confirm API keys have trading permissions enabled",
+        ]
+    }
+
+
+@router.post("/pause-entries")
+async def toggle_pause_entries():
+    """
+    Toggle pause on new position entries.
+
+    When paused, bot continues monitoring existing positions but won't open new ones.
+    """
+    bot = get_trading_bot()
+    bot.new_entries_paused = not bot.new_entries_paused
+
+    return {
+        "success": True,
+        "new_entries_paused": bot.new_entries_paused,
+        "message": "New entries paused" if bot.new_entries_paused else "New entries resumed",
+    }
+
+
+@router.post("/strategy-override")
+async def set_strategy_override(strategy: str = None):
+    """
+    Override the trading strategy.
+
+    Args:
+        strategy: 'conservative', 'moderate', 'aggressive', or None to reset
+    """
+    bot = get_trading_bot()
+
+    valid_strategies = ['conservative', 'moderate', 'aggressive', None, 'none']
+    if strategy not in valid_strategies:
+        raise HTTPException(status_code=400, detail=f"Invalid strategy. Use: {valid_strategies}")
+
+    if strategy == 'none':
+        strategy = None
+
+    bot.strategy_override = strategy
+
+    # Apply the strategy preset if not None
+    if strategy:
+        bot._apply_ai_risk_preset(strategy)
+
+    return {
+        "success": True,
+        "strategy_override": bot.strategy_override,
+        "message": f"Strategy set to {strategy}" if strategy else "Strategy reset to default",
+    }
+
+
+@router.post("/emergency-close-all")
+async def emergency_close_all():
+    """
+    Emergency close all positions immediately.
+
+    WARNING: This will close ALL open positions at market price.
+    """
+    bot = get_trading_bot()
+
+    try:
+        positions = await bot.alpaca.get_positions()
+        closed_count = 0
+
+        for pos in positions:
+            symbol = pos.get("symbol")
+            try:
+                await bot.alpaca.close_position(symbol)
+                closed_count += 1
+                bot._log_execution_event(
+                    symbol=symbol,
+                    event_type="EMERGENCY_CLOSE",
+                    executed=True,
+                    reason="Emergency close all triggered by user",
+                    details={"quantity": pos.get("qty"), "price": pos.get("current_price")}
+                )
+            except Exception as e:
+                bot._log_execution_event(
+                    symbol=symbol,
+                    event_type="EMERGENCY_CLOSE_FAILED",
+                    executed=False,
+                    reason=str(e),
+                )
+
+        return {
+            "success": True,
+            "positions_closed": closed_count,
+            "message": f"Closed {closed_count} positions",
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/priority-tiers")
+async def get_priority_tiers():
+    """
+    Get current priority tier distribution for symbols.
+
+    Shows which symbols are in HIGH/STANDARD/LOW priority tiers.
+    """
+    bot = get_trading_bot()
+    return {
+        "summary": bot.priority_scanner.get_tier_summary(),
+        "symbols": bot.priority_scanner.get_all_priorities(),
+    }
+
+
 @router.get("/activity")
 async def get_bot_activity():
     """
