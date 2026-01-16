@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { Save, RefreshCw, AlertCircle, CheckCircle, Shield, TrendingUp, Clock, Zap, DollarSign, Target, Activity, Bitcoin, X, Plus, Search } from 'lucide-react'
-import CryptoSelector, { AVAILABLE_CRYPTOS } from '../components/CryptoSelector'
+import CryptoSelector from '../components/CryptoSelector'
 
 // Popular stock symbols for quick selection
 const POPULAR_SYMBOLS = [

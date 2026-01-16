@@ -89,7 +89,7 @@ export default function CryptoSelector({ selected, onChange, maxSelections }: Cr
       <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2">
         {AVAILABLE_CRYPTOS.map((crypto) => {
           const isSelected = selected.includes(crypto.symbol);
-          const isDisabled = !isSelected && maxSelections && selected.length >= maxSelections;
+          const isDisabled = !isSelected && !!maxSelections && selected.length >= maxSelections;
 
           return (
             <button

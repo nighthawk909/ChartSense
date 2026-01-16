@@ -11,12 +11,10 @@ import {
   TrendingDown,
   Target,
   Activity,
-  AlertTriangle,
   Clock,
   BarChart3,
   Zap,
   Eye,
-  EyeOff,
 } from 'lucide-react';
 import type { AIDecision, CryptoAnalysisResult, CryptoScanProgress } from '../../types/bot';
 import ConfidenceReasoningModal from './ConfidenceReasoningModal';

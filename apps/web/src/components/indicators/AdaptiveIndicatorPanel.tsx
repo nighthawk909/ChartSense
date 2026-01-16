@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
-import { Activity, Zap, TrendingUp, Clock, Settings2, ChevronDown, ChevronUp, Info, ChevronLeft, ChevronRight, RotateCcw } from 'lucide-react'
+import { Activity, Zap, TrendingUp, Settings2, ChevronDown, ChevronUp, Info, ChevronLeft, ChevronRight, RotateCcw } from 'lucide-react'
 import InsightModal from '../modals/InsightModal'
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
@@ -213,12 +213,6 @@ export default function AdaptiveIndicatorPanel({
   const fetchAdaptiveIndicators = async () => {
     setIsLoading(true)
     try {
-      const params = new URLSearchParams({
-        symbol,
-        mode: selectedMode,
-        auto_mode: autoMode.toString(),
-      })
-
       const response = await fetch(`${API_URL}/api/analysis/adaptive/${symbol}?mode=${selectedMode}&auto_mode=${autoMode}`)
       if (response.ok) {
         const data = await response.json()

@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { useParams } from 'react-router-dom'
-import { Star, TrendingUp, TrendingDown, Info, Loader2, RefreshCw, Activity, Target, GitBranch, CheckCircle, XCircle, AlertTriangle, Zap } from 'lucide-react'
+import { Star, TrendingUp, TrendingDown, Loader2, RefreshCw, Activity, Target, GitBranch, CheckCircle, XCircle, Zap } from 'lucide-react'
 import StockChart from '../components/StockChart'
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'

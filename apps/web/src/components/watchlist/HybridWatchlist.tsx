@@ -6,10 +6,9 @@
 import { useState, useEffect, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import {
-  Star, StarOff, TrendingUp, TrendingDown, Eye, EyeOff,
-  ChevronLeft, ChevronRight, Sparkles, Activity, Clock,
-  ArrowUpRight, ArrowDownRight, Brain, AlertCircle, Plus,
-  BarChart3, Zap, Target
+  Eye, ChevronLeft, ChevronRight, Sparkles,
+  ArrowUpRight, ArrowDownRight, Brain,
+  BarChart3
 } from 'lucide-react';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
@@ -222,7 +221,7 @@ export default function HybridWatchlist({
               className="flex transition-transform duration-300"
               style={{ transform: `translateX(-${carouselIndex * 100}%)` }}
             >
-              {carouselItems.map((item, idx) => (
+              {carouselItems.map((item) => (
                 <div key={item.symbol} className="w-full flex-shrink-0 px-1">
                   <InsightCard item={item} onSelect={onSymbolSelect} />
                 </div>
@@ -463,7 +462,7 @@ function WatchlistRow({
               <span className="w-2 h-2 bg-green-500 rounded-full animate-pulse" title="Active Position"></span>
             )}
             {item.isBotDiscovered && (
-              <Sparkles className="w-3 h-3 text-purple-400" title="Bot Discovered" />
+              <span title="Bot Discovered"><Sparkles className="w-3 h-3 text-purple-400" /></span>
             )}
           </div>
           {item.name && (

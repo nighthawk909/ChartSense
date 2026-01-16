@@ -4,12 +4,12 @@
  */
 import { useState, useEffect, useMemo } from 'react';
 import {
-  TrendingUp, TrendingDown, Activity, DollarSign,
+  TrendingUp, Activity, DollarSign,
   Target, AlertTriangle, BarChart3, Clock, Zap,
   ArrowUpRight, ArrowDownRight, Minus
 } from 'lucide-react';
 import {
-  LineChart, Line, AreaChart, Area, XAxis, YAxis,
+  AreaChart, Area, XAxis, YAxis,
   CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine
 } from 'recharts';
 
@@ -64,7 +64,8 @@ interface PerformanceDashboardProps {
   compact?: boolean;
 }
 
-export default function PerformanceDashboard({ compact = false }: PerformanceDashboardProps) {
+export default function PerformanceDashboard({ compact: _compact = false }: PerformanceDashboardProps) {
+  // Note: compact mode is reserved for future use
   const [metrics, setMetrics] = useState<PerformanceMetrics | null>(null);
   const [equityCurve, setEquityCurve] = useState<EquityPoint[]>([]);
   const [recentActions, setRecentActions] = useState<BotAction[]>([]);
@@ -297,7 +298,7 @@ export default function PerformanceDashboard({ compact = false }: PerformanceDas
                   borderRadius: '8px',
                 }}
                 labelStyle={{ color: '#94a3b8' }}
-                formatter={(value: number) => [`$${value.toLocaleString()}`, 'Equity']}
+                formatter={(value) => [`$${(value as number).toLocaleString()}`, 'Equity']}
               />
               <ReferenceLine y={equityCurve[0]?.equity || 0} stroke="#64748b" strokeDasharray="5 5" />
               <Area

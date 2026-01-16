@@ -5,9 +5,9 @@
  */
 import { useState, useEffect, useCallback } from 'react';
 import {
-  Search, Filter, Clock, Brain, TrendingUp, TrendingDown,
-  ChevronDown, ChevronUp, Eye, AlertTriangle, CheckCircle,
-  XCircle, Calendar, BarChart3, Activity, Zap, RefreshCw
+  Search, Brain, TrendingUp,
+  ChevronDown, ChevronUp, AlertTriangle, CheckCircle,
+  XCircle, BarChart3, Activity, Zap, RefreshCw
 } from 'lucide-react';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';

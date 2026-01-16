@@ -3,7 +3,7 @@
  * Main interface for controlling and monitoring the automated trading bot
  */
 import { useState, useEffect, useCallback } from 'react';
-import { RefreshCw, Brain, BarChart3 } from 'lucide-react';
+import { RefreshCw, Brain } from 'lucide-react';
 
 import BotStatusCard from '../components/bot/BotStatusCard';
 import BotControls from '../components/bot/BotControls';
@@ -209,8 +209,8 @@ export default function TradingBot() {
 
       if (result.success) {
         console.log('[TradingBot] Bot started successfully');
-        console.log('[TradingBot] Bot ID:', result.bot_id);
         console.log('[TradingBot] Message:', result.message);
+        console.log('[TradingBot] State:', result.state);
       } else {
         console.error('[TradingBot] Bot start returned success=false:', result);
       }

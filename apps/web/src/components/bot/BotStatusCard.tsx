@@ -4,7 +4,7 @@
  */
 import { useState } from 'react';
 import { Activity, Clock, AlertCircle, Zap, TrendingUp, TrendingDown, Minus, Search, Loader2, CheckCircle2, XCircle, Target, Brain, ThumbsUp, ThumbsDown, Pause, Timer, Crosshair } from 'lucide-react';
-import type { BotStatus, CryptoAnalysisResult, CryptoScanProgress, AIDecision, TimeHorizon } from '../../types/bot';
+import type { BotStatus, CryptoAnalysisResult, CryptoScanProgress, StockScanProgress, AIDecision, TimeHorizon } from '../../types/bot';
 import { formatUptime, getStateColor } from '../../services/botApi';
 import ConfidenceReasoningModal from './ConfidenceReasoningModal';
 
@@ -177,7 +177,7 @@ function ScanProgressCard({
   marketStatus
 }: {
   title: string;
-  progress: CryptoScanProgress;
+  progress: CryptoScanProgress | StockScanProgress;
   type: 'stock' | 'crypto';
   marketStatus?: string;
 }) {

@@ -6,9 +6,8 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
-  TrendingUp, TrendingDown, DollarSign, Activity,
-  RefreshCw, Filter, Search, Zap, Clock, BarChart3,
-  Bitcoin, Briefcase, Shuffle, Brain, Sparkles
+  TrendingUp, TrendingDown, Activity,
+  RefreshCw, Zap, Bitcoin, Briefcase, Shuffle, Brain, Sparkles
 } from 'lucide-react';
 import HybridWatchlist from '../components/watchlist/HybridWatchlist';
 import StockChart from '../components/StockChart';
@@ -37,13 +36,13 @@ interface TopMover {
 }
 
 export default function Markets() {
-  const navigate = useNavigate();
+  useNavigate(); // Keep router context active
   const [assetMode, setAssetMode] = useState<AssetClassMode>('both');
   const [selectedSymbol, setSelectedSymbol] = useState<string | null>(null);
   const [marketOverview, setMarketOverview] = useState<MarketOverview | null>(null);
   const [topGainers, setTopGainers] = useState<TopMover[]>([]);
   const [topLosers, setTopLosers] = useState<TopMover[]>([]);
-  const [searchQuery, setSearchQuery] = useState('');
+  const [_searchQuery, _setSearchQuery] = useState(''); // Reserved for search feature
   const [loading, setLoading] = useState(true);
   const [botStatus, setBotStatus] = useState<any>(null);
 
@@ -125,14 +124,6 @@ export default function Markets() {
 
   const handleSymbolSelect = (symbol: string) => {
     setSelectedSymbol(symbol);
-  };
-
-  const getSentimentColor = (sentiment: string) => {
-    switch (sentiment) {
-      case 'bullish': return 'text-green-400 bg-green-500/20';
-      case 'bearish': return 'text-red-400 bg-red-500/20';
-      default: return 'text-yellow-400 bg-yellow-500/20';
-    }
   };
 
   return (
