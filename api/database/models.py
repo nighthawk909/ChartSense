@@ -73,6 +73,16 @@ class Trade(Base):
     # Snapshot of indicators at entry for analysis
     indicators_snapshot = Column(JSON)
 
+    # Post-mortem analysis fields
+    post_mortem_analysis = Column(JSON)  # AI-generated analysis
+    market_conditions_at_entry = Column(JSON)  # Market state snapshot at entry
+    market_conditions_at_exit = Column(JSON)  # Market state snapshot at exit
+    lessons_learned = Column(String(1000))  # Key takeaways
+    could_have_done_better = Column(Boolean)  # AI assessment
+    optimal_exit_price = Column(Float)  # What the optimal exit would have been
+    missed_profit = Column(Float)  # Profit left on table (or avoided loss)
+    analyzed_at = Column(DateTime)  # When post-mortem was generated
+
     # Timestamps
     created_at = Column(DateTime, server_default=func.now())
     updated_at = Column(DateTime, onupdate=func.now())

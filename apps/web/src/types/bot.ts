@@ -207,3 +207,100 @@ export interface BotHealth {
   buying_power?: number;
   error?: string;
 }
+
+// ============== Post-Mortem Analysis ==============
+
+export interface TradeSummary {
+  entry_price: number;
+  exit_price: number | null;
+  quantity: number;
+  side: string;
+  entry_time: string | null;
+  exit_time: string | null;
+  duration: {
+    hours: number;
+    days: number;
+    formatted: string;
+  } | null;
+  profit_loss: number | null;
+  profit_loss_pct: number | null;
+  exit_reason: string | null;
+  trade_type: string | null;
+  entry_score: number | null;
+  was_profitable: boolean;
+}
+
+export interface OptimalExitAnalysis {
+  type: string;
+  best_possible_exit: number;
+  worst_possible_exit: number;
+  actual_exit: number;
+  best_possible_pnl: number;
+  worst_possible_pnl: number;
+  actual_pnl: number;
+  exit_efficiency_pct: number;
+}
+
+export interface TradeAnalysis {
+  trade_id: number;
+  symbol: string;
+  analyzed_at: string;
+  trade_summary: TradeSummary;
+  price_context?: {
+    dates: string[];
+    prices: number[];
+    highs: number[];
+    lows: number[];
+    max_price_during_trade: number;
+    min_price_during_trade: number;
+  };
+  optimal_exit_price: number | null;
+  missed_profit: number | null;
+  could_have_done_better: boolean | null;
+  optimal_exit_analysis: OptimalExitAnalysis | null;
+  what_went_well: string[];
+  what_went_wrong: string[];
+  lessons_learned: string;
+  ai_summary?: string;
+}
+
+export interface DailySummary {
+  date: string;
+  message?: string;
+  total_trades: number;
+  winning_trades?: number;
+  losing_trades?: number;
+  win_rate?: number;
+  total_pnl?: number;
+  best_trade?: {
+    symbol: string;
+    pnl: number;
+  };
+  worst_trade?: {
+    symbol: string;
+    pnl: number;
+  };
+  trades?: Array<{
+    id: number;
+    symbol: string;
+    pnl: number | null;
+    pnl_pct: number | null;
+    exit_reason: string | null;
+  }>;
+}
+
+export interface WeeklyReport {
+  period: string;
+  message?: string;
+  total_trades: number;
+  winning_trades?: number;
+  losing_trades?: number;
+  win_rate?: number;
+  total_pnl?: number;
+  avg_pnl_per_trade?: number;
+  best_symbol?: string;
+  worst_symbol?: string;
+  by_symbol?: Record<string, { trades: number; pnl: number }>;
+  by_exit_reason?: Record<string, number>;
+  ai_insights?: string;
+}

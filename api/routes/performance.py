@@ -21,6 +21,7 @@ from models.bot import (
 )
 from services.performance_tracker import PerformanceTracker, SelfOptimizer
 from services.alpaca_service import get_alpaca_service
+from services.post_mortem import PostMortemService
 from database.connection import SessionLocal
 from database.models import Trade, OptimizationLog
 
@@ -242,3 +243,85 @@ async def trigger_optimization():
     result = optimizer.run_optimization_cycle()
 
     return result
+
+
+# ============== Post-Mortem Analysis ==============
+
+@router.get("/trades/{trade_id}/analysis")
+async def get_trade_analysis(trade_id: int):
+    """
+    Get post-mortem analysis for a specific trade.
+
+    If analysis doesn't exist, it will be generated automatically.
+    Includes:
+    - Trade summary and metrics
+    - What went well / What went wrong
+    - Optimal exit analysis
+    - Lessons learned
+    - AI-generated summary (if OpenAI configured)
+    """
+    service = PostMortemService()
+    analysis = await service.get_trade_analysis(trade_id)
+
+    if not analysis:
+        raise HTTPException(status_code=404, detail=f"Trade {trade_id} not found")
+
+    if "error" in analysis:
+        raise HTTPException(status_code=400, detail=analysis["error"])
+
+    return analysis
+
+
+@router.post("/trades/{trade_id}/analyze")
+async def analyze_trade(trade_id: int):
+    """
+    Force re-analysis of a specific trade.
+
+    Regenerates the post-mortem analysis even if one exists.
+    Useful after updating AI models or wanting fresh insights.
+    """
+    service = PostMortemService()
+    analysis = await service.analyze_trade(trade_id)
+
+    if "error" in analysis:
+        raise HTTPException(status_code=400, detail=analysis["error"])
+
+    return analysis
+
+
+@router.get("/daily-summary")
+async def get_daily_summary(date: Optional[str] = Query(None)):
+    """
+    Get summary of all trades for a specific day.
+
+    Args:
+        date: Date in YYYY-MM-DD format (defaults to today)
+    """
+    service = PostMortemService()
+
+    target_date = None
+    if date:
+        try:
+            target_date = datetime.fromisoformat(date)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD")
+
+    summary = await service.get_daily_summary(target_date)
+    return summary
+
+
+@router.get("/weekly-report")
+async def get_weekly_report():
+    """
+    Get comprehensive weekly performance report.
+
+    Includes:
+    - Win/loss statistics
+    - P&L breakdown
+    - Performance by symbol
+    - Performance by exit reason
+    - AI-generated insights (if OpenAI configured)
+    """
+    service = PostMortemService()
+    report = await service.get_weekly_report()
+    return report

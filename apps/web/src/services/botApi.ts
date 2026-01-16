@@ -21,6 +21,9 @@ import type {
   SettingsPreset,
   OptimizationHistory,
   BotHealth,
+  TradeAnalysis,
+  DailySummary,
+  WeeklyReport,
 } from '../types/bot';
 
 // Base API URL - uses Vite proxy in development
@@ -209,6 +212,40 @@ export const performanceApi = {
     message: string;
   }> => {
     const response = await api.post('/performance/optimize');
+    return response.data;
+  },
+
+  /**
+   * Get post-mortem analysis for a trade
+   */
+  getTradeAnalysis: async (tradeId: number): Promise<TradeAnalysis> => {
+    const response = await api.get<TradeAnalysis>(`/performance/trades/${tradeId}/analysis`);
+    return response.data;
+  },
+
+  /**
+   * Force re-analysis of a trade
+   */
+  analyzeTradeAgain: async (tradeId: number): Promise<TradeAnalysis> => {
+    const response = await api.post<TradeAnalysis>(`/performance/trades/${tradeId}/analyze`);
+    return response.data;
+  },
+
+  /**
+   * Get daily trading summary
+   */
+  getDailySummary: async (date?: string): Promise<DailySummary> => {
+    const response = await api.get<DailySummary>('/performance/daily-summary', {
+      params: date ? { date } : {},
+    });
+    return response.data;
+  },
+
+  /**
+   * Get weekly performance report
+   */
+  getWeeklyReport: async (): Promise<WeeklyReport> => {
+    const response = await api.get<WeeklyReport>('/performance/weekly-report');
     return response.data;
   },
 };
