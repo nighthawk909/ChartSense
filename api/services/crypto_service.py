@@ -61,7 +61,8 @@ class CryptoService:
         endpoint: str,
         base_url: str = None,
         params: Dict = None,
-        json_data: Dict = None
+        json_data: Dict = None,
+        return_error: bool = False
     ) -> Optional[Dict]:
         """Make authenticated request to Alpaca API"""
         url = f"{base_url or self.base_url}{endpoint}"
@@ -81,7 +82,10 @@ class CryptoService:
             elif response.status_code == 204:
                 return {"success": True}
             else:
-                logger.error(f"Crypto API error: {response.status_code} - {response.text}")
+                error_msg = f"Crypto API error: {response.status_code} - {response.text}"
+                logger.error(error_msg)
+                if return_error:
+                    return {"error": True, "status_code": response.status_code, "message": response.text}
                 return None
 
     async def get_crypto_quote(self, symbol: str) -> Optional[Dict[str, Any]]:
@@ -261,7 +265,12 @@ class CryptoService:
         if order_type == "limit" and limit_price:
             order_data["limit_price"] = str(limit_price)
 
-        data = await self._make_request("POST", "/v2/orders", json_data=order_data)
+        logger.info(f"Placing crypto order: {side} {qty} {symbol} (type={order_type})")
+        data = await self._make_request("POST", "/v2/orders", json_data=order_data, return_error=True)
+
+        if data and data.get("error"):
+            logger.error(f"Order failed for {symbol}: {data.get('message')}")
+            return None
 
         if data:
             logger.info(f"Crypto order placed: {side} {qty} {symbol}")
