@@ -816,6 +816,73 @@ class AlpacaService:
             logger.error(f"Failed to submit extended hours order: {e}")
             raise
 
+    async def search_assets(self, query: str, limit: int = 20) -> List[Dict[str, str]]:
+        """
+        Search for tradable assets by symbol or name.
+        Uses Alpaca's asset API which has NO rate limit!
+
+        Args:
+            query: Search query (symbol or partial name)
+            limit: Maximum results to return
+
+        Returns:
+            List of matching assets with symbol, name, and type
+        """
+        try:
+            from alpaca.trading.enums import AssetClass, AssetStatus
+            from alpaca.trading.requests import GetAssetsRequest
+
+            api = self._get_api()
+            query_upper = query.upper()
+
+            # Get all active tradable assets
+            request = GetAssetsRequest(status=AssetStatus.ACTIVE)
+            assets = api.get_all_assets(request)
+
+            results = []
+            for asset in assets:
+                # Skip non-tradable assets
+                if not asset.tradable:
+                    continue
+
+                # Match by symbol (exact or starts with) or name (contains)
+                symbol_match = asset.symbol.upper().startswith(query_upper) or query_upper == asset.symbol.upper()
+                name_match = asset.name and query_upper in asset.name.upper()
+
+                if symbol_match or name_match:
+                    asset_type = "stock" if asset.asset_class == AssetClass.US_EQUITY else "crypto"
+                    # Convert exchange enum to string properly
+                    exchange_str = str(asset.exchange.value) if hasattr(asset.exchange, 'value') else str(asset.exchange)
+                    region = "United States" if exchange_str in ["NYSE", "NASDAQ", "AMEX"] else exchange_str
+                    results.append({
+                        "symbol": asset.symbol,
+                        "name": asset.name or asset.symbol,
+                        "type": asset_type,
+                        "region": region,
+                    })
+
+                if len(results) >= limit:
+                    break
+
+            # Sort: exact matches first, then starts-with, then contains
+            def sort_key(item):
+                sym = item["symbol"].upper()
+                if sym == query_upper:
+                    return (0, sym)
+                elif sym.startswith(query_upper):
+                    return (1, sym)
+                else:
+                    return (2, sym)
+
+            results.sort(key=sort_key)
+
+            logger.info(f"Alpaca search for '{query}' found {len(results)} results")
+            return results[:limit]
+
+        except Exception as e:
+            logger.error(f"Alpaca asset search failed: {e}")
+            return []
+
 
 # Singleton instances for paper and live trading
 _alpaca_paper_service: Optional[AlpacaService] = None

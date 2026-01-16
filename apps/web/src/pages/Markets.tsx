@@ -35,6 +35,20 @@ interface TopMover {
   aiConfidence?: number;
 }
 
+interface RecommendedStock {
+  symbol: string;
+  price: number;
+  score: number;
+  signal: 'BUY' | 'SELL' | 'HOLD';
+  signal_color: string;
+  rsi: number;
+  macd_bullish: boolean;
+  above_sma_20: boolean;
+  above_sma_50: boolean;
+  week_change_pct: number;
+  signals: string[];
+}
+
 export default function Markets() {
   useNavigate(); // Keep router context active
   const [assetMode, setAssetMode] = useState<AssetClassMode>('both');
@@ -42,6 +56,8 @@ export default function Markets() {
   const [marketOverview, setMarketOverview] = useState<MarketOverview | null>(null);
   const [topGainers, setTopGainers] = useState<TopMover[]>([]);
   const [topLosers, setTopLosers] = useState<TopMover[]>([]);
+  const [buyOpportunities, setBuyOpportunities] = useState<RecommendedStock[]>([]);
+  const [scanningMarket, setScanningMarket] = useState(false);
   const [_searchQuery, _setSearchQuery] = useState(''); // Reserved for search feature
   const [loading, setLoading] = useState(true);
   const [botStatus, setBotStatus] = useState<any>(null);
@@ -126,6 +142,50 @@ export default function Markets() {
     setSelectedSymbol(symbol);
   };
 
+  // Scan market for buy opportunities using AI analysis
+  const scanForOpportunities = async () => {
+    setScanningMarket(true);
+    try {
+      const response = await fetch(`${API_URL}/api/analysis/recommendations?limit=10`);
+      if (response.ok) {
+        const data = await response.json();
+        setBuyOpportunities(data.buy_opportunities || []);
+
+        // Also update top gainers/losers from real data
+        if (data.top_picks) {
+          const gainers = data.top_picks
+            .filter((s: RecommendedStock) => s.week_change_pct > 0)
+            .map((s: RecommendedStock) => ({
+              symbol: s.symbol,
+              name: s.symbol,
+              price: s.price,
+              change: s.week_change_pct,
+              changePct: s.week_change_pct,
+              volume: 0,
+              aiConfidence: s.score,
+            }));
+          const losers = data.top_picks
+            .filter((s: RecommendedStock) => s.week_change_pct < 0)
+            .map((s: RecommendedStock) => ({
+              symbol: s.symbol,
+              name: s.symbol,
+              price: s.price,
+              change: s.week_change_pct,
+              changePct: s.week_change_pct,
+              volume: 0,
+              aiConfidence: s.score,
+            }));
+          if (gainers.length > 0) setTopGainers(gainers);
+          if (losers.length > 0) setTopLosers(losers);
+        }
+      }
+    } catch (err) {
+      console.error('Failed to scan for opportunities:', err);
+    } finally {
+      setScanningMarket(false);
+    }
+  };
+
   return (
     <div className="space-y-6">
       {/* Header with Global Toggle */}
@@ -158,6 +218,21 @@ export default function Markets() {
               highlight
             />
           </div>
+
+          {/* Discover Opportunities Button */}
+          <button
+            onClick={scanForOpportunities}
+            disabled={scanningMarket}
+            className={`flex items-center gap-2 px-4 py-2 rounded-lg font-medium transition-all ${
+              scanningMarket
+                ? 'bg-purple-600/50 text-purple-200 cursor-wait'
+                : 'bg-purple-600 hover:bg-purple-500 text-white'
+            }`}
+            title="Scan market for BUY signals"
+          >
+            <Zap className={`w-4 h-4 ${scanningMarket ? 'animate-pulse' : ''}`} />
+            {scanningMarket ? 'Scanning...' : 'Discover'}
+          </button>
 
           {/* Refresh Button */}
           <button
@@ -316,6 +391,51 @@ export default function Markets() {
             </div>
           </div>
 
+          {/* BUY Opportunities - Discovered Stocks */}
+          {buyOpportunities.length > 0 && (
+            <div className="bg-gradient-to-br from-green-900/30 to-emerald-900/30 rounded-xl p-4 border border-green-500/20">
+              <div className="flex items-center gap-2 mb-3">
+                <Sparkles className="w-4 h-4 text-green-400" />
+                <h3 className="font-semibold text-white">BUY Opportunities</h3>
+                <span className="text-xs px-2 py-0.5 bg-green-500/20 text-green-400 rounded-full">
+                  {buyOpportunities.length} found
+                </span>
+              </div>
+              <div className="space-y-2 max-h-64 overflow-y-auto">
+                {buyOpportunities.map((stock) => (
+                  <div
+                    key={stock.symbol}
+                    onClick={() => handleSymbolSelect(stock.symbol)}
+                    className="flex items-center justify-between p-3 bg-slate-800/50 rounded-lg hover:bg-slate-700/50 cursor-pointer transition-colors"
+                  >
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="font-semibold text-white">{stock.symbol}</span>
+                        <span className="px-1.5 py-0.5 text-xs bg-green-500/20 text-green-400 rounded">
+                          BUY
+                        </span>
+                      </div>
+                      <div className="text-xs text-slate-400 mt-1">
+                        {stock.signals.slice(0, 2).join(' • ')}
+                      </div>
+                    </div>
+                    <div className="text-right">
+                      <div className="text-white font-medium">${stock.price.toFixed(2)}</div>
+                      <div className="flex items-center gap-2">
+                        <span className={`text-xs ${stock.week_change_pct >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                          {stock.week_change_pct >= 0 ? '+' : ''}{stock.week_change_pct.toFixed(1)}%
+                        </span>
+                        <span className="text-xs px-1.5 py-0.5 bg-purple-500/20 text-purple-400 rounded">
+                          {stock.score}%
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
           {/* Scan Summary */}
           <div className="bg-slate-800 rounded-xl p-4">
             <div className="flex items-center gap-2 mb-3">
@@ -333,6 +453,11 @@ export default function Markets() {
                 <p className="p-2 bg-slate-700/50 rounded">
                   <strong className="text-white">Crypto:</strong>{' '}
                   {botStatus.crypto_scan_progress.scan_summary || 'Waiting for scan...'}
+                </p>
+              )}
+              {buyOpportunities.length === 0 && (
+                <p className="p-3 bg-slate-700/30 rounded text-center">
+                  Click <strong className="text-purple-400">Discover</strong> to scan 50+ stocks for BUY signals
                 </p>
               )}
             </div>

@@ -115,23 +115,40 @@ export default function HybridWatchlist({
           });
         }
 
-        // Fetch AI analysis for watchlist items
-        const analysisRes = await fetch(`${API_URL}/api/bot/status`);
-        if (analysisRes.ok) {
-          const botStatus = await analysisRes.json();
-          const cryptoAnalysis = botStatus.crypto_analysis_results || {};
-          const stockAnalysis = botStatus.stock_analysis_results || {};
-
-          watchlistData.forEach(item => {
-            const analysis = cryptoAnalysis[item.symbol] || stockAnalysis[item.symbol];
-            if (analysis) {
-              item.aiConfidence = analysis.confidence;
-              item.aiSignal = analysis.signal;
-              item.aiReasoning = analysis.reason;
-              item.technicalSummary = analysis.signals?.slice(0, 3).join(' | ');
+        // Fetch AI analysis for each watchlist item directly
+        // This works even when the bot isn't running
+        const analysisPromises = watchlistData.map(async (item) => {
+          try {
+            // Skip crypto symbols for now (they use different analysis)
+            if (item.symbol.includes('/') || item.symbol.includes('USD')) {
+              return;
             }
-          });
-        }
+            const res = await fetch(`${API_URL}/api/analysis/ai-insight/${item.symbol}`);
+            if (res.ok) {
+              const insight = await res.json();
+              // Map recommendation to signal format
+              const recToSignal: Record<string, 'BUY' | 'SELL' | 'HOLD' | 'NEUTRAL'> = {
+                'STRONG BUY': 'BUY',
+                'BUY': 'BUY',
+                'STRONG SELL': 'SELL',
+                'SELL': 'SELL',
+                'HOLD': 'HOLD',
+              };
+              item.aiConfidence = insight.score;
+              item.aiSignal = recToSignal[insight.recommendation] || 'NEUTRAL';
+              item.aiReasoning = insight.action;
+              item.technicalSummary = insight.signals?.slice(0, 2).join(' | ') || insight.insight?.substring(0, 80);
+            }
+          } catch (err) {
+            console.debug(`Failed to fetch AI insight for ${item.symbol}:`, err);
+          }
+        });
+
+        // Wait for all analysis to complete (with timeout)
+        await Promise.race([
+          Promise.allSettled(analysisPromises),
+          new Promise(resolve => setTimeout(resolve, 8000)) // 8 second timeout
+        ]);
 
         // Filter by asset class
         let filtered = watchlistData;

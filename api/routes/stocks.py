@@ -203,14 +203,29 @@ async def get_stock_history(
 
 @router.get("/search")
 async def search_symbols(query: str = Query(min_length=1)):
-    """Search for stock symbols by keyword"""
+    """
+    Search for stock symbols by keyword.
+    Uses Alpaca (unlimited) as primary, Alpha Vantage as fallback.
+    """
     import logging
     logger = logging.getLogger(__name__)
     try:
         logger.info(f"Searching for: {query}")
+
+        # Primary: Use Alpaca (unlimited API calls)
+        alpaca = get_alpaca_service()
+        results = await alpaca.search_assets(query, limit=20)
+
+        if results:
+            logger.info(f"Alpaca search found {len(results)} results")
+            return {"results": results}
+
+        # Fallback: Alpha Vantage (limited to 25/day)
+        logger.info("Alpaca returned no results, trying Alpha Vantage")
         results = await av_service.search_symbols(query)
-        logger.info(f"Search results: {len(results)} matches")
+        logger.info(f"Alpha Vantage search found {len(results)} results")
         return {"results": results}
+
     except Exception as e:
         logger.error(f"Search error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
