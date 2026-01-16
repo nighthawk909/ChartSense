@@ -15,7 +15,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from routes import stocks, watchlist, analysis
 from routes import bot, positions, performance, settings
 from routes import ai, watchlist_bot
-from routes import crypto, advanced
+from routes import crypto, advanced, notifications
 from database.connection import init_db
 
 # Configure logging
@@ -76,6 +76,9 @@ app.include_router(crypto.router, prefix="/api/crypto", tags=["crypto"])
 
 # Include routers - Advanced Analysis
 app.include_router(advanced.router, prefix="/api/advanced", tags=["advanced"])
+
+# Include routers - Notifications
+app.include_router(notifications.router, prefix="/api/notifications", tags=["notifications"])
 
 
 @app.get("/")
