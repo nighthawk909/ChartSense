@@ -190,21 +190,34 @@ async def get_data_source_status():
     Get status of data sources and their capabilities.
     Useful for debugging data freshness issues.
     """
+    import os
     alpaca_status = "unknown"
     alpaca_connected = False
+    test_symbols = {}
 
     try:
         alpaca = get_alpaca_service()
-        # Test connection
-        await alpaca.get_latest_bar("AAPL")
-        alpaca_status = "connected"
-        alpaca_connected = True
+        # Test connection with multiple symbols
+        for symbol in ["AAPL", "GOOGL", "SPY"]:
+            try:
+                bar = await alpaca.get_latest_bar(symbol)
+                test_symbols[symbol] = {
+                    "success": True,
+                    "price": bar.get("close") if bar else None
+                }
+                if symbol == "AAPL":
+                    alpaca_status = "connected"
+                    alpaca_connected = True
+            except Exception as e:
+                test_symbols[symbol] = {"success": False, "error": str(e)}
     except Exception as e:
         alpaca_status = f"error: {str(e)}"
 
     return {
         "primary_source": "alpaca",
         "fallback_source": "alpha_vantage",
+        "api_key_configured": bool(os.getenv("ALPACA_API_KEY")),
+        "test_results": test_symbols,
         "alpaca": {
             "status": alpaca_status,
             "connected": alpaca_connected,

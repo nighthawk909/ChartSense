@@ -142,5 +142,31 @@ async def get_crypto_market_status():
     crypto_service = get_crypto_service()
     return {
         "market_open": crypto_service.is_crypto_market_open(),
-        "note": "Crypto markets are open 24/7/365"
+        "message": "Crypto markets are open 24/7/365"
     }
+
+
+@router.get("/debug")
+async def debug_crypto_connection():
+    """Debug endpoint to test Alpaca crypto API connection"""
+    import os
+    crypto_service = get_crypto_service()
+
+    result = {
+        "api_key_set": bool(os.getenv("ALPACA_API_KEY")),
+        "secret_key_set": bool(os.getenv("ALPACA_SECRET_KEY")),
+        "trading_mode": os.getenv("ALPACA_TRADING_MODE", "paper"),
+        "data_url": crypto_service.data_url,
+        "base_url": crypto_service.base_url,
+    }
+
+    # Test BTC quote
+    try:
+        quote = await crypto_service.get_crypto_quote("BTC/USD")
+        result["btc_quote_success"] = quote is not None
+        if quote:
+            result["btc_price"] = quote.get("price")
+    except Exception as e:
+        result["btc_quote_error"] = str(e)
+
+    return result

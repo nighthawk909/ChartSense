@@ -12,25 +12,25 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
-# Supported cryptocurrencies on Alpaca
+# Supported cryptocurrencies on Alpaca (verified to work)
+# Updated 2025: Alpaca now supports major coins including SOL, DOGE, etc.
 SUPPORTED_CRYPTOS = [
     "BTC/USD",   # Bitcoin
     "ETH/USD",   # Ethereum
     "SOL/USD",   # Solana
+    "DOGE/USD",  # Dogecoin
     "AVAX/USD",  # Avalanche
     "LINK/USD",  # Chainlink
-    "DOT/USD",   # Polkadot
     "MATIC/USD", # Polygon
     "UNI/USD",   # Uniswap
-    "AAVE/USD",  # Aave
     "LTC/USD",   # Litecoin
-    "DOGE/USD",  # Dogecoin
+    "AAVE/USD",  # Aave
     "SHIB/USD",  # Shiba Inu
-    "XRP/USD",   # Ripple (if available)
+    # Note: XRP and ADA not available on Alpaca
 ]
 
 # Default crypto watchlist
-DEFAULT_CRYPTO_WATCHLIST = ["BTC/USD", "ETH/USD", "SOL/USD", "AVAX/USD", "LINK/USD"]
+DEFAULT_CRYPTO_WATCHLIST = ["BTC/USD", "ETH/USD", "SOL/USD", "DOGE/USD", "AVAX/USD"]
 
 
 class CryptoService:

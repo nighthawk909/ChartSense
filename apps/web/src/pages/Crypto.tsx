@@ -22,15 +22,16 @@ interface MarketStatus {
   message: string
 }
 
+// Cryptos available on Alpaca (XRP and ADA not supported)
 const POPULAR_CRYPTOS = [
   { symbol: 'BTC/USD', name: 'Bitcoin', icon: '₿' },
   { symbol: 'ETH/USD', name: 'Ethereum', icon: 'Ξ' },
   { symbol: 'SOL/USD', name: 'Solana', icon: '◎' },
   { symbol: 'DOGE/USD', name: 'Dogecoin', icon: 'Ð' },
-  { symbol: 'XRP/USD', name: 'Ripple', icon: '✕' },
-  { symbol: 'ADA/USD', name: 'Cardano', icon: '₳' },
   { symbol: 'AVAX/USD', name: 'Avalanche', icon: 'A' },
-  { symbol: 'MATIC/USD', name: 'Polygon', icon: 'M' },
+  { symbol: 'LINK/USD', name: 'Chainlink', icon: '⬡' },
+  { symbol: 'LTC/USD', name: 'Litecoin', icon: 'Ł' },
+  { symbol: 'SHIB/USD', name: 'Shiba Inu', icon: '🐕' },
 ]
 
 export default function Crypto() {
