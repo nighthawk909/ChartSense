@@ -74,6 +74,26 @@ export interface CryptoScanProgress {
   next_scan_in_seconds: number;
 }
 
+export interface StockBestOpportunity {
+  symbol: string;
+  confidence: number;
+  threshold: number;
+  meets_threshold: boolean;
+}
+
+export interface StockScanProgress {
+  total: number;
+  scanned: number;
+  current_symbol: string | null;
+  signals_found: number;
+  best_opportunity: StockBestOpportunity | null;
+  scan_status: 'idle' | 'scanning' | 'exhausted' | 'found_opportunity' | 'market_closed' | 'disabled' | 'extended_hours_waiting';
+  scan_summary: string;
+  last_scan_completed: string | null;
+  next_scan_in_seconds: number;
+  market_status: string;
+}
+
 export interface ExecutionLogEntry {
   timestamp: string;
   symbol: string;
@@ -108,6 +128,8 @@ export interface BotStatus {
   error_message: string | null;
   paper_trading: boolean;
   active_symbols: string[];
+  // Asset Class Mode
+  asset_class_mode?: 'crypto' | 'stocks' | 'both';
   // Auto trade mode
   auto_trade_mode?: boolean;
   ai_risk_tolerance?: string;
@@ -120,6 +142,8 @@ export interface BotStatus {
   last_crypto_analysis_time?: string | null;
   // Crypto scan progress tracking
   crypto_scan_progress?: CryptoScanProgress;
+  // Stock scan progress tracking
+  stock_scan_progress?: StockScanProgress;
   // AI Decision Tracking
   last_ai_decision?: AIDecision | null;
   ai_decisions_history?: AIDecision[];

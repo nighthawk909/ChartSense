@@ -107,11 +107,22 @@ export default function BotStatusCard({ status, loading }: BotStatusCardProps) {
         </div>
       )}
 
+      {/* Stock Scan Progress - Show when bot is running in stocks or both mode */}
+      {status.state === 'RUNNING' && status.stock_scan_progress && (status.asset_class_mode === 'stocks' || status.asset_class_mode === 'both') && (
+        <ScanProgressCard
+          title="Stock Scan"
+          progress={status.stock_scan_progress}
+          type="stock"
+          marketStatus={status.stock_scan_progress.market_status}
+        />
+      )}
+
       {/* Crypto Scan Progress */}
       {status.crypto_trading_enabled && status.crypto_scan_progress && (
-        <CryptoScanProgressCard
+        <ScanProgressCard
+          title="Crypto Scan"
           progress={status.crypto_scan_progress}
-          lastAnalysisTime={status.last_crypto_analysis_time}
+          type="crypto"
         />
       )}
 
@@ -158,12 +169,17 @@ export default function BotStatusCard({ status, loading }: BotStatusCardProps) {
   );
 }
 
-function CryptoScanProgressCard({
+// Unified Scan Progress Card for both Stocks and Crypto
+function ScanProgressCard({
+  title,
   progress,
-  lastAnalysisTime
+  type,
+  marketStatus
 }: {
+  title: string;
   progress: CryptoScanProgress;
-  lastAnalysisTime?: string | null;
+  type: 'stock' | 'crypto';
+  marketStatus?: string;
 }) {
   const getStatusIcon = () => {
     switch (progress.scan_status) {
@@ -173,6 +189,8 @@ function CryptoScanProgressCard({
         return <CheckCircle2 className="w-4 h-4 text-green-400" />;
       case 'exhausted':
         return <XCircle className="w-4 h-4 text-yellow-400" />;
+      case 'market_closed':
+        return <Clock className="w-4 h-4 text-orange-400" />;
       default:
         return <Clock className="w-4 h-4 text-slate-400" />;
     }
@@ -181,23 +199,35 @@ function CryptoScanProgressCard({
   const getStatusColor = () => {
     switch (progress.scan_status) {
       case 'scanning':
-        return 'bg-blue-500/20 border-blue-500/30';
+        return type === 'stock' ? 'bg-green-500/20 border-green-500/30' : 'bg-blue-500/20 border-blue-500/30';
       case 'found_opportunity':
         return 'bg-green-500/20 border-green-500/30';
       case 'exhausted':
         return 'bg-yellow-500/20 border-yellow-500/30';
+      case 'market_closed':
+        return 'bg-orange-500/20 border-orange-500/30';
       default:
         return 'bg-slate-700/50 border-slate-600/30';
     }
   };
 
   const progressPct = progress.total > 0 ? (progress.scanned / progress.total) * 100 : 0;
+  const progressBarColor = type === 'stock' ? 'bg-green-500' : 'bg-blue-500';
 
   return (
     <div className={`mt-4 p-3 rounded-lg border ${getStatusColor()}`}>
       <div className="flex items-center gap-2 mb-2">
         {getStatusIcon()}
-        <span className="text-sm font-medium text-white">Crypto Scan</span>
+        <span className="text-sm font-medium text-white">{title}</span>
+        {marketStatus && type === 'stock' && (
+          <span className={`px-1.5 py-0.5 text-xs rounded ${
+            marketStatus === 'regular' ? 'bg-green-500/20 text-green-400' :
+            marketStatus === 'pre_market' || marketStatus === 'after_hours' ? 'bg-yellow-500/20 text-yellow-400' :
+            'bg-slate-500/20 text-slate-400'
+          }`}>
+            {marketStatus.replace('_', ' ')}
+          </span>
+        )}
         <span className="text-xs text-slate-400 ml-auto">
           {progress.scanned}/{progress.total} scanned
         </span>
@@ -209,7 +239,7 @@ function CryptoScanProgressCard({
           className={`h-2 rounded-full transition-all duration-300 ${
             progress.scan_status === 'found_opportunity' ? 'bg-green-500' :
             progress.scan_status === 'exhausted' ? 'bg-yellow-500' :
-            'bg-blue-500'
+            progressBarColor
           }`}
           style={{ width: `${progressPct}%` }}
         />
@@ -217,7 +247,7 @@ function CryptoScanProgressCard({
 
       {/* Current Symbol Being Scanned */}
       {progress.current_symbol && (
-        <div className="flex items-center gap-2 mb-2 text-xs text-blue-300">
+        <div className={`flex items-center gap-2 mb-2 text-xs ${type === 'stock' ? 'text-green-300' : 'text-blue-300'}`}>
           <Loader2 className="w-3 h-3 animate-spin" />
           Analyzing {progress.current_symbol}...
         </div>

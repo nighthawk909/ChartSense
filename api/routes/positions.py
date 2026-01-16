@@ -59,7 +59,7 @@ async def get_account_summary():
 @router.get("/current", response_model=PositionsListResponse)
 async def get_current_positions():
     """
-    Get all current open positions.
+    Get all current open positions (stocks AND crypto).
 
     Returns positions from Alpaca with our strategy metadata.
     """
@@ -81,6 +81,10 @@ async def get_current_positions():
             symbol = pos["symbol"]
             db_pos = db_positions.get(symbol)
 
+            # Determine if crypto based on symbol format or asset class
+            asset_class = pos.get("asset_class", "us_equity")
+            is_crypto = asset_class == "crypto" or symbol.endswith("USD") or "/" in symbol
+
             position = PositionResponse(
                 symbol=symbol,
                 quantity=pos["quantity"],
@@ -94,6 +98,7 @@ async def get_current_positions():
                 trade_type=TradeType(db_pos.trade_type) if db_pos and db_pos.trade_type else None,
                 entry_time=db_pos.entry_time if db_pos else None,
                 entry_score=db_pos.entry_score if db_pos else None,
+                asset_class="crypto" if is_crypto else "stock",
             )
             positions.append(position)
 

@@ -249,10 +249,37 @@ class CryptoService:
             order_type: "market" or "limit"
             time_in_force: "gtc" (good til cancelled) or "ioc" (immediate or cancel)
             limit_price: Required for limit orders
+
+        Symbol Format Notes:
+            - Alpaca crypto API expects symbols WITHOUT slash: BTCUSD, ETHUSD
+            - Common mistake: BTC/USD won't work, must be BTCUSD
+            - This function handles the conversion automatically
         """
+        # === SYMBOL NORMALIZATION ===
+        # Convert BTC/USD -> BTCUSD, btc/usd -> BTCUSD, etc.
+        original_symbol = symbol
         symbol = symbol.replace("/", "").upper()
         if not symbol.endswith("USD"):
             symbol += "USD"
+
+        logger.debug(f"Symbol normalization: {original_symbol} -> {symbol}")
+
+        # === MINIMUM ORDER VALIDATION ===
+        # Alpaca has minimum notional value of $1 for crypto
+        # Also validate that qty is reasonable
+        if qty <= 0:
+            logger.error(f"Invalid quantity: {qty}")
+            return {
+                "error": True,
+                "error_message": "ORDER_SIZE_TOO_SMALL: Quantity must be greater than 0",
+                "status_code": 400,
+                "symbol": symbol,
+                "qty": qty,
+                "side": side,
+            }
+
+        # Round qty to reasonable precision (Alpaca accepts up to 9 decimal places for crypto)
+        qty = round(qty, 9)
 
         order_data = {
             "symbol": symbol,
@@ -263,17 +290,29 @@ class CryptoService:
         }
 
         if order_type == "limit" and limit_price:
-            order_data["limit_price"] = str(limit_price)
+            order_data["limit_price"] = str(round(limit_price, 2))
 
         logger.info(f"Placing crypto order: {side} {qty} {symbol} (type={order_type})")
+        logger.info(f"Order data: {order_data}")
         data = await self._make_request("POST", "/v2/orders", json_data=order_data, return_error=True)
 
         if data and data.get("error"):
-            logger.error(f"Order failed for {symbol}: {data.get('message')}")
-            return None
+            error_msg = data.get('message', 'Unknown error')
+            status_code = data.get('status_code', 'N/A')
+            logger.error(f"Order FAILED for {symbol}: {error_msg} (status: {status_code})")
+            logger.error(f"Order details: qty={qty}, side={side}, type={order_type}")
+            # Return error info for execution log
+            return {
+                "error": True,
+                "error_message": error_msg,
+                "status_code": status_code,
+                "symbol": symbol,
+                "qty": qty,
+                "side": side,
+            }
 
         if data:
-            logger.info(f"Crypto order placed: {side} {qty} {symbol}")
+            logger.info(f"Crypto order SUCCESS: {side} {qty} {symbol} - status: {data.get('status')}")
             return {
                 "order_id": data.get("id"),
                 "symbol": data.get("symbol"),
@@ -284,6 +323,8 @@ class CryptoService:
                 "filled_qty": float(data.get("filled_qty", 0)),
                 "filled_avg_price": float(data.get("filled_avg_price") or 0),
             }
+
+        logger.error(f"Order returned None for {symbol}")
         return None
 
     async def get_crypto_positions(self) -> List[Dict[str, Any]]:

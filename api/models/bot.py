@@ -76,6 +76,28 @@ class CryptoScanProgress(BaseModel):
     next_scan_in_seconds: int = 0
 
 
+class StockBestOpportunity(BaseModel):
+    """Best stock opportunity found during scan"""
+    symbol: str
+    confidence: float
+    threshold: float
+    meets_threshold: bool
+
+
+class StockScanProgress(BaseModel):
+    """Progress tracking for stock scanning cycle"""
+    total: int = 0
+    scanned: int = 0
+    current_symbol: Optional[str] = None
+    signals_found: int = 0
+    best_opportunity: Optional[StockBestOpportunity] = None
+    scan_status: str = "idle"  # idle, scanning, exhausted, found_opportunity, market_closed, disabled
+    scan_summary: str = ""
+    last_scan_completed: Optional[str] = None
+    next_scan_in_seconds: int = 0
+    market_status: str = "unknown"  # regular, extended, pre_market, after_hours, overnight, weekend
+
+
 class BotStatusResponse(BaseModel):
     """Current bot status"""
     state: BotState
@@ -86,6 +108,8 @@ class BotStatusResponse(BaseModel):
     error_message: Optional[str] = None
     paper_trading: bool = True
     active_symbols: List[str] = []
+    # Asset Class Mode
+    asset_class_mode: str = "both"  # crypto, stocks, both
     # Crypto trading status
     crypto_trading_enabled: bool = False
     crypto_symbols: List[str] = []
@@ -94,6 +118,8 @@ class BotStatusResponse(BaseModel):
     last_crypto_analysis_time: Optional[str] = None
     # Crypto scan progress tracking
     crypto_scan_progress: Optional[CryptoScanProgress] = None
+    # Stock scan progress tracking
+    stock_scan_progress: Optional[StockScanProgress] = None
 
 
 class BotStartRequest(BaseModel):
@@ -137,8 +163,9 @@ class PositionResponse(BaseModel):
     stop_loss: Optional[float] = None
     profit_target: Optional[float] = None
     trade_type: Optional[TradeType] = None
-    entry_time: datetime
+    entry_time: Optional[datetime] = None  # Optional for positions not tracked in DB
     entry_score: Optional[float] = None
+    asset_class: Optional[str] = None  # 'stock' or 'crypto'
 
 
 class PositionsListResponse(BaseModel):

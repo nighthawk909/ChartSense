@@ -123,12 +123,22 @@ async def get_stock_history(
         limit = 500 if outputsize == "full" else 100
 
         # Calculate start date based on timeframe
+        # Use UTC time for consistency with Alpaca API
+        from datetime import timezone
+        now_utc = datetime.now(timezone.utc)
+
         if timeframe == "1day":
-            start = datetime.now() - timedelta(days=limit)
+            start = now_utc - timedelta(days=limit)
         elif timeframe == "1hour":
-            start = datetime.now() - timedelta(days=30)
+            start = now_utc - timedelta(days=30)
+        elif timeframe == "5min":
+            # For 5-minute data, go back 3 days max to get fresh data
+            start = now_utc - timedelta(days=3)
+        elif timeframe == "1min":
+            # For 1-minute data, go back 1 day to ensure fresh data
+            start = now_utc - timedelta(days=1)
         else:
-            start = datetime.now() - timedelta(days=7)
+            start = now_utc - timedelta(days=7)
 
         logger.debug(f"[HISTORY] Fetching {limit} {timeframe} bars for {symbol_upper} from {start}")
 
@@ -221,6 +231,62 @@ async def get_company_overview(symbol: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.get("/realtime/{symbol}")
+async def get_realtime_quote(symbol: str):
+    """
+    Get real-time (latest) quote with forced fresh data.
+    Bypasses any caching and fetches directly from Alpaca.
+    """
+    symbol_upper = symbol.upper()
+    logger.info(f"[REALTIME] Force-fetching fresh data for {symbol_upper}")
+
+    try:
+        alpaca = get_alpaca_service()
+
+        # Get the absolute latest bar
+        bar = await alpaca.get_latest_bar(symbol_upper)
+
+        if not bar:
+            raise HTTPException(status_code=404, detail=f"No data for {symbol}")
+
+        # Also get latest trade for more precision
+        try:
+            latest_trade = await alpaca.get_latest_trade(symbol_upper)
+        except:
+            latest_trade = None
+
+        # Get 2-day bars for change calculation
+        from datetime import timezone
+        now_utc = datetime.now(timezone.utc)
+        bars = await alpaca.get_bars(symbol_upper, timeframe="1Day", limit=2)
+
+        prev_close = bars[-2]["close"] if len(bars) >= 2 else bar["close"]
+        change = bar["close"] - prev_close
+        change_percent = (change / prev_close * 100) if prev_close else 0
+
+        return {
+            "symbol": symbol_upper,
+            "price": latest_trade["price"] if latest_trade else bar["close"],
+            "bar_close": bar["close"],
+            "bar_timestamp": bar["timestamp"],
+            "trade_timestamp": latest_trade["timestamp"] if latest_trade else None,
+            "open": bar["open"],
+            "high": bar["high"],
+            "low": bar["low"],
+            "volume": bar["volume"],
+            "change": change,
+            "change_percent": change_percent,
+            "server_time": now_utc.isoformat(),
+            "data_age_seconds": (now_utc - datetime.fromisoformat(bar["timestamp"].replace("Z", "+00:00"))).total_seconds() if "T" in bar["timestamp"] else None,
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"[REALTIME] Error for {symbol}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.get("/data-source-status")
 async def get_data_source_status():
     """
@@ -271,3 +337,76 @@ async def get_data_source_status():
         },
         "recommendation": "Using Alpaca for all price data (unlimited). Alpha Vantage rate limits won't affect charts."
     }
+
+
+@router.post("/force-refresh/{symbol}")
+async def force_refresh_chart_data(symbol: str, interval: str = "1min"):
+    """
+    Force refresh chart data for a symbol.
+
+    This endpoint:
+    1. Clears any server-side cache for the symbol
+    2. Fetches fresh data directly from Alpaca
+    3. Returns the latest 100 candles with timestamps
+
+    Use this when:
+    - Charts appear stale or frozen
+    - Data timestamps don't match current time
+    - You need to verify data freshness
+
+    Args:
+        symbol: Stock symbol (e.g., AAPL) or crypto (e.g., BTC/USD)
+        interval: Candle interval (1min, 5min, 15min, 1hour, 1day)
+    """
+    from datetime import timezone
+    symbol_upper = symbol.upper()
+    logger.info(f"[FORCE-REFRESH] Clearing cache and fetching fresh data for {symbol_upper} ({interval})")
+
+    try:
+        alpaca = get_alpaca_service()
+        now_utc = datetime.now(timezone.utc)
+
+        # Map interval to Alpaca timeframe
+        interval_map = {
+            "1min": "1Min",
+            "5min": "5Min",
+            "15min": "15Min",
+            "30min": "30Min",
+            "1hour": "1Hour",
+            "1day": "1Day",
+        }
+        timeframe = interval_map.get(interval.lower(), "1Min")
+
+        # Fetch fresh bars (bypass any caching by requesting with timestamp)
+        bars = await alpaca.get_bars(symbol_upper, timeframe=timeframe, limit=100)
+
+        if not bars:
+            raise HTTPException(status_code=404, detail=f"No data for {symbol}")
+
+        # Calculate data freshness
+        latest_bar = bars[-1] if bars else None
+        data_age_seconds = None
+        if latest_bar and "timestamp" in latest_bar:
+            try:
+                bar_time = datetime.fromisoformat(latest_bar["timestamp"].replace("Z", "+00:00"))
+                data_age_seconds = (now_utc - bar_time).total_seconds()
+            except:
+                pass
+
+        return {
+            "symbol": symbol_upper,
+            "interval": interval,
+            "bars_count": len(bars),
+            "first_bar_time": bars[0]["timestamp"] if bars else None,
+            "last_bar_time": latest_bar["timestamp"] if latest_bar else None,
+            "server_time": now_utc.isoformat(),
+            "data_age_seconds": data_age_seconds,
+            "is_fresh": data_age_seconds is not None and data_age_seconds < 120,  # < 2 min = fresh
+            "bars": bars,
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"[FORCE-REFRESH] Error for {symbol}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))

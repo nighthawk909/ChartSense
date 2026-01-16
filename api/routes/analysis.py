@@ -3,7 +3,7 @@ Technical analysis routes - indicator calculations
 """
 from fastapi import APIRouter, HTTPException, Query
 from typing import Optional, List, Dict, Any
-from services.indicators import IndicatorService
+from services.indicators import IndicatorService, AdaptiveIndicatorEngine, TradingMode
 from services.alpha_vantage import AlphaVantageService
 from services.alpaca_service import get_alpaca_service
 from models.indicators import (
@@ -20,6 +20,7 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 indicator_service = IndicatorService()
+adaptive_engine = AdaptiveIndicatorEngine()
 av_service = AlphaVantageService()
 
 
@@ -589,4 +590,146 @@ async def get_stock_recommendations(
         "buy_opportunities": buy_signals,
         "sell_candidates": sell_signals,
         "top_picks": recommendations[:5],
+    }
+
+
+@router.get("/adaptive/{symbol}")
+async def get_adaptive_indicators(
+    symbol: str,
+    mode: str = Query(default="intraday", description="Trading mode: scalp, intraday, or swing"),
+    auto_mode: bool = Query(default=True, description="Auto-detect optimal mode based on volatility"),
+):
+    """
+    Get adaptive technical indicators with mode-specific parameters.
+
+    The adaptive engine automatically adjusts indicator periods and thresholds
+    based on the selected trading mode (scalp, intraday, swing) or can auto-detect
+    the optimal mode based on current market volatility.
+    """
+    try:
+        alpaca = get_alpaca_service()
+
+        # Get historical data
+        start = datetime.now() - timedelta(days=100)
+        bars = await alpaca.get_bars(symbol.upper(), timeframe="1day", limit=100, start=start)
+
+        if not bars or len(bars) < 30:
+            raise HTTPException(status_code=404, detail=f"Insufficient data for {symbol}")
+
+        # Extract OHLCV data
+        closes = [b["close"] for b in bars]
+        highs = [b["high"] for b in bars]
+        lows = [b["low"] for b in bars]
+        volumes = [b["volume"] for b in bars]
+
+        # Set mode if not auto
+        if not auto_mode:
+            try:
+                trading_mode = TradingMode(mode.lower())
+                adaptive_engine.set_mode(trading_mode, auto=False)
+            except ValueError:
+                trading_mode = TradingMode.INTRADAY
+                adaptive_engine.set_mode(trading_mode, auto=False)
+        else:
+            adaptive_engine.set_mode(TradingMode.INTRADAY, auto=True)
+
+        # Calculate adaptive indicators
+        indicators = adaptive_engine.calculate_adaptive_indicators(
+            highs, lows, closes, volumes
+        )
+
+        # Get mode recommendation
+        recommendation = adaptive_engine.get_mode_recommendation(
+            highs, lows, closes, volumes
+        )
+
+        return {
+            "symbol": symbol.upper(),
+            "timestamp": datetime.now().isoformat(),
+            "current_price": closes[-1],
+            "indicators": indicators,
+            "recommendation": recommendation,
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Adaptive indicators error for {symbol}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/adaptive/mode")
+async def set_adaptive_mode(
+    mode: str = Query(..., description="Trading mode: scalp, intraday, or swing"),
+    auto: bool = Query(default=False, description="Enable auto-mode switching"),
+):
+    """
+    Set the trading mode for the adaptive indicator engine.
+
+    Modes:
+    - scalp: Short timeframes, tight stops, quick trades (high volatility)
+    - intraday: Same-day positions, moderate risk (moderate volatility)
+    - swing: Multi-day holds, wider stops (low volatility)
+    """
+    try:
+        if auto:
+            adaptive_engine.set_mode(TradingMode.INTRADAY, auto=True)
+            return {
+                "success": True,
+                "mode": "auto",
+                "message": "Auto-mode enabled. Mode will adjust based on market volatility.",
+            }
+
+        try:
+            trading_mode = TradingMode(mode.lower())
+        except ValueError:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid mode: {mode}. Must be 'scalp', 'intraday', or 'swing'"
+            )
+
+        adaptive_engine.set_mode(trading_mode, auto=False)
+        config = adaptive_engine.get_config()
+
+        return {
+            "success": True,
+            "mode": trading_mode.value,
+            "auto_mode": False,
+            "config": config,
+            "message": f"Mode set to {trading_mode.value}",
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Set adaptive mode error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/adaptive/config")
+async def get_adaptive_config():
+    """
+    Get the current adaptive indicator engine configuration.
+    """
+    return {
+        "current_mode": adaptive_engine.current_mode.value,
+        "auto_mode": adaptive_engine.auto_mode,
+        "config": adaptive_engine.get_config(),
+        "available_modes": {
+            "scalp": {
+                "description": "Quick trades, tight stops, high volatility environments",
+                "typical_hold_time": "Minutes to 1 hour",
+                "volatility_threshold": ">2.5% ATR",
+            },
+            "intraday": {
+                "description": "Same-day positions, moderate risk",
+                "typical_hold_time": "1-8 hours",
+                "volatility_threshold": "0.8-2.5% ATR",
+            },
+            "swing": {
+                "description": "Multi-day holds, wider stops, trending markets",
+                "typical_hold_time": "1-7 days",
+                "volatility_threshold": "<1.0% ATR",
+            },
+        },
     }

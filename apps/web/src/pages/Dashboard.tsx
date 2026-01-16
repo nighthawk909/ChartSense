@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
-import { TrendingUp, TrendingDown, RefreshCw, AlertCircle } from 'lucide-react'
+import { TrendingUp, TrendingDown, RefreshCw, AlertCircle, BarChart3 } from 'lucide-react'
 import StockChart from '../components/StockChart'
+import PerformanceDashboard from '../components/dashboard/PerformanceDashboard'
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
 
@@ -18,6 +19,14 @@ interface WatchlistStock {
   price: number
   change: number
   changePercent: number
+}
+
+interface TechnicalIndicators {
+  rsi_14: { value: number; signal: string }
+  macd: { value: number; signal: string }
+  sma_20: { value: number; signal: string }
+  sma_50: { value: number; signal: string }
+  bollinger?: { position: string; signal: string }
 }
 
 // Default watchlist (will be updated with live data)
@@ -47,6 +56,9 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [refreshing, setRefreshing] = useState(false)
+  const [indicators, setIndicators] = useState<TechnicalIndicators | null>(null)
+  const [indicatorsLoading, setIndicatorsLoading] = useState(false)
+  const [showPerformance, setShowPerformance] = useState(false)
 
   // Fetch live stock quotes
   const fetchQuotes = async () => {
@@ -98,6 +110,22 @@ export default function Dashboard() {
     }
   }
 
+  // Fetch technical indicators for selected stock
+  const fetchIndicators = async (symbol: string) => {
+    setIndicatorsLoading(true)
+    try {
+      const response = await fetch(`${API_URL}/api/analysis/summary/${symbol}`)
+      if (response.ok) {
+        const data = await response.json()
+        setIndicators(data.indicators)
+      }
+    } catch (err) {
+      console.error('Failed to fetch indicators:', err)
+    } finally {
+      setIndicatorsLoading(false)
+    }
+  }
+
   // Initial fetch and auto-refresh
   useEffect(() => {
     fetchQuotes()
@@ -106,9 +134,15 @@ export default function Dashboard() {
     return () => clearInterval(interval)
   }, [])
 
+  // Fetch indicators when selected stock changes
+  useEffect(() => {
+    fetchIndicators(selectedStock)
+  }, [selectedStock])
+
   const handleRefresh = () => {
     setRefreshing(true)
     fetchQuotes()
+    fetchIndicators(selectedStock)
   }
 
   // Available intervals with labels
@@ -142,14 +176,25 @@ export default function Dashboard() {
             )}
           </div>
         </div>
-        <button
-          onClick={handleRefresh}
-          disabled={refreshing}
-          className="flex items-center gap-2 px-4 py-2 bg-slate-700 hover:bg-slate-600 rounded-lg transition-colors"
-        >
-          <RefreshCw className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} />
-          Refresh
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setShowPerformance(!showPerformance)}
+            className={`flex items-center gap-2 px-4 py-2 rounded-lg transition-colors ${
+              showPerformance ? 'bg-blue-600 text-white' : 'bg-slate-700 hover:bg-slate-600 text-slate-300'
+            }`}
+          >
+            <BarChart3 className="h-4 w-4" />
+            Performance
+          </button>
+          <button
+            onClick={handleRefresh}
+            disabled={refreshing}
+            className="flex items-center gap-2 px-4 py-2 bg-slate-700 hover:bg-slate-600 rounded-lg transition-colors"
+          >
+            <RefreshCw className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} />
+            Refresh
+          </button>
+        </div>
       </div>
 
       {/* Error banner */}
@@ -157,6 +202,13 @@ export default function Dashboard() {
         <div className="bg-red-900/50 border border-red-700 rounded-lg p-4 flex items-center gap-3">
           <AlertCircle className="h-5 w-5 text-red-500" />
           <span>{error}</span>
+        </div>
+      )}
+
+      {/* Performance Dashboard (collapsible) */}
+      {showPerformance && (
+        <div className="bg-slate-800 rounded-lg border border-slate-700 p-4">
+          <PerformanceDashboard compact />
         </div>
       )}
 
@@ -248,6 +300,7 @@ export default function Dashboard() {
                 symbol={selectedStock}
                 period={selectedPeriod}
                 interval={selectedInterval}
+                enableRealTime={true}
               />
             </div>
           </div>
@@ -304,40 +357,60 @@ export default function Dashboard() {
         </div>
       </div>
 
-      {/* Technical Indicators */}
+      {/* Technical Indicators - Now fetching live data */}
       <section>
         <div className="bg-slate-800 rounded-lg p-4 border border-slate-700">
-          <h2 className="text-lg font-semibold mb-4">Technical Indicators - {selectedStock}</h2>
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-lg font-semibold">Technical Indicators - {selectedStock}</h2>
+            {indicatorsLoading && (
+              <div className="flex items-center gap-2 text-sm text-slate-400">
+                <RefreshCw className="w-4 h-4 animate-spin" />
+                Loading...
+              </div>
+            )}
+          </div>
           <div className="grid grid-cols-4 gap-4">
             <IndicatorCard
               name="RSI (14)"
-              value={58.42}
-              status="Neutral"
-              statusColor="text-yellow-500"
+              value={indicators?.rsi_14?.value ?? '--'}
+              status={indicators?.rsi_14?.signal ?? 'Loading'}
+              statusColor={getStatusColor(indicators?.rsi_14?.signal)}
             />
             <IndicatorCard
               name="MACD"
-              value={2.34}
-              status="Bullish"
-              statusColor="text-green-500"
+              value={indicators?.macd?.value ?? '--'}
+              status={indicators?.macd?.signal ?? 'Loading'}
+              statusColor={getStatusColor(indicators?.macd?.signal)}
             />
             <IndicatorCard
               name="SMA (50)"
-              value={172.45}
-              status="Above"
-              statusColor="text-green-500"
+              value={indicators?.sma_50?.value ?? '--'}
+              status={indicators?.sma_50?.signal ?? 'Loading'}
+              statusColor={getStatusColor(indicators?.sma_50?.signal)}
             />
             <IndicatorCard
               name="Bollinger Bands"
-              value="Middle"
-              status="Neutral"
-              statusColor="text-yellow-500"
+              value={indicators?.bollinger?.position ?? 'Middle'}
+              status={indicators?.bollinger?.signal ?? 'Neutral'}
+              statusColor={getStatusColor(indicators?.bollinger?.signal)}
             />
           </div>
         </div>
       </section>
     </div>
   )
+}
+
+function getStatusColor(signal?: string): string {
+  if (!signal) return 'text-slate-400'
+  const lowerSignal = signal.toLowerCase()
+  if (lowerSignal.includes('bullish') || lowerSignal.includes('oversold') || lowerSignal.includes('above')) {
+    return 'text-green-500'
+  }
+  if (lowerSignal.includes('bearish') || lowerSignal.includes('overbought') || lowerSignal.includes('below')) {
+    return 'text-red-500'
+  }
+  return 'text-yellow-500'
 }
 
 function IndicatorCard({

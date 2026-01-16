@@ -13,6 +13,8 @@ from models.bot import (
     CryptoAnalysisResult,
     CryptoScanProgress,
     CryptoBestOpportunity,
+    StockScanProgress,
+    StockBestOpportunity,
 )
 from services.trading_bot import get_trading_bot
 
@@ -62,6 +64,26 @@ async def get_bot_status():
             next_scan_in_seconds=raw_progress.get("next_scan_in_seconds", 0),
         )
 
+    # Build stock scan progress if available
+    stock_scan_progress = None
+    raw_stock_progress = status.get("stock_scan_progress")
+    if raw_stock_progress:
+        stock_best_opp = None
+        if raw_stock_progress.get("best_opportunity"):
+            stock_best_opp = StockBestOpportunity(**raw_stock_progress["best_opportunity"])
+        stock_scan_progress = StockScanProgress(
+            total=raw_stock_progress.get("total", 0),
+            scanned=raw_stock_progress.get("scanned", 0),
+            current_symbol=raw_stock_progress.get("current_symbol"),
+            signals_found=raw_stock_progress.get("signals_found", 0),
+            best_opportunity=stock_best_opp,
+            scan_status=raw_stock_progress.get("scan_status", "idle"),
+            scan_summary=raw_stock_progress.get("scan_summary", ""),
+            last_scan_completed=raw_stock_progress.get("last_scan_completed"),
+            next_scan_in_seconds=raw_stock_progress.get("next_scan_in_seconds", 0),
+            market_status=raw_stock_progress.get("market_status", "unknown"),
+        )
+
     return BotStatusResponse(
         state=BotState(status["state"]),
         uptime_seconds=status["uptime_seconds"],
@@ -71,12 +93,14 @@ async def get_bot_status():
         error_message=status["error_message"],
         paper_trading=status["paper_trading"],
         active_symbols=status["active_symbols"],
+        asset_class_mode=status.get("asset_class_mode", "both"),
         crypto_trading_enabled=status.get("crypto_trading_enabled", False),
         crypto_symbols=status.get("crypto_symbols", []),
         crypto_positions=status.get("crypto_positions", 0),
         crypto_analysis_results=crypto_results,
         last_crypto_analysis_time=status.get("last_crypto_analysis_time"),
         crypto_scan_progress=scan_progress,
+        stock_scan_progress=stock_scan_progress,
     )
 
 
@@ -307,6 +331,48 @@ async def set_strategy_override(strategy: str = None):
     }
 
 
+@router.post("/auto-trade")
+async def toggle_auto_trade(enabled: bool = None):
+    """
+    Enable or disable automatic trade execution.
+
+    When enabled, the bot will automatically execute trades when signals meet thresholds.
+    When disabled, the bot will only detect signals and report them (manual trade approval required).
+
+    Args:
+        enabled: True to enable auto-trading, False to disable. If None, toggles current state.
+    """
+    bot = get_trading_bot()
+
+    if enabled is None:
+        # Toggle mode
+        bot.auto_trade_mode = not bot.auto_trade_mode
+    else:
+        bot.auto_trade_mode = enabled
+
+    return {
+        "success": True,
+        "auto_trade_mode": bot.auto_trade_mode,
+        "message": f"Auto-trade mode {'enabled' if bot.auto_trade_mode else 'disabled'}. " +
+                   ("Bot will now automatically execute trades when signals meet thresholds." if bot.auto_trade_mode
+                    else "Bot will only detect signals. Manual trade approval required."),
+    }
+
+
+@router.get("/auto-trade")
+async def get_auto_trade_status():
+    """
+    Get current auto-trade mode status.
+    """
+    bot = get_trading_bot()
+
+    return {
+        "auto_trade_mode": bot.auto_trade_mode,
+        "ai_risk_tolerance": getattr(bot, 'ai_risk_tolerance', 'moderate'),
+        "message": "Auto-trade is " + ("enabled" if bot.auto_trade_mode else "disabled"),
+    }
+
+
 @router.post("/emergency-close-all")
 async def emergency_close_all():
     """
@@ -360,6 +426,65 @@ async def get_priority_tiers():
     return {
         "summary": bot.priority_scanner.get_tier_summary(),
         "symbols": bot.priority_scanner.get_all_priorities(),
+    }
+
+
+@router.post("/asset-class-mode")
+async def set_asset_class_mode(mode: str):
+    """
+    Set the asset class mode for hybrid scanning.
+
+    Args:
+        mode: 'crypto' for crypto only, 'stocks' for stocks only, 'both' for hybrid
+
+    When set to 'both' (hybrid mode):
+    - Stocks are scanned during regular market hours
+    - Crypto is scanned 24/7
+    - Both asset classes are monitored when market is open
+    """
+    bot = get_trading_bot()
+
+    valid_modes = ['crypto', 'stocks', 'both']
+    if mode not in valid_modes:
+        raise HTTPException(status_code=400, detail=f"Invalid mode. Use: {valid_modes}")
+
+    old_mode = bot.asset_class_mode
+    bot.asset_class_mode = mode
+
+    # Enable/disable crypto based on mode
+    if mode == 'crypto':
+        bot.crypto_trading_enabled = True
+    elif mode == 'stocks':
+        bot.crypto_trading_enabled = False
+    else:  # both
+        bot.crypto_trading_enabled = True
+
+    return {
+        "success": True,
+        "previous_mode": old_mode,
+        "asset_class_mode": bot.asset_class_mode,
+        "crypto_trading_enabled": bot.crypto_trading_enabled,
+        "message": f"Asset class mode set to '{mode}'",
+    }
+
+
+@router.get("/scan-progress")
+async def get_scan_progress():
+    """
+    Get current scan progress for both stocks and crypto.
+
+    Returns real-time scan status, current symbol being analyzed,
+    best opportunities found, and market status.
+    """
+    bot = get_trading_bot()
+
+    return {
+        "asset_class_mode": bot.asset_class_mode,
+        "stock_scan_progress": bot._stock_scan_progress,
+        "crypto_scan_progress": bot._crypto_scan_progress,
+        "current_session": bot.current_session,
+        "current_cycle": bot.current_cycle,
+        "total_scans_today": bot._total_scans_today,
     }
 
 
@@ -440,4 +565,90 @@ async def get_bot_activity():
     return {
         "activities": activities,
         "total_count": len(activities),
+    }
+
+
+@router.get("/diagnostic")
+async def run_diagnostic():
+    """
+    Run comprehensive system diagnostic.
+
+    Checks:
+    - API connections (Alpaca, Alpha Vantage)
+    - Chart data freshness (1m timestamps)
+    - System time sync
+    - Account status and permissions
+
+    Returns detailed diagnostic report with pass/fail status for each check.
+    """
+    from scripts.diagnostic import ChartSenseDiagnostic
+
+    diagnostic = ChartSenseDiagnostic(verbose=False)
+    await diagnostic.run_all_checks()
+
+    # Convert results to response format
+    results = []
+    for r in diagnostic.results:
+        results.append({
+            "name": r.name,
+            "passed": r.passed,
+            "message": r.message,
+            "details": r.details,
+            "timestamp": r.timestamp,
+        })
+
+    passed = sum(1 for r in diagnostic.results if r.passed)
+    failed = sum(1 for r in diagnostic.results if not r.passed)
+
+    return {
+        "summary": {
+            "total": len(results),
+            "passed": passed,
+            "failed": failed,
+            "health": "healthy" if failed == 0 else "degraded" if failed < 3 else "unhealthy",
+        },
+        "results": results,
+        "critical_failures": [
+            {"name": r.name, "message": r.message}
+            for r in diagnostic.results
+            if not r.passed and r.name in [
+                "Alpaca API Connection",
+                "Alpaca Account",
+                "Stock 1m Chart Timestamp",
+                "Crypto 1m Chart Timestamp",
+            ]
+        ],
+    }
+
+
+@router.get("/execution-errors")
+async def get_execution_errors():
+    """
+    Get detailed execution error summary from the ExecutionLogger.
+
+    Returns error codes, frequency, and recent failures to help
+    diagnose why trades aren't executing.
+    """
+    bot = get_trading_bot()
+
+    error_summary = bot.execution_logger.get_error_summary()
+    recent_failures = bot.execution_logger.get_recent_attempts(success_only=False, limit=20)
+    diagnosis = bot.execution_logger.diagnose_failures()
+
+    return {
+        "error_summary": error_summary,
+        "recent_failures": [
+            {
+                "timestamp": a.timestamp.isoformat() if a.timestamp else None,
+                "symbol": a.symbol,
+                "side": a.side,
+                "quantity": a.quantity,
+                "price": a.price,
+                "success": a.success,
+                "error_code": a.error_code.value if a.error_code else None,
+                "error_message": a.error_message,
+            }
+            for a in recent_failures
+        ],
+        "diagnosis": diagnosis,
     }

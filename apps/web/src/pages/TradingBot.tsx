@@ -64,7 +64,7 @@ export default function TradingBot() {
   const [activityLoading, setActivityLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState(false);
 
-  // Fetch bot status
+  // Fetch bot status with diagnostic logging
   const fetchStatus = useCallback(async () => {
     try {
       const data = await botApi.getStatus();
@@ -79,8 +79,20 @@ export default function TradingBot() {
       if (data.total_scans_today !== undefined) {
         setScanCount(data.total_scans_today);
       }
+      // Update asset class mode from status
+      if (data.asset_class_mode) {
+        setAssetMode(data.asset_class_mode as AssetClassMode);
+      }
     } catch (err) {
-      console.error('Failed to fetch status:', err);
+      // Log detailed diagnostics on status fetch failure
+      console.error('[TradingBot] Failed to fetch status:', err);
+      console.error('[TradingBot] API URL attempted:', `${API_URL}/api/bot/status`);
+
+      // Check if it's a network error vs API error
+      if (err instanceof TypeError && err.message.includes('fetch')) {
+        console.error('[TradingBot] DIAGNOSIS: Network error - API server may be offline');
+        console.error('[TradingBot] Make sure the backend is running: cd api && uvicorn main:app --reload --port 8000');
+      }
     } finally {
       setStatusLoading(false);
     }
@@ -177,50 +189,102 @@ export default function TradingBot() {
     return () => clearInterval(interval);
   }, [refreshAll, fetchStatus, fetchAccount, fetchPositions, fetchActivity]);
 
-  // Bot control handlers
+  // Bot control handlers with comprehensive diagnostic logging
   const handleStart = async () => {
+    console.log('[TradingBot] ========== START BOT INITIATED ==========');
+    console.log('[TradingBot] Timestamp:', new Date().toISOString());
+    console.log('[TradingBot] API URL:', API_URL);
+    console.log('[TradingBot] Current Status:', status?.state);
+
     setActionLoading(true);
     try {
-      await botApi.start();
+      console.log('[TradingBot] Calling botApi.start()...');
+      const startTime = performance.now();
+
+      const result = await botApi.start();
+
+      const duration = performance.now() - startTime;
+      console.log('[TradingBot] Start API Response:', result);
+      console.log('[TradingBot] Response time:', duration.toFixed(0), 'ms');
+
+      if (result.success) {
+        console.log('[TradingBot] Bot started successfully');
+        console.log('[TradingBot] Bot ID:', result.bot_id);
+        console.log('[TradingBot] Message:', result.message);
+      } else {
+        console.error('[TradingBot] Bot start returned success=false:', result);
+      }
+
       setTimeout(fetchStatus, 1000);
     } catch (err) {
-      console.error('Failed to start bot:', err);
+      console.error('[TradingBot] ========== START FAILED ==========');
+      console.error('[TradingBot] Error:', err);
+      if (err instanceof Error) {
+        console.error('[TradingBot] Error message:', err.message);
+        console.error('[TradingBot] Error stack:', err.stack);
+      }
+
+      // Try to diagnose the issue
+      console.log('[TradingBot] Running diagnostics...');
+      try {
+        const healthCheck = await fetch(`${API_URL}/health`);
+        console.log('[TradingBot] Health check status:', healthCheck.status);
+        if (!healthCheck.ok) {
+          console.error('[TradingBot] DIAGNOSIS: API server is not responding properly');
+        }
+      } catch (healthErr) {
+        console.error('[TradingBot] DIAGNOSIS: API server appears to be offline');
+        console.error('[TradingBot] Cannot reach:', `${API_URL}/health`);
+      }
     } finally {
       setActionLoading(false);
+      console.log('[TradingBot] ========== START COMPLETE ==========');
     }
   };
 
   const handleStop = async () => {
+    console.log('[TradingBot] ========== STOP BOT INITIATED ==========');
+    console.log('[TradingBot] Timestamp:', new Date().toISOString());
+
     setActionLoading(true);
     try {
-      await botApi.stop();
+      console.log('[TradingBot] Calling botApi.stop()...');
+      const result = await botApi.stop();
+      console.log('[TradingBot] Stop API Response:', result);
       setTimeout(fetchStatus, 1000);
     } catch (err) {
-      console.error('Failed to stop bot:', err);
+      console.error('[TradingBot] Failed to stop bot:', err);
     } finally {
       setActionLoading(false);
+      console.log('[TradingBot] ========== STOP COMPLETE ==========');
     }
   };
 
   const handlePause = async () => {
+    console.log('[TradingBot] ========== PAUSE BOT INITIATED ==========');
     setActionLoading(true);
     try {
-      await botApi.pause();
+      console.log('[TradingBot] Calling botApi.pause()...');
+      const result = await botApi.pause();
+      console.log('[TradingBot] Pause API Response:', result);
       setTimeout(fetchStatus, 1000);
     } catch (err) {
-      console.error('Failed to pause bot:', err);
+      console.error('[TradingBot] Failed to pause bot:', err);
     } finally {
       setActionLoading(false);
     }
   };
 
   const handleResume = async () => {
+    console.log('[TradingBot] ========== RESUME BOT INITIATED ==========');
     setActionLoading(true);
     try {
-      await botApi.resume();
+      console.log('[TradingBot] Calling botApi.resume()...');
+      const result = await botApi.resume();
+      console.log('[TradingBot] Resume API Response:', result);
       setTimeout(fetchStatus, 1000);
     } catch (err) {
-      console.error('Failed to resume bot:', err);
+      console.error('[TradingBot] Failed to resume bot:', err);
     } finally {
       setActionLoading(false);
     }
@@ -276,9 +340,19 @@ export default function TradingBot() {
     }
   };
 
-  const handleAssetModeChange = (mode: AssetClassMode) => {
+  const handleAssetModeChange = async (mode: AssetClassMode) => {
     setAssetMode(mode);
-    // TODO: Call API to update bot's asset class focus
+    try {
+      const response = await fetch(`${API_URL}/api/bot/asset-class-mode?mode=${mode}`, { method: 'POST' });
+      if (response.ok) {
+        const data = await response.json();
+        console.log('Asset class mode updated:', data);
+        // Refresh status to get updated scan progress
+        setTimeout(fetchStatus, 500);
+      }
+    } catch (err) {
+      console.error('Failed to set asset class mode:', err);
+    }
   };
 
   // Build carousel items from crypto analysis results

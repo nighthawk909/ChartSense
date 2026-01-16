@@ -560,6 +560,37 @@ class AlpacaService:
             logger.error(f"Failed to get bar for {symbol}: {e}")
             raise
 
+    async def get_latest_trade(self, symbol: str) -> Dict[str, Any]:
+        """
+        Get the most recent trade for a symbol.
+        This provides the most current price available.
+
+        Args:
+            symbol: Stock symbol
+
+        Returns:
+            Latest trade data with price and timestamp
+        """
+        try:
+            from alpaca.data.requests import StockLatestTradeRequest
+
+            data_client = self._get_data_client()
+            request = StockLatestTradeRequest(symbol_or_symbols=symbol.upper())
+            trades = data_client.get_stock_latest_trade(request)
+
+            trade = trades[symbol.upper()]
+
+            return {
+                "symbol": symbol.upper(),
+                "price": float(trade.price),
+                "size": trade.size,
+                "timestamp": trade.timestamp.isoformat(),
+                "exchange": trade.exchange,
+            }
+        except Exception as e:
+            logger.error(f"Failed to get latest trade for {symbol}: {e}")
+            raise
+
     async def get_bars(
         self,
         symbol: str,

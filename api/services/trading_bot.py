@@ -23,6 +23,7 @@ from .indicators import IndicatorService
 from .ai_advisor import get_ai_advisor
 from .crypto_service import CryptoService
 from .priority_scanner import PriorityScannerService, get_priority_scanner, PriorityTier
+from .execution_logger import ExecutionLogger, ExecutionErrorCode, parse_api_error
 from database.models import Trade, Position, BotConfiguration, StockRepository, UserWatchlist
 from database.connection import SessionLocal
 
@@ -162,7 +163,10 @@ class TradingBot:
         # Priority Scanner for smart scanning
         self.priority_scanner = get_priority_scanner()
 
-        # Execution Log - tracks why trades were/weren't executed
+        # Enhanced Execution Logger with specific failure reasons
+        self.execution_logger = ExecutionLogger()
+
+        # Execution Log - tracks why trades were/weren't executed (legacy, kept for compatibility)
         self._execution_log: List[Dict[str, Any]] = []
         self._max_execution_log_size = 100
 
@@ -173,6 +177,24 @@ class TradingBot:
         # Scan statistics
         self._total_scans_today = 0
         self._last_scan_reset_date: Optional[datetime] = None
+
+        # Asset Class Mode for hybrid scanning
+        # 'crypto' = crypto only, 'stocks' = stocks only, 'both' = hybrid
+        self.asset_class_mode: str = 'both'
+
+        # Stock scan tracking (similar to crypto scan tracking)
+        self._stock_scan_progress: Dict[str, Any] = {
+            "total": 0,
+            "scanned": 0,
+            "current_symbol": None,
+            "signals_found": 0,
+            "best_opportunity": None,
+            "scan_status": "idle",
+            "scan_summary": "",
+            "last_scan_completed": None,
+            "next_scan_in_seconds": 0,
+            "market_status": "unknown",  # open, closed, pre_market, after_hours
+        }
 
     async def start(self, config: Optional[Dict[str, Any]] = None):
         """
@@ -453,13 +475,16 @@ class TradingBot:
         """
         Main trading loop - always active, adapts to market session.
 
+        IMPORTANT: Stock and Crypto scanning now run CONCURRENTLY using asyncio.gather()
+        to maximize scanning efficiency. Neither scanner waits for the other.
+
         Sessions:
         - regular: Normal trading with market orders
         - pre_market: Extended hours with limit orders (4:00 AM - 9:30 AM ET)
         - after_hours: Extended hours with limit orders (4:00 PM - 8:00 PM ET)
         - overnight/weekend: Analysis, discovery, preparation (no trading)
         """
-        logger.info("Main trading loop started - Bot will stay active 24/7")
+        logger.info("Main trading loop started - Bot will stay active 24/7 with CONCURRENT scanning")
 
         while self.state in [BotState.RUNNING, BotState.PAUSED]:
             try:
@@ -484,58 +509,100 @@ class TradingBot:
                     await asyncio.sleep(300)
                     continue
 
-                # Determine what to do based on session
+                # Determine what to do based on session and asset class mode
+                should_scan_stocks = self.asset_class_mode in ['stocks', 'both']
+                should_scan_crypto = self.asset_class_mode in ['crypto', 'both'] and self.crypto_trading_enabled
+
+                # Update stock scan progress with market status
+                self._stock_scan_progress["market_status"] = self.current_session
+
+                # ===== CONCURRENT SCANNING =====
+                # Build list of tasks to run in parallel
+                concurrent_tasks = []
+
                 if self.current_session in ["overnight", "weekend"]:
                     # Can't trade stocks, but stay active - do analysis and discovery
-                    self.current_cycle = "off_hours_analysis"
-                    await self._run_off_hours_cycle()
+                    self.current_cycle = "off_hours_concurrent"
+
+                    # Update stock scan progress when market closed
+                    if should_scan_stocks:
+                        self._stock_scan_progress["scan_status"] = "market_closed"
+                        self._stock_scan_progress["scan_summary"] = f"Stock market closed ({self.current_session}). Stocks will be scanned when market opens."
+
+                    # Off-hours analysis runs for stocks
+                    concurrent_tasks.append(self._run_off_hours_cycle())
 
                     # 24/7 Mode: Crypto trades around the clock!
-                    # When stock market is closed, focus more heavily on crypto
-                    if self.crypto_trading_enabled:
-                        self.current_cycle = "crypto_24/7_active"
+                    if should_scan_crypto:
                         # Run crypto cycle more frequently when it's the only game in town
                         if self.aggressive_crypto_after_hours:
-                            await self._run_crypto_cycle()
-                            await asyncio.sleep(60)  # Check crypto every minute when markets closed
-                            await self._run_crypto_cycle()  # Double scan
+                            concurrent_tasks.append(self._run_aggressive_crypto_cycle())
                         else:
-                            await self._run_crypto_cycle()
+                            concurrent_tasks.append(self._run_crypto_cycle())
+
+                    # Execute all tasks concurrently
+                    if concurrent_tasks:
+                        self.current_cycle = "scanning_concurrent"
+                        await asyncio.gather(*concurrent_tasks, return_exceptions=True)
 
                     # Shorter sleep when actively trading crypto
-                    sleep_time = 60 if self.crypto_trading_enabled and self.aggressive_crypto_after_hours else 300
+                    sleep_time = 60 if should_scan_crypto and self.aggressive_crypto_after_hours else 300
                     await asyncio.sleep(sleep_time)
 
                 elif self.current_session == "regular":
-                    # Normal trading hours - full trading cycle
-                    await self._run_trading_cycle(extended_hours=False)
+                    # Normal trading hours - run both stock and crypto cycles CONCURRENTLY
+                    self.current_cycle = "regular_concurrent"
 
-                    # Also run crypto if enabled (crypto is 24/7)
-                    if self.crypto_trading_enabled:
-                        self.current_cycle = "crypto_trading"
-                        await self._run_crypto_cycle()
+                    if should_scan_stocks:
+                        concurrent_tasks.append(self._run_trading_cycle(extended_hours=False))
+                    else:
+                        self._stock_scan_progress["scan_status"] = "disabled"
+                        self._stock_scan_progress["scan_summary"] = "Stock scanning disabled (crypto only mode)"
 
+                    # Crypto is 24/7 - run in parallel with stocks
+                    if should_scan_crypto:
+                        concurrent_tasks.append(self._run_crypto_cycle())
+
+                    # Execute both scanners CONCURRENTLY - neither waits for the other
+                    if concurrent_tasks:
+                        logger.info(f"Starting CONCURRENT scan: {len(concurrent_tasks)} scanner(s) running in parallel")
+                        results = await asyncio.gather(*concurrent_tasks, return_exceptions=True)
+
+                        # Log any exceptions that occurred
+                        for i, result in enumerate(results):
+                            if isinstance(result, Exception):
+                                logger.error(f"Concurrent task {i} failed: {result}")
+
+                    self.current_cycle = "cycle_complete"
                     await asyncio.sleep(self.cycle_interval_seconds)
 
                 elif self.current_session in ["pre_market", "after_hours"]:
-                    # Extended hours - trade with limit orders only
-                    if self.allow_extended_hours:
-                        await self._run_trading_cycle(extended_hours=True)
-                    else:
-                        self.current_cycle = "extended_hours_waiting"
-                        await self._run_off_hours_cycle()
+                    # Extended hours - both scanners run concurrently
+                    self.current_cycle = "extended_concurrent"
+
+                    if should_scan_stocks:
+                        if self.allow_extended_hours:
+                            concurrent_tasks.append(self._run_trading_cycle(extended_hours=True))
+                        else:
+                            self._stock_scan_progress["scan_status"] = "extended_hours_waiting"
+                            self._stock_scan_progress["scan_summary"] = f"Stock market in {self.current_session.replace('_', ' ')}. Extended hours trading disabled."
+                            concurrent_tasks.append(self._run_off_hours_cycle())
 
                     # Crypto trades 24/7
-                    if self.crypto_trading_enabled:
-                        self.current_cycle = "crypto_trading"
-                        await self._run_crypto_cycle()
+                    if should_scan_crypto:
+                        concurrent_tasks.append(self._run_crypto_cycle())
+
+                    # Execute both scanners CONCURRENTLY
+                    if concurrent_tasks:
+                        logger.info(f"Starting CONCURRENT extended hours scan: {len(concurrent_tasks)} scanner(s)")
+                        await asyncio.gather(*concurrent_tasks, return_exceptions=True)
 
                     await asyncio.sleep(self.cycle_interval_seconds * 2)  # Slower during extended
 
                 else:
                     # Unknown session - be cautious, but still do crypto if enabled
                     self.current_cycle = "unknown_session"
-                    if self.crypto_trading_enabled:
+                    if should_scan_crypto:
                         await self._run_crypto_cycle()
                     await asyncio.sleep(60)
 
@@ -546,9 +613,29 @@ class TradingBot:
                 logger.error(f"Error in main loop: {e}")
                 self.error_message = str(e)
                 self.current_cycle = "error_recovery"
+                # Log to execution logger
+                self.execution_logger.log_failure(
+                    symbol="SYSTEM",
+                    side="N/A",
+                    quantity=0,
+                    price=0,
+                    error_code=ExecutionErrorCode.UNKNOWN_ERROR,
+                    error_message=f"Main loop error: {str(e)}",
+                    api_response=None,
+                )
                 await asyncio.sleep(30)
 
         logger.info("Main trading loop ended")
+
+    async def _run_aggressive_crypto_cycle(self):
+        """
+        Run aggressive crypto scanning when stock market is closed.
+        Runs two crypto scans with a short pause in between.
+        """
+        logger.info("Running aggressive crypto cycle (market closed, crypto focus)")
+        await self._run_crypto_cycle()
+        await asyncio.sleep(30)  # Short pause between scans
+        await self._run_crypto_cycle()
 
     async def _run_off_hours_cycle(self):
         """Run analysis during off-hours (overnight/weekend) - no trading"""
@@ -628,9 +715,34 @@ class TradingBot:
             if self.use_ai_discovery and self.ai_advisor.enabled:
                 await self._ai_discover_stocks()
 
+            # Initialize stock scan tracking
+            symbols_to_scan = [s for s in self.enabled_symbols if s not in self._positions_cache]
+            self._stock_scan_progress = {
+                "total": len(symbols_to_scan),
+                "scanned": 0,
+                "current_symbol": None,
+                "signals_found": 0,
+                "best_opportunity": None,
+                "scan_status": "scanning",
+                "scan_summary": f"Starting scan of {len(symbols_to_scan)} stocks...",
+                "last_scan_completed": None,
+                "next_scan_in_seconds": self.cycle_interval_seconds,
+                "market_status": "regular" if not extended_hours else "extended",
+            }
+
+            # Track best opportunity even if below threshold
+            best_buy_signal = None
+            best_buy_confidence = 0.0
+            signals_above_threshold = 0
+
             # Analyze symbols for entry signals
             self.current_cycle = "scanning_entries"
-            for symbol in self.enabled_symbols:
+            for idx, symbol in enumerate(symbols_to_scan):
+                # Update scan progress
+                self._stock_scan_progress["current_symbol"] = symbol
+                self._stock_scan_progress["scanned"] = idx + 1
+                self._stock_scan_progress["scan_summary"] = f"Analyzing {symbol}... ({idx + 1}/{len(symbols_to_scan)})"
+
                 # Skip if already have position
                 if symbol in self._positions_cache:
                     continue
@@ -638,7 +750,23 @@ class TradingBot:
                 # Analyze symbol
                 signal = await self._analyze_symbol(symbol)
 
+                # Track best opportunity
                 if signal and signal.signal_type == SignalType.BUY:
+                    if signal.score > best_buy_confidence:
+                        best_buy_confidence = signal.score
+                        best_buy_signal = {
+                            "symbol": symbol,
+                            "confidence": signal.score,
+                            "threshold": self.strategy.entry_threshold,
+                            "meets_threshold": signal.score >= self.strategy.entry_threshold,
+                        }
+
+                if signal and signal.signal_type == SignalType.BUY:
+                    # Track that we found a signal above threshold
+                    if signal.score >= self.strategy.entry_threshold:
+                        signals_above_threshold += 1
+                        self._stock_scan_progress["signals_found"] = signals_above_threshold
+
                     # Check if we can take the trade
                     position_size = self.risk_manager.calculate_position_size(
                         account_equity=equity,
@@ -708,9 +836,49 @@ class TradingBot:
                             await self._execute_entry(symbol, signal, position_size.shares, extended_hours)
                             # Update positions list
                             positions = await self.alpaca.get_positions()
+
+                            # Update scan status to found
+                            self._stock_scan_progress["scan_status"] = "found_opportunity"
+                            self._stock_scan_progress["scan_summary"] = (
+                                f"Entered position: {symbol} at {signal.score:.0f}% confidence"
+                            )
                         else:
                             logger.debug(f"Skipping {symbol}: {risk_check.reason}")
+                            # Log to execution log for debugging
+                            self._log_execution_event(
+                                symbol=symbol,
+                                event_type="ENTRY_SKIPPED",
+                                executed=False,
+                                reason=risk_check.reason,
+                                details={"score": signal.score, "signal": signal.signal_type.value}
+                            )
 
+            # Finalize stock scan tracking
+            self._stock_scan_progress["scanned"] = len(symbols_to_scan)
+            self._stock_scan_progress["current_symbol"] = None
+            self._stock_scan_progress["best_opportunity"] = best_buy_signal
+            self._stock_scan_progress["last_scan_completed"] = datetime.now().isoformat()
+            self._total_scans_today += 1
+
+            # Set final scan status and summary
+            if self._stock_scan_progress["scan_status"] != "found_opportunity":
+                if signals_above_threshold > 0:
+                    self._stock_scan_progress["scan_status"] = "found_opportunity"
+                    self._stock_scan_progress["scan_summary"] = f"Found {signals_above_threshold} signal(s) above threshold"
+                elif best_buy_signal:
+                    self._stock_scan_progress["scan_status"] = "exhausted"
+                    gap = best_buy_signal["threshold"] - best_buy_signal["confidence"]
+                    self._stock_scan_progress["scan_summary"] = (
+                        f"Scanned {len(symbols_to_scan)} stocks - no signals above {self.strategy.entry_threshold:.0f}% threshold. "
+                        f"Best: {best_buy_signal['symbol']} at {best_buy_signal['confidence']:.0f}% ({gap:.0f}% below threshold)"
+                    )
+                else:
+                    self._stock_scan_progress["scan_status"] = "exhausted"
+                    self._stock_scan_progress["scan_summary"] = (
+                        f"Scanned {len(symbols_to_scan)} stocks - no buy signals found. Waiting for next cycle..."
+                    )
+
+            logger.info(f"Stock scan complete: {self._stock_scan_progress['scan_summary']}")
             self.current_cycle = "cycle_complete"
 
         except Exception as e:
@@ -925,6 +1093,22 @@ class TradingBot:
                 f"(score={signal.score:.1f}, type={signal.trade_type.value}, order={order_type})"
             )
 
+            # Log entry attempt
+            self._log_execution_event(
+                symbol=symbol,
+                event_type="STOCK_ENTRY_ATTEMPT",
+                executed=False,
+                reason=f"Attempting to buy {shares} shares @ ${signal.current_price:.2f}",
+                details={
+                    "shares": shares,
+                    "price": signal.current_price,
+                    "score": signal.score,
+                    "trade_type": signal.trade_type.value,
+                    "order_type": order_type,
+                    "extended_hours": extended_hours,
+                }
+            )
+
             # Submit order based on session
             if extended_hours:
                 # Extended hours require limit orders
@@ -992,6 +1176,20 @@ class TradingBot:
             self.last_trade_time = datetime.now()
             logger.info(f"Entry executed: {symbol} {shares} shares @ ${filled_price:.2f}")
 
+            # Log successful execution
+            self._log_execution_event(
+                symbol=symbol,
+                event_type="STOCK_ENTRY_SUCCESS",
+                executed=True,
+                reason=f"Bought {shares} shares @ ${filled_price:.2f}",
+                details={
+                    "order_id": order["id"],
+                    "filled_price": filled_price,
+                    "shares": shares,
+                    "score": signal.score,
+                }
+            )
+
             # Submit stop-loss order
             await self.alpaca.submit_stop_loss_order(
                 symbol=symbol,
@@ -1001,6 +1199,18 @@ class TradingBot:
 
         except Exception as e:
             logger.error(f"Failed to execute entry for {symbol}: {e}")
+            # Log the failure
+            self._log_execution_event(
+                symbol=symbol,
+                event_type="STOCK_ENTRY_FAILED",
+                executed=False,
+                reason=f"Order failed: {str(e)}",
+                details={
+                    "error": str(e),
+                    "shares": shares,
+                    "price": signal.current_price if signal else 0,
+                }
+            )
             raise
 
     async def _execute_partial_exit(self, symbol: str, quantity: int, reason: str):
@@ -1169,6 +1379,10 @@ class TradingBot:
             "last_crypto_analysis_time": self._last_crypto_analysis_time.isoformat() if self._last_crypto_analysis_time else None,
             # Crypto scan progress tracking
             "crypto_scan_progress": self._crypto_scan_progress,
+            # Stock scan progress tracking
+            "stock_scan_progress": self._stock_scan_progress,
+            # Asset Class Mode
+            "asset_class_mode": self.asset_class_mode,
             # 24/7 Mode
             "auto_247_mode": self.auto_247_mode,
             "crypto_only_after_hours": self.crypto_only_after_hours,
@@ -1181,8 +1395,11 @@ class TradingBot:
             # AI Decision Tracking
             "last_ai_decision": self._last_ai_decision,
             "ai_decisions_history": self._ai_decisions[-10:],  # Last 10 decisions for UI
-            # Execution Log
+            # Execution Log (legacy)
             "execution_log": self._execution_log[-20:],  # Last 20 execution events
+            # Enhanced Execution Logger (new)
+            "execution_error_summary": self.execution_logger.get_error_summary(),
+            "execution_recent_failures": self.execution_logger.get_failed_attempts(limit=10),
             # Tactical Controls
             "new_entries_paused": self.new_entries_paused,
             "strategy_override": self.strategy_override,
@@ -1512,6 +1729,22 @@ class TradingBot:
 
                             logger.info(f"Crypto BUY signal for {symbol}: confidence={confidence:.1f}, price=${price:.2f}, qty={qty:.6f}")
 
+                            # Log the entry attempt
+                            self._log_execution_event(
+                                symbol=symbol,
+                                event_type="CRYPTO_ENTRY_ATTEMPT",
+                                executed=False,  # Will be updated if successful
+                                reason=f"Attempting to buy ${position_value:.2f} worth ({qty:.6f} units) at ${price:.2f}",
+                                details={
+                                    "signal_strength": signal,
+                                    "confidence": confidence,
+                                    "price": price,
+                                    "qty": qty,
+                                    "position_value": position_value,
+                                    "buying_power": buying_power,
+                                }
+                            )
+
                             order = await crypto_service.place_crypto_order(
                                 symbol=symbol,
                                 qty=qty,
@@ -1519,8 +1752,72 @@ class TradingBot:
                             )
 
                             if order:
+                                # Check if order contains an error
+                                if order.get("error"):
+                                    error_msg = order.get("error_message", "Unknown error")
+                                    status_code = order.get("status_code")
+
+                                    # Parse error to get specific error code
+                                    error_code, parsed_msg = parse_api_error(
+                                        Exception(error_msg),
+                                        {"status_code": status_code, "message": error_msg}
+                                    )
+
+                                    # Log to enhanced ExecutionLogger
+                                    self.execution_logger.log_failure(
+                                        symbol=symbol,
+                                        side="BUY",
+                                        quantity=qty,
+                                        price=price,
+                                        error_code=error_code,
+                                        error_message=parsed_msg,
+                                        api_response={"status_code": status_code, "message": error_msg},
+                                    )
+
+                                    # Also log to legacy event log
+                                    self._log_execution_event(
+                                        symbol=symbol,
+                                        event_type="CRYPTO_ORDER_FAILED",
+                                        executed=False,
+                                        reason=f"[{error_code.value}] {parsed_msg}",
+                                        details={
+                                            "error_code": error_code.value,
+                                            "error_message": error_msg,
+                                            "status_code": status_code,
+                                            "qty": qty,
+                                            "price": price,
+                                        }
+                                    )
+                                    continue  # Don't count this as a position
+
                                 ai_note = " (AI Approved)" if self.auto_trade_mode and ai_decision else ""
                                 logger.info(f"Crypto order placed for {symbol}: ${position_value:.2f}{ai_note}")
+
+                                # Log to enhanced ExecutionLogger
+                                filled_price = order.get("filled_avg_price") or price
+                                self.execution_logger.log_success(
+                                    symbol=symbol,
+                                    side="BUY",
+                                    quantity=order.get("qty", qty),
+                                    price=filled_price,
+                                    order_id=order.get("order_id"),
+                                )
+
+                                # Log successful execution (legacy)
+                                self._log_execution_event(
+                                    symbol=symbol,
+                                    event_type="CRYPTO_ENTRY_SUCCESS",
+                                    executed=True,
+                                    reason=f"Bought ${position_value:.2f} worth at ${price:.2f}",
+                                    details={
+                                        "order_id": order.get("order_id"),
+                                        "status": order.get("status"),
+                                        "qty": order.get("qty"),
+                                        "filled_qty": order.get("filled_qty"),
+                                        "filled_avg_price": order.get("filled_avg_price"),
+                                    }
+                                )
+
                                 num_crypto_positions += 1
 
                                 # Update scan status to found
@@ -1531,6 +1828,30 @@ class TradingBot:
 
                                 if num_crypto_positions >= self.crypto_max_positions:
                                     break
+                            else:
+                                # Order returned None - log this failure
+                                self.execution_logger.log_failure(
+                                    symbol=symbol,
+                                    side="BUY",
+                                    quantity=qty,
+                                    price=price,
+                                    error_code=ExecutionErrorCode.NETWORK_ERROR,
+                                    error_message="Order returned None - API call failed or returned no data",
+                                    api_response=None,
+                                )
+
+                                self._log_execution_event(
+                                    symbol=symbol,
+                                    event_type="CRYPTO_ORDER_FAILED",
+                                    executed=False,
+                                    reason="[NETWORK_ERROR] Order returned None - API call failed or returned no data",
+                                    details={
+                                        "error_code": "NETWORK_ERROR",
+                                        "qty": qty,
+                                        "price": price,
+                                        "position_value": position_value,
+                                    }
+                                )
 
                     except Exception as e:
                         logger.error(f"Error analyzing crypto {symbol}: {e}")

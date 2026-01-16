@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { Outlet, Link, useLocation, useNavigate } from 'react-router-dom'
-import { TrendingUp, LayoutDashboard, Star, Settings, Bot, Search, X, Loader2, Bitcoin } from 'lucide-react'
+import { TrendingUp, LayoutDashboard, Star, Settings, Bot, Search, X, Loader2, LineChart, History } from 'lucide-react'
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
 
@@ -23,9 +23,10 @@ export default function Layout() {
   const searchTimeout = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const navItems = [
-    { path: '/', icon: LayoutDashboard, label: 'Dashboard' },
+    { path: '/dashboard', icon: LayoutDashboard, label: 'Dashboard' },
+    { path: '/markets', icon: LineChart, label: 'Markets' },
     { path: '/watchlist', icon: Star, label: 'Watchlist' },
-    { path: '/crypto', icon: Bitcoin, label: 'Crypto' },
+    { path: '/analysis-history', icon: History, label: 'Analysis History' },
     { path: '/bot', icon: Bot, label: 'Trading Bot' },
     { path: '/settings', icon: Settings, label: 'Settings' },
   ]
@@ -94,7 +95,7 @@ export default function Layout() {
       {/* Header */}
       <header className="bg-slate-800 border-b border-slate-700">
         <div className="max-w-7xl mx-auto px-4 py-3 flex items-center justify-between">
-          <Link to="/" className="flex items-center gap-2">
+          <Link to="/dashboard" className="flex items-center gap-2">
             <TrendingUp className="h-8 w-8 text-blue-500" />
             <span className="text-xl font-bold">ChartSense</span>
           </Link>
@@ -164,7 +165,9 @@ export default function Layout() {
           <ul className="space-y-2">
             {navItems.map((item) => {
               const Icon = item.icon
-              const isActive = location.pathname === item.path
+              // Handle active state - dashboard is special case
+              const isActive = location.pathname === item.path ||
+                (item.path === '/dashboard' && location.pathname === '/')
               return (
                 <li key={item.path}>
                   <Link
