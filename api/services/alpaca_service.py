@@ -49,28 +49,38 @@ class AlpacaService:
     def _get_api(self):
         """Lazy initialization of Alpaca API client"""
         if self._api is None:
-            try:
-                from alpaca.trading.client import TradingClient
-                from alpaca.data.historical import StockHistoricalDataClient
-
-                self._api = TradingClient(
-                    api_key=self.api_key,
-                    secret_key=self.secret_key,
-                    paper=self.paper_trading
-                )
-                self._data_client = StockHistoricalDataClient(
-                    api_key=self.api_key,
-                    secret_key=self.secret_key
-                )
-                self._initialized = True
-                logger.info(f"Alpaca client initialized (paper={self.paper_trading})")
-            except ImportError:
-                logger.error("alpaca-py package not installed. Run: pip install alpaca-py")
-                raise
-            except Exception as e:
-                logger.error(f"Failed to initialize Alpaca client: {e}")
-                raise
+            self._initialize_clients()
         return self._api
+
+    def _get_data_client(self):
+        """Get data client, initializing if needed"""
+        if not hasattr(self, '_data_client') or self._data_client is None:
+            self._initialize_clients()
+        return self._data_client
+
+    def _initialize_clients(self):
+        """Initialize both trading and data clients"""
+        try:
+            from alpaca.trading.client import TradingClient
+            from alpaca.data.historical import StockHistoricalDataClient
+
+            self._api = TradingClient(
+                api_key=self.api_key,
+                secret_key=self.secret_key,
+                paper=self.paper_trading
+            )
+            self._data_client = StockHistoricalDataClient(
+                api_key=self.api_key,
+                secret_key=self.secret_key
+            )
+            self._initialized = True
+            logger.info(f"Alpaca client initialized (paper={self.paper_trading})")
+        except ImportError:
+            logger.error("alpaca-py package not installed. Run: pip install alpaca-py")
+            raise
+        except Exception as e:
+            logger.error(f"Failed to initialize Alpaca client: {e}")
+            raise
 
     @property
     def is_initialized(self) -> bool:
@@ -500,8 +510,9 @@ class AlpacaService:
         try:
             from alpaca.data.requests import StockLatestQuoteRequest
 
+            data_client = self._get_data_client()
             request = StockLatestQuoteRequest(symbol_or_symbols=symbol.upper())
-            quotes = self._data_client.get_stock_latest_quote(request)
+            quotes = data_client.get_stock_latest_quote(request)
 
             quote = quotes[symbol.upper()]
 
@@ -530,8 +541,9 @@ class AlpacaService:
         try:
             from alpaca.data.requests import StockLatestBarRequest
 
+            data_client = self._get_data_client()
             request = StockLatestBarRequest(symbol_or_symbols=symbol.upper())
-            bars = self._data_client.get_stock_latest_bar(request)
+            bars = data_client.get_stock_latest_bar(request)
 
             bar = bars[symbol.upper()]
 
@@ -586,6 +598,7 @@ class AlpacaService:
             if not start:
                 start = datetime.now() - timedelta(days=limit if tf == TimeFrame.Day else 7)
 
+            data_client = self._get_data_client()
             request = StockBarsRequest(
                 symbol_or_symbols=symbol.upper(),
                 timeframe=tf,
@@ -594,7 +607,7 @@ class AlpacaService:
                 limit=limit
             )
 
-            bars = self._data_client.get_stock_bars(request)
+            bars = data_client.get_stock_bars(request)
 
             return [
                 {
