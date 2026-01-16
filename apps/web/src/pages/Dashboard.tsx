@@ -18,8 +18,23 @@ const marketIndices = [
   { symbol: 'DIA', name: 'Dow Jones', price: 37689.12, change: -23.45, changePercent: -0.06 },
 ]
 
+type TimeInterval = '1min' | '5min' | '15min' | '30min' | '60min' | 'daily'
+
 export default function Dashboard() {
   const [selectedStock, setSelectedStock] = useState('AAPL')
+  const [selectedPeriod, setSelectedPeriod] = useState('1M')
+  const [selectedInterval, setSelectedInterval] = useState<TimeInterval>('daily')
+
+  // Available intervals with labels
+  const intervals: { value: TimeInterval; label: string }[] = [
+    { value: '1min', label: '1m' },
+    { value: '5min', label: '5m' },
+    { value: '15min', label: '15m' },
+    { value: '60min', label: '1h' },
+    { value: 'daily', label: '1D' },
+  ]
+
+  const periods = ['1D', '1W', '1M', '3M', '1Y', 'ALL']
 
   return (
     <div className="space-y-6">
@@ -64,19 +79,47 @@ export default function Dashboard() {
           <div className="bg-slate-800 rounded-lg p-4 border border-slate-700">
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-lg font-semibold">{selectedStock} Chart</h2>
-              <div className="flex gap-2">
-                {['1D', '1W', '1M', '3M', '1Y', 'ALL'].map((period) => (
-                  <button
-                    key={period}
-                    className="px-3 py-1 text-sm rounded bg-slate-700 hover:bg-slate-600 transition-colors"
-                  >
-                    {period}
-                  </button>
-                ))}
+              <div className="flex gap-4">
+                {/* Interval selector */}
+                <div className="flex gap-1 bg-slate-900 rounded-lg p-1">
+                  {intervals.map((int) => (
+                    <button
+                      key={int.value}
+                      onClick={() => setSelectedInterval(int.value)}
+                      className={`px-2 py-1 text-xs rounded transition-colors ${
+                        selectedInterval === int.value
+                          ? 'bg-blue-600 text-white'
+                          : 'text-slate-400 hover:text-white hover:bg-slate-700'
+                      }`}
+                    >
+                      {int.label}
+                    </button>
+                  ))}
+                </div>
+                {/* Period selector */}
+                <div className="flex gap-1">
+                  {periods.map((period) => (
+                    <button
+                      key={period}
+                      onClick={() => setSelectedPeriod(period)}
+                      className={`px-3 py-1 text-sm rounded transition-colors ${
+                        selectedPeriod === period
+                          ? 'bg-slate-600 text-white'
+                          : 'bg-slate-700 hover:bg-slate-600 text-slate-300'
+                      }`}
+                    >
+                      {period}
+                    </button>
+                  ))}
+                </div>
               </div>
             </div>
             <div className="h-96">
-              <StockChart symbol={selectedStock} />
+              <StockChart
+                symbol={selectedStock}
+                period={selectedPeriod}
+                interval={selectedInterval}
+              />
             </div>
           </div>
         </div>

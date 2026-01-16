@@ -117,16 +117,24 @@ async def get_stock_history(
         if not bars:
             raise HTTPException(status_code=404, detail=f"No history found for {symbol}")
 
-        # Transform to StockHistory format
+        # Transform to format expected by frontend StockChart component
+        # Frontend expects: { history: [{ date, open, high, low, close, volume }, ...] }
+        history = [
+            {
+                "date": bar["timestamp"].split("T")[0] if "T" in bar["timestamp"] else bar["timestamp"],
+                "open": bar["open"],
+                "high": bar["high"],
+                "low": bar["low"],
+                "close": bar["close"],
+                "volume": bar["volume"],
+            }
+            for bar in bars
+        ]
+
         return {
             "symbol": symbol.upper(),
             "interval": interval.value,
-            "dates": [bar["timestamp"] for bar in bars],
-            "prices": [bar["close"] for bar in bars],
-            "opens": [bar["open"] for bar in bars],
-            "highs": [bar["high"] for bar in bars],
-            "lows": [bar["low"] for bar in bars],
-            "volumes": [bar["volume"] for bar in bars],
+            "history": history,
         }
     except HTTPException:
         raise
