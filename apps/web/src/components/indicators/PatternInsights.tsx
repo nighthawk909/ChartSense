@@ -515,10 +515,7 @@ export default function PatternInsights({ symbol, interval = 'daily', compact = 
             {(() => {
               const bullish = data.bullish_score ?? 0;
               const bearish = data.bearish_score ?? 0;
-              const total = bullish + bearish;
               const netSentiment = bullish - bearish;
-              const bullishPct = total > 0 ? Math.round((bullish / total) * 100) : 50;
-              const bearishPct = total > 0 ? Math.round((bearish / total) * 100) : 50;
 
               // Find strongest pattern
               const strongestPattern = data.patterns.length > 0

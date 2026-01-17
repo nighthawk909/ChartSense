@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { useParams } from 'react-router-dom'
-import { Star, TrendingUp, TrendingDown, Loader2, RefreshCw, Activity, Target, GitBranch } from 'lucide-react'
+import { Star, TrendingUp, TrendingDown, Loader2, RefreshCw, Target, GitBranch } from 'lucide-react'
 import StockChart from '../components/StockChart'
 import MultiTimeframeInsight from '../components/indicators/MultiTimeframeInsight'
 import TripleScreenPanel from '../components/indicators/TripleScreenPanel'
@@ -93,7 +93,7 @@ export default function StockDetail() {
   const [aiInsight, setAiInsight] = useState<AIInsight | null>(null)
   const [_aiInsightLoading, setAiInsightLoading] = useState(false)
   const [supportResistance, setSupportResistance] = useState<SupportResistance | null>(null)
-  const [elliottWave, setElliottWave] = useState<ElliottWave | null>(null)
+  const [_elliottWave, setElliottWave] = useState<ElliottWave | null>(null)
   const [trendLines, setTrendLines] = useState<TrendLine[]>([])
   const [loading, setLoading] = useState(true)
   const [chartType, setChartType] = useState<'candlestick' | 'line'>('candlestick')
