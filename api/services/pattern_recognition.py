@@ -317,6 +317,317 @@ class PatternRecognitionService:
 
         return None
 
+    def detect_bull_flag(
+        self,
+        highs: List[float],
+        lows: List[float],
+        closes: List[float],
+        volumes: Optional[List[float]] = None
+    ) -> Optional[PatternResult]:
+        """
+        Detect Bull Flag pattern.
+
+        Characteristics:
+        - Strong upward move (flagpole)
+        - Consolidation with slight downward drift (flag)
+        - Volume typically decreases during flag formation
+        - Bullish continuation pattern
+        """
+        if len(closes) < 20:
+            return None
+
+        # Look for flagpole - strong upward move in recent data
+        lookback = min(30, len(closes))
+        recent_closes = closes[-lookback:]
+        recent_highs = highs[-lookback:]
+        recent_lows = lows[-lookback:]
+
+        # Find the highest point (potential end of flagpole)
+        max_idx = recent_highs.index(max(recent_highs))
+
+        # Flagpole should be in the first 60% of the lookback
+        if max_idx < 5 or max_idx > lookback * 0.6:
+            return None
+
+        # Calculate flagpole move
+        pole_start_idx = 0
+        pole_start_price = min(recent_lows[:max_idx+1])
+        pole_end_price = recent_highs[max_idx]
+        pole_move = (pole_end_price - pole_start_price) / pole_start_price
+
+        # Flagpole should be at least 5% move
+        if pole_move < 0.05:
+            return None
+
+        # Check for flag consolidation after flagpole
+        flag_data = recent_closes[max_idx:]
+        if len(flag_data) < 3:
+            return None
+
+        # Flag should drift slightly down or sideways
+        flag_start = flag_data[0]
+        flag_end = flag_data[-1]
+        flag_drift = (flag_end - flag_start) / flag_start
+
+        # Flag should not retrace more than 50% of the pole
+        flag_low = min(recent_lows[max_idx:])
+        retracement = (pole_end_price - flag_low) / (pole_end_price - pole_start_price)
+
+        if retracement > 0.5 or flag_drift > 0.02:  # Flag drifting up too much
+            return None
+
+        # Calculate confidence
+        confidence = 60
+        if retracement < 0.38:  # Shallow retracement is better
+            confidence += 15
+        if -0.05 < flag_drift < 0:  # Slight downward drift
+            confidence += 10
+        if volumes and len(volumes) >= lookback:
+            # Volume should decrease during flag
+            pole_volume = sum(volumes[-lookback:-lookback+max_idx])
+            flag_volume = sum(volumes[-lookback+max_idx:])
+            if flag_volume < pole_volume * 0.7:
+                confidence += 15
+
+        # Price target: flagpole height projected from flag breakout
+        price_target = flag_end + (pole_end_price - pole_start_price)
+
+        return PatternResult(
+            pattern_type=PatternType.BULL_FLAG,
+            confidence=min(confidence, 90),
+            direction="bullish",
+            start_index=len(closes) - lookback,
+            end_index=len(closes) - 1,
+            price_target=price_target,
+            stop_loss=flag_low * 0.98,
+            description=f"Bull Flag forming. Target: ${price_target:.2f}. Pole: +{pole_move*100:.1f}%"
+        )
+
+    def detect_bear_flag(
+        self,
+        highs: List[float],
+        lows: List[float],
+        closes: List[float],
+        volumes: Optional[List[float]] = None
+    ) -> Optional[PatternResult]:
+        """
+        Detect Bear Flag pattern.
+
+        Characteristics:
+        - Strong downward move (flagpole)
+        - Consolidation with slight upward drift (flag)
+        - Volume typically decreases during flag formation
+        - Bearish continuation pattern
+        """
+        if len(closes) < 20:
+            return None
+
+        lookback = min(30, len(closes))
+        recent_closes = closes[-lookback:]
+        recent_highs = highs[-lookback:]
+        recent_lows = lows[-lookback:]
+
+        # Find the lowest point (potential end of flagpole)
+        min_idx = recent_lows.index(min(recent_lows))
+
+        if min_idx < 5 or min_idx > lookback * 0.6:
+            return None
+
+        # Calculate flagpole move (downward)
+        pole_start_price = max(recent_highs[:min_idx+1])
+        pole_end_price = recent_lows[min_idx]
+        pole_move = (pole_start_price - pole_end_price) / pole_start_price
+
+        if pole_move < 0.05:
+            return None
+
+        # Check for flag consolidation
+        flag_data = recent_closes[min_idx:]
+        if len(flag_data) < 3:
+            return None
+
+        flag_start = flag_data[0]
+        flag_end = flag_data[-1]
+        flag_drift = (flag_end - flag_start) / flag_start
+
+        # Flag should not retrace more than 50%
+        flag_high = max(recent_highs[min_idx:])
+        retracement = (flag_high - pole_end_price) / (pole_start_price - pole_end_price)
+
+        if retracement > 0.5 or flag_drift < -0.02:
+            return None
+
+        confidence = 60
+        if retracement < 0.38:
+            confidence += 15
+        if 0 < flag_drift < 0.05:
+            confidence += 10
+        if volumes and len(volumes) >= lookback:
+            pole_volume = sum(volumes[-lookback:-lookback+min_idx])
+            flag_volume = sum(volumes[-lookback+min_idx:])
+            if flag_volume < pole_volume * 0.7:
+                confidence += 15
+
+        price_target = flag_end - (pole_start_price - pole_end_price)
+
+        return PatternResult(
+            pattern_type=PatternType.BEAR_FLAG,
+            confidence=min(confidence, 90),
+            direction="bearish",
+            start_index=len(closes) - lookback,
+            end_index=len(closes) - 1,
+            price_target=price_target,
+            stop_loss=flag_high * 1.02,
+            description=f"Bear Flag forming. Target: ${price_target:.2f}. Pole: -{pole_move*100:.1f}%"
+        )
+
+    def detect_breakout(
+        self,
+        highs: List[float],
+        lows: List[float],
+        closes: List[float],
+        volumes: Optional[List[float]] = None
+    ) -> Optional[PatternResult]:
+        """
+        Detect price breakouts from consolidation or key levels.
+
+        Types of breakouts detected:
+        - Range breakout (breaking out of consolidation)
+        - Resistance breakout (breaking above key resistance)
+        - Support breakdown (breaking below key support)
+        """
+        if len(closes) < 20:
+            return None
+
+        # Get support/resistance levels
+        sr_levels = self.detect_support_resistance(highs, lows, closes)
+        current_price = closes[-1]
+        prev_close = closes[-2] if len(closes) > 1 else current_price
+
+        # Check for resistance breakout
+        for sr in sr_levels:
+            if sr.level_type == "resistance" and sr.strength >= 50:
+                # Price broke above resistance
+                if prev_close < sr.price and current_price > sr.price:
+                    breakout_pct = (current_price - sr.price) / sr.price * 100
+
+                    # Confirm with volume if available
+                    volume_confirmed = True
+                    if volumes and len(volumes) >= 20:
+                        avg_volume = sum(volumes[-20:-1]) / 19
+                        current_volume = volumes[-1]
+                        volume_confirmed = current_volume > avg_volume * 1.3
+
+                    confidence = 60 + (sr.strength * 0.2)
+                    if volume_confirmed:
+                        confidence += 15
+
+                    # Target: resistance + (resistance - nearest support)
+                    supports = [s for s in sr_levels if s.level_type == "support"]
+                    if supports:
+                        nearest_support = max(s.price for s in supports if s.price < sr.price)
+                        price_target = sr.price + (sr.price - nearest_support)
+                    else:
+                        price_target = sr.price * 1.05
+
+                    return PatternResult(
+                        pattern_type=PatternType.ASCENDING_TRIANGLE,  # Use as breakout proxy
+                        confidence=min(confidence, 90),
+                        direction="bullish",
+                        start_index=len(closes) - 5,
+                        end_index=len(closes) - 1,
+                        price_target=price_target,
+                        stop_loss=sr.price * 0.98,
+                        description=f"BREAKOUT! Price broke above ${sr.price:.2f} resistance (+{breakout_pct:.1f}%)"
+                    )
+
+            # Check for support breakdown
+            elif sr.level_type == "support" and sr.strength >= 50:
+                if prev_close > sr.price and current_price < sr.price:
+                    breakdown_pct = (sr.price - current_price) / sr.price * 100
+
+                    volume_confirmed = True
+                    if volumes and len(volumes) >= 20:
+                        avg_volume = sum(volumes[-20:-1]) / 19
+                        current_volume = volumes[-1]
+                        volume_confirmed = current_volume > avg_volume * 1.3
+
+                    confidence = 60 + (sr.strength * 0.2)
+                    if volume_confirmed:
+                        confidence += 15
+
+                    resistances = [s for s in sr_levels if s.level_type == "resistance"]
+                    if resistances:
+                        nearest_resistance = min(s.price for s in resistances if s.price > sr.price)
+                        price_target = sr.price - (nearest_resistance - sr.price)
+                    else:
+                        price_target = sr.price * 0.95
+
+                    return PatternResult(
+                        pattern_type=PatternType.DESCENDING_TRIANGLE,  # Use as breakdown proxy
+                        confidence=min(confidence, 90),
+                        direction="bearish",
+                        start_index=len(closes) - 5,
+                        end_index=len(closes) - 1,
+                        price_target=price_target,
+                        stop_loss=sr.price * 1.02,
+                        description=f"BREAKDOWN! Price broke below ${sr.price:.2f} support (-{breakdown_pct:.1f}%)"
+                    )
+
+        # Check for range breakout (consolidation breakout)
+        lookback = 20
+        if len(closes) >= lookback:
+            recent_highs = highs[-lookback:-1]
+            recent_lows = lows[-lookback:-1]
+            range_high = max(recent_highs)
+            range_low = min(recent_lows)
+            range_size = (range_high - range_low) / range_low
+
+            # Tight consolidation (less than 5% range)
+            if range_size < 0.05:
+                if current_price > range_high:
+                    # Bullish breakout from consolidation
+                    breakout_pct = (current_price - range_high) / range_high * 100
+                    confidence = 70
+
+                    if volumes and len(volumes) >= lookback:
+                        avg_volume = sum(volumes[-lookback:-1]) / (lookback - 1)
+                        if volumes[-1] > avg_volume * 1.5:
+                            confidence += 15
+
+                    return PatternResult(
+                        pattern_type=PatternType.SYMMETRICAL_TRIANGLE,
+                        confidence=min(confidence, 85),
+                        direction="bullish",
+                        start_index=len(closes) - lookback,
+                        end_index=len(closes) - 1,
+                        price_target=range_high + (range_high - range_low),
+                        stop_loss=range_high * 0.98,
+                        description=f"RANGE BREAKOUT! Broke above ${range_high:.2f} consolidation"
+                    )
+
+                elif current_price < range_low:
+                    breakdown_pct = (range_low - current_price) / range_low * 100
+                    confidence = 70
+
+                    if volumes and len(volumes) >= lookback:
+                        avg_volume = sum(volumes[-lookback:-1]) / (lookback - 1)
+                        if volumes[-1] > avg_volume * 1.5:
+                            confidence += 15
+
+                    return PatternResult(
+                        pattern_type=PatternType.SYMMETRICAL_TRIANGLE,
+                        confidence=min(confidence, 85),
+                        direction="bearish",
+                        start_index=len(closes) - lookback,
+                        end_index=len(closes) - 1,
+                        price_target=range_low - (range_high - range_low),
+                        stop_loss=range_low * 1.02,
+                        description=f"RANGE BREAKDOWN! Broke below ${range_low:.2f} consolidation"
+                    )
+
+        return None
+
     def detect_triangle(
         self,
         highs: List[float],
@@ -772,7 +1083,8 @@ class PatternRecognitionService:
         opens: List[float],
         highs: List[float],
         lows: List[float],
-        closes: List[float]
+        closes: List[float],
+        volumes: Optional[List[float]] = None
     ) -> Dict[str, Any]:
         """
         Run full pattern analysis on price data.
@@ -797,6 +1109,20 @@ class PatternRecognitionService:
         triangle = self.detect_triangle(highs, lows, closes)
         if triangle:
             patterns.append(triangle)
+
+        # Detect flag patterns
+        bull_flag = self.detect_bull_flag(highs, lows, closes, volumes)
+        if bull_flag:
+            patterns.append(bull_flag)
+
+        bear_flag = self.detect_bear_flag(highs, lows, closes, volumes)
+        if bear_flag:
+            patterns.append(bear_flag)
+
+        # Detect breakouts
+        breakout = self.detect_breakout(highs, lows, closes, volumes)
+        if breakout:
+            patterns.append(breakout)
 
         # Detect candlestick patterns
         candle_patterns = self.detect_candlestick_patterns(opens, highs, lows, closes)

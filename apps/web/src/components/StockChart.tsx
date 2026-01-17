@@ -64,8 +64,11 @@ export default function StockChart({
   const [dataAge, setDataAge] = useState<string | null>(null)
   const [isStale, setIsStale] = useState(false)
   const [lastDataTimestamp, setLastDataTimestamp] = useState<number>(0)
+  const [pendingInterval, setPendingInterval] = useState<string | null>(null) // Track interval being loaded
   const fetchCountRef = useRef(0)
   const hardResetTriggeredRef = useRef(false)
+  const currentIntervalRef = useRef(interval) // Track which interval the current chartData is for
+  const abortControllerRef = useRef<AbortController | null>(null) // For canceling in-flight requests
 
   // Determine if real-time should be enabled (only for intraday intervals)
   const isIntraday = ['1min', '5min', '15min', '30min', '60min'].includes(interval)
@@ -137,12 +140,23 @@ export default function StockChart({
   // Fetch data function - can be called manually for force refresh
   const fetchData = useCallback(async (isRefresh = false) => {
     const currentFetchId = ++fetchCountRef.current
+    const targetInterval = interval // Capture the interval we're fetching for
+
+    // Cancel any in-flight request
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort()
+    }
+    abortControllerRef.current = new AbortController()
 
     if (isRefresh) {
       setRefreshing(true)
     } else {
-      setLoading(true)
-      setChartData(null)
+      // Only show loading state if we don't have data OR we're switching intervals
+      if (!chartData || currentIntervalRef.current !== targetInterval) {
+        setLoading(true)
+        setPendingInterval(targetInterval) // Show which interval we're loading
+      }
+      // DON'T clear chartData - keep showing old data until new data arrives
     }
     setError(null)
 
@@ -160,7 +174,10 @@ export default function StockChart({
         }
       }
 
-      const response = await fetch(`${API_URL}/api/stocks/history/${symbol}?outputsize=${outputsize}&interval=${interval}${cacheBuster}`)
+      const response = await fetch(
+        `${API_URL}/api/stocks/history/${symbol}?outputsize=${outputsize}&interval=${targetInterval}${cacheBuster}`,
+        { signal: abortControllerRef.current?.signal }
+      )
 
       if (!response.ok) throw new Error('Failed to fetch stock data')
 
@@ -169,8 +186,11 @@ export default function StockChart({
         throw new Error('No historical data available')
       }
 
-      // Check if this fetch is still current
-      if (currentFetchId !== fetchCountRef.current) return
+      // Check if this fetch is still current (prevent stale data from overriding)
+      if (currentFetchId !== fetchCountRef.current) {
+        console.log(`[StockChart] Ignoring stale fetch ${currentFetchId} (current is ${fetchCountRef.current}) for interval ${targetInterval}`)
+        return
+      }
 
       // Filter and sort
       let filteredData = filterByPeriod(data.history, period)
@@ -259,10 +279,19 @@ export default function StockChart({
         setTimeout(() => hardReset(), 100)
       }
 
+      // Successfully loaded data for this interval
+      console.log(`[StockChart] Loaded ${sortedData.length} bars for ${targetInterval} (fetch ${currentFetchId})`)
+      currentIntervalRef.current = targetInterval // Track which interval this data is for
       setChartData(sortedData)
       setLastUpdated(new Date())
       setDataPoints(sortedData.length)
+      setPendingInterval(null) // Clear pending state
     } catch (err) {
+      // Ignore abort errors (expected when switching intervals)
+      if (err instanceof Error && err.name === 'AbortError') {
+        console.log(`[StockChart] Fetch aborted for interval ${targetInterval} (user switched intervals)`)
+        return
+      }
       if (currentFetchId === fetchCountRef.current) {
         console.error('[StockChart] Chart error:', err)
         setError(err instanceof Error ? err.message : 'Failed to load chart')
@@ -271,9 +300,10 @@ export default function StockChart({
       if (currentFetchId === fetchCountRef.current) {
         setLoading(false)
         setRefreshing(false)
+        setPendingInterval(null)
       }
     }
-  }, [symbol, period, interval, isIntraday, hardReset])
+  }, [symbol, period, interval, isIntraday, hardReset, chartData])
 
   // Force refresh handler
   const handleForceRefresh = useCallback(() => {
@@ -286,6 +316,13 @@ export default function StockChart({
   // Effect 1: Fetch data on mount and when dependencies change
   useEffect(() => {
     fetchData(false)
+
+    // Cleanup: abort any in-flight request when interval/symbol changes
+    return () => {
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort()
+      }
+    }
   }, [fetchData])
 
   // Effect for auto-refresh
@@ -501,10 +538,13 @@ export default function StockChart({
         </div>
       )}
 
-      {/* Loading state */}
-      {loading && (
-        <div className="w-full h-[350px] flex items-center justify-center">
+      {/* Loading state - only show full loading if we have no data at all */}
+      {loading && !chartData && (
+        <div className="w-full h-[350px] flex flex-col items-center justify-center gap-2">
           <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500"></div>
+          {pendingInterval && (
+            <span className="text-xs text-slate-400">Loading {pendingInterval} chart...</span>
+          )}
         </div>
       )}
 
@@ -523,13 +563,28 @@ export default function StockChart({
         </div>
       )}
 
-      {/* Chart container - only rendered when we have data */}
-      {!loading && !error && chartData && (
+      {/* Chart container - rendered when we have data (show overlay when switching intervals) */}
+      {!error && chartData && (
         <>
-          <div ref={chartContainerRef} className="w-full" />
+          <div className="relative">
+            <div ref={chartContainerRef} className="w-full" />
+            {/* Loading overlay when switching intervals - keeps chart visible but shows loading indicator */}
+            {pendingInterval && pendingInterval !== currentIntervalRef.current && (
+              <div className="absolute inset-0 bg-slate-900/60 flex items-center justify-center rounded">
+                <div className="flex flex-col items-center gap-2">
+                  <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-blue-500"></div>
+                  <span className="text-xs text-slate-300">Switching to {pendingInterval}...</span>
+                </div>
+              </div>
+            )}
+          </div>
           {lastUpdated && (
             <div className="flex items-center justify-between mt-2 px-1 text-xs text-slate-500">
               <div className="flex items-center gap-2">
+                {/* Show which interval is currently displayed */}
+                <span className="px-1.5 py-0.5 bg-slate-700 rounded text-slate-300">
+                  {currentIntervalRef.current}
+                </span>
                 <span>{dataPoints} data points</span>
                 {dataAge && (
                   <span className={`flex items-center gap-1 ${dataAge === 'Live' || dataAge === 'Just now' ? 'text-green-400' : 'text-slate-500'}`}>

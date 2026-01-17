@@ -4,6 +4,7 @@ import { Star, TrendingUp, TrendingDown, Loader2, RefreshCw, Activity, Target, G
 import StockChart from '../components/StockChart'
 import MultiTimeframeInsight from '../components/indicators/MultiTimeframeInsight'
 import TripleScreenPanel from '../components/indicators/TripleScreenPanel'
+import PatternInsights from '../components/indicators/PatternInsights'
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
 
@@ -545,6 +546,9 @@ export default function StockDetail() {
               <StatRow label="Volume" value={quote?.volume ? quote.volume.toLocaleString() : '—'} />
             </div>
           </div>
+
+          {/* Pattern Detection - Bull/Bear Flags, Breakouts, etc. */}
+          <PatternInsights symbol={symbol || 'AAPL'} interval={interval} />
 
           {/* Multi-Timeframe AI Insight */}
           <MultiTimeframeInsight symbol={symbol || 'AAPL'} />

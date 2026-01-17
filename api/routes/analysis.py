@@ -1947,3 +1947,188 @@ async def get_top_movers(
         "gainers": [m for m in movers if m["changePct"] > 0][:limit],
         "losers": sorted([m for m in movers if m["changePct"] < 0], key=lambda x: x["changePct"])[:limit],
     }
+
+
+@router.get("/patterns/{symbol}")
+async def get_chart_patterns(
+    symbol: str,
+    interval: str = Query(default="daily", description="Chart interval: 1min, 5min, 15min, 1hour, daily")
+):
+    """
+    Detect chart patterns for short-term trading.
+
+    Patterns detected:
+    - **Bull Flag**: Bullish continuation after strong upward move
+    - **Bear Flag**: Bearish continuation after strong downward move
+    - **Double Top**: Bearish reversal with two peaks at same level
+    - **Double Bottom**: Bullish reversal with two troughs at same level
+    - **Head & Shoulders**: Bearish reversal with three peaks
+    - **Triangle**: Ascending (bullish), Descending (bearish), Symmetrical
+    - **Breakouts**: Breaking above resistance or below support
+    - **Candlestick patterns**: Doji, Hammer, Engulfing, etc.
+
+    Also returns:
+    - Support/Resistance levels
+    - Trend lines
+    - Overall pattern bias (bullish/bearish/neutral)
+
+    Ideal for scalp and swing trading decisions.
+    """
+    try:
+        from services.pattern_recognition import get_pattern_service
+
+        alpaca = get_alpaca_service()
+        pattern_service = get_pattern_service()
+
+        # Determine timeframe and data requirements
+        interval_map = {
+            "1min": ("1Min", 3, 500),
+            "5min": ("5Min", 5, 400),
+            "15min": ("15Min", 10, 300),
+            "30min": ("30Min", 14, 200),
+            "1hour": ("1Hour", 30, 150),
+            "daily": ("1day", 180, 180),
+            "1day": ("1day", 180, 180),
+        }
+
+        tf_setting = interval_map.get(interval.lower(), ("1day", 180, 180))
+        timeframe, days_back, limit = tf_setting
+
+        start = datetime.now() - timedelta(days=days_back)
+        bars = await alpaca.get_bars(symbol.upper(), timeframe=timeframe, limit=limit, start=start)
+
+        if not bars or len(bars) < 30:
+            raise HTTPException(status_code=404, detail=f"Insufficient data for {symbol}")
+
+        opens = [b["open"] for b in bars]
+        highs = [b["high"] for b in bars]
+        lows = [b["low"] for b in bars]
+        closes = [b["close"] for b in bars]
+        volumes = [b["volume"] for b in bars]
+
+        current_price = closes[-1]
+
+        # Run full pattern analysis
+        analysis = pattern_service.analyze(opens, highs, lows, closes, volumes)
+
+        # Format response with actionable insights
+        patterns = analysis.get("patterns", [])
+        bias = analysis.get("bias", "neutral")
+
+        # Generate trading insights based on detected patterns
+        trading_signals = []
+        for pattern in patterns:
+            signal = {
+                "pattern": pattern["type"].replace("_", " ").title(),
+                "confidence": pattern["confidence"],
+                "direction": pattern["direction"],
+                "description": pattern["description"],
+            }
+            if pattern.get("price_target"):
+                signal["price_target"] = round(pattern["price_target"], 2)
+                signal["target_pct"] = round((pattern["price_target"] - current_price) / current_price * 100, 2)
+            if pattern.get("stop_loss"):
+                signal["stop_loss"] = round(pattern["stop_loss"], 2)
+                signal["risk_pct"] = round((current_price - pattern["stop_loss"]) / current_price * 100, 2)
+            trading_signals.append(signal)
+
+        # Get highest confidence actionable patterns
+        actionable_patterns = [p for p in trading_signals if p["confidence"] >= 65]
+
+        # Format support/resistance for display
+        sr_levels = analysis.get("support_resistance", [])
+        supports = [{"price": sr["price"], "strength": sr["strength"]} for sr in sr_levels if sr["type"] == "support"][:3]
+        resistances = [{"price": sr["price"], "strength": sr["strength"]} for sr in sr_levels if sr["type"] == "resistance"][:3]
+
+        # Format trend lines
+        trend_lines = analysis.get("trend_lines", [])
+        formatted_trends = []
+        for tl in trend_lines:
+            # Calculate current trendline value
+            current_idx = len(closes) - 1
+            current_tl_value = tl["slope"] * current_idx + tl["intercept"]
+            formatted_trends.append({
+                "type": tl["type"],
+                "direction": tl["direction"],
+                "strength": tl["strength"],
+                "current_value": round(current_tl_value, 2),
+                "touches": tl["touches"],
+            })
+
+        # Generate overall trade recommendation
+        if actionable_patterns:
+            top_pattern = actionable_patterns[0]
+            if top_pattern["direction"] == "bullish":
+                trade_signal = "BUY"
+                signal_color = "green"
+            elif top_pattern["direction"] == "bearish":
+                trade_signal = "SELL"
+                signal_color = "red"
+            else:
+                trade_signal = "WATCH"
+                signal_color = "yellow"
+        else:
+            trade_signal = "NO PATTERN"
+            signal_color = "gray"
+
+        # Check for active breakout (high priority)
+        active_breakout = None
+        for p in patterns:
+            if "BREAKOUT" in p["description"].upper() or "BREAKDOWN" in p["description"].upper():
+                active_breakout = {
+                    "type": "BREAKOUT" if "BREAKOUT" in p["description"].upper() else "BREAKDOWN",
+                    "description": p["description"],
+                    "confidence": p["confidence"],
+                    "direction": p["direction"],
+                }
+                break
+
+        return {
+            "symbol": symbol.upper(),
+            "current_price": round(current_price, 2),
+            "interval": interval,
+            "timestamp": datetime.now().isoformat(),
+
+            # Main signal
+            "trade_signal": trade_signal,
+            "signal_color": signal_color,
+            "pattern_bias": bias,
+            "bullish_score": analysis.get("bullish_score", 0),
+            "bearish_score": analysis.get("bearish_score", 0),
+
+            # Active breakout (if any)
+            "active_breakout": active_breakout,
+
+            # All detected patterns
+            "patterns_detected": len(patterns),
+            "patterns": trading_signals,
+            "actionable_patterns": actionable_patterns,
+
+            # Key levels
+            "support_levels": supports,
+            "resistance_levels": resistances,
+            "nearest_support": supports[0]["price"] if supports else None,
+            "nearest_resistance": resistances[0]["price"] if resistances else None,
+
+            # Trend lines
+            "trend_lines": formatted_trends,
+
+            # Elliott Wave (if detected)
+            "elliott_wave": analysis.get("elliott_wave"),
+
+            # Trading recommendation summary
+            "summary": {
+                "signal": trade_signal,
+                "reason": actionable_patterns[0]["description"] if actionable_patterns else "No clear pattern detected",
+                "confidence": actionable_patterns[0]["confidence"] if actionable_patterns else 0,
+                "entry": current_price if trade_signal in ["BUY", "SELL"] else None,
+                "target": actionable_patterns[0].get("price_target") if actionable_patterns else None,
+                "stop": actionable_patterns[0].get("stop_loss") if actionable_patterns else None,
+            }
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Pattern detection error for {symbol}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
