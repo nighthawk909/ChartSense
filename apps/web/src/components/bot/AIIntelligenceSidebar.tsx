@@ -49,13 +49,6 @@ export default function AIIntelligenceSidebar({
     setShowReasoningModal(true);
   };
 
-  // Get top opportunities from analysis results
-  const topOpportunities = Object.entries(analysisResults)
-    .map(([symbol, result]) => ({ symbol, ...result }))
-    .filter(r => r.signal === 'BUY')
-    .sort((a, b) => b.confidence - a.confidence)
-    .slice(0, 5);
-
   return (
     <>
       {/* Toggle Button (shown when collapsed) */}
@@ -176,51 +169,88 @@ export default function AIIntelligenceSidebar({
           {/* Analysis Tab */}
           {activeTab === 'analysis' && (
             <div className="space-y-3">
-              <h3 className="text-xs text-slate-500 uppercase tracking-wide mb-2">Top Opportunities</h3>
-              {topOpportunities.length > 0 ? (
-                <div className="space-y-2">
-                  {topOpportunities.map((opp, idx) => (
-                    <div
-                      key={idx}
-                      className={`p-3 rounded-lg border transition-colors cursor-pointer
-                               ${opp.meets_threshold
-                                 ? 'bg-green-500/10 border-green-500/30 hover:bg-green-500/20'
-                                 : 'bg-slate-800 border-slate-700 hover:bg-slate-700'
-                               }`}
-                    >
-                      <div className="flex items-center justify-between mb-1">
-                        <div className="flex items-center gap-2">
-                          <TrendingUp className={`w-4 h-4 ${opp.meets_threshold ? 'text-green-500' : 'text-yellow-500'}`} />
-                          <span className="font-medium text-white">{opp.symbol.replace('/', '')}</span>
+              {/* Signals Above Threshold */}
+              <h3 className="text-xs text-slate-500 uppercase tracking-wide mb-2">Signals Above Threshold</h3>
+              {(() => {
+                const aboveThreshold = Object.entries(analysisResults)
+                  .map(([symbol, result]) => ({ symbol, ...result }))
+                  .filter(r => r.meets_threshold || r.confidence >= r.threshold)
+                  .sort((a, b) => b.confidence - a.confidence);
+
+                return aboveThreshold.length > 0 ? (
+                  <div className="space-y-2">
+                    {aboveThreshold.map((opp, idx) => {
+                      const aiDecision = (opp as CryptoAnalysisResult & { ai_decision?: AIDecision }).ai_decision;
+                      const isApproved = aiDecision?.decision === 'APPROVE';
+                      const isRejected = aiDecision?.decision === 'REJECT';
+                      const isWait = aiDecision?.decision === 'WAIT';
+
+                      return (
+                        <div
+                          key={idx}
+                          className={`p-3 rounded-lg border transition-colors ${
+                            isApproved ? 'bg-green-500/10 border-green-500/30' :
+                            isRejected ? 'bg-red-500/10 border-red-500/30' :
+                            isWait ? 'bg-yellow-500/10 border-yellow-500/30' :
+                            'bg-slate-800 border-slate-700'
+                          }`}
+                        >
+                          <div className="flex items-center justify-between mb-1">
+                            <div className="flex items-center gap-2">
+                              <TrendingUp className={`w-4 h-4 ${
+                                isApproved ? 'text-green-500' :
+                                isRejected ? 'text-red-500' :
+                                'text-yellow-500'
+                              }`} />
+                              <span className="font-medium text-white">{opp.symbol.replace('/', '')}</span>
+                              {aiDecision && (
+                                <span className={`px-1.5 py-0.5 text-[10px] font-medium rounded ${
+                                  isApproved ? 'bg-green-500/30 text-green-400' :
+                                  isRejected ? 'bg-red-500/30 text-red-400' :
+                                  'bg-yellow-500/30 text-yellow-400'
+                                }`}>
+                                  AI: {aiDecision.decision}
+                                </span>
+                              )}
+                            </div>
+                            <span className={`text-sm font-semibold ${
+                              isApproved ? 'text-green-400' :
+                              isRejected ? 'text-red-400' :
+                              'text-yellow-400'
+                            }`}>
+                              {opp.confidence.toFixed(0)}%
+                            </span>
+                          </div>
+                          <p className="text-xs text-slate-400 line-clamp-2">{opp.reason}</p>
+                          <div className="mt-2 flex items-center gap-2">
+                            <div className="flex-1 bg-slate-700 rounded-full h-1.5">
+                              <div
+                                className={`h-1.5 rounded-full ${
+                                  isApproved ? 'bg-green-500' :
+                                  isRejected ? 'bg-red-500' :
+                                  'bg-yellow-500'
+                                }`}
+                                style={{ width: `${opp.confidence}%` }}
+                              />
+                            </div>
+                            <span className="text-xs text-slate-500">/{opp.threshold}%</span>
+                          </div>
                         </div>
-                        <span className={`text-sm font-semibold ${opp.meets_threshold ? 'text-green-400' : 'text-yellow-400'}`}>
-                          {opp.confidence.toFixed(0)}%
-                        </span>
-                      </div>
-                      <p className="text-xs text-slate-400">{opp.reason}</p>
-                      <div className="mt-2 flex items-center gap-2">
-                        <div className="flex-1 bg-slate-700 rounded-full h-1.5">
-                          <div
-                            className={`h-1.5 rounded-full ${opp.meets_threshold ? 'bg-green-500' : 'bg-yellow-500'}`}
-                            style={{ width: `${opp.confidence}%` }}
-                          />
-                        </div>
-                        <span className="text-xs text-slate-500">/{opp.threshold}%</span>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <p className="text-sm text-slate-500 text-center py-4">No buy signals detected</p>
-              )}
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <p className="text-sm text-slate-500 text-center py-4">No signals above threshold</p>
+                );
+              })()}
 
               {/* All Analysis Results */}
-              <h3 className="text-xs text-slate-500 uppercase tracking-wide mt-4 mb-2">All Signals</h3>
+              <h3 className="text-xs text-slate-500 uppercase tracking-wide mt-4 mb-2">All Scanned</h3>
               <div className="space-y-1">
                 {Object.entries(analysisResults).map(([symbol, result]) => (
                   <div key={symbol} className="flex items-center justify-between p-2 bg-slate-800/50 rounded">
                     <div className="flex items-center gap-2">
-                      {result.signal === 'BUY' ? (
+                      {result.meets_threshold ? (
                         <TrendingUp className="w-3 h-3 text-green-500" />
                       ) : result.signal === 'SELL' ? (
                         <TrendingDown className="w-3 h-3 text-red-500" />
@@ -231,7 +261,7 @@ export default function AIIntelligenceSidebar({
                     </div>
                     <span className={`text-xs font-medium ${
                       result.meets_threshold ? 'text-green-400' :
-                      result.signal === 'BUY' ? 'text-yellow-400' : 'text-slate-400'
+                      result.confidence >= 50 ? 'text-yellow-400' : 'text-slate-400'
                     }`}>
                       {result.confidence.toFixed(0)}%
                     </span>
@@ -249,22 +279,29 @@ export default function AIIntelligenceSidebar({
                   {/* Scan Status */}
                   <div className={`p-4 rounded-lg border ${
                     scanProgress.scan_status === 'scanning' ? 'bg-blue-500/10 border-blue-500/30' :
-                    scanProgress.scan_status === 'found_opportunity' ? 'bg-green-500/10 border-green-500/30' :
+                    scanProgress.scan_status === 'found_opportunity' ? 'bg-yellow-500/10 border-yellow-500/30' :
                     'bg-slate-800 border-slate-700'
                   }`}>
                     <div className="flex items-center gap-2 mb-2">
                       {scanProgress.scan_status === 'scanning' ? (
                         <Activity className="w-5 h-5 text-blue-400 animate-pulse" />
                       ) : scanProgress.scan_status === 'found_opportunity' ? (
-                        <Zap className="w-5 h-5 text-green-400" />
+                        <Zap className="w-5 h-5 text-yellow-400" />
                       ) : (
                         <Clock className="w-5 h-5 text-slate-400" />
                       )}
                       <span className="font-medium text-white capitalize">
-                        {scanProgress.scan_status.replace(/_/g, ' ')}
+                        {scanProgress.scan_status === 'found_opportunity'
+                          ? 'Signal Detected'
+                          : scanProgress.scan_status.replace(/_/g, ' ')}
                       </span>
                     </div>
                     <p className="text-sm text-slate-300">{scanProgress.scan_summary}</p>
+                    {scanProgress.scan_status === 'found_opportunity' && (
+                      <p className="text-xs text-yellow-400/70 mt-1">
+                        ⚠️ Signal met threshold - check AI Decisions for approval status
+                      </p>
+                    )}
                   </div>
 
                   {/* Progress Bar */}

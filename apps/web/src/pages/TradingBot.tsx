@@ -13,7 +13,7 @@ import TradeHistory from '../components/bot/TradeHistory';
 import PerformanceStats from '../components/bot/PerformanceStats';
 import ActivityLog from '../components/bot/ActivityLog';
 import AssetClassToggle, { type AssetClassMode } from '../components/bot/AssetClassToggle';
-import TickerCarousel from '../components/bot/TickerCarousel';
+import TickerCarousel, { type TickerItem } from '../components/bot/TickerCarousel';
 import AIIntelligenceSidebar from '../components/bot/AIIntelligenceSidebar';
 
 import { botApi, positionsApi, performanceApi } from '../services/botApi';
@@ -355,14 +355,54 @@ export default function TradingBot() {
     }
   };
 
-  // Build carousel items from crypto analysis results
-  const carouselItems = status?.crypto_analysis_results
-    ? Object.entries(status.crypto_analysis_results).map(([symbol, result]) => ({
+  const handleToggleAutoTrade = async () => {
+    const newValue = !status?.auto_trade_mode;
+    console.log('[TradingBot] Toggling auto_trade_mode to:', newValue);
+    try {
+      const response = await fetch(`${API_URL}/api/bot/auto-trade?enabled=${newValue}`, { method: 'POST' });
+      if (response.ok) {
+        const data = await response.json();
+        console.log('[TradingBot] Auto trade mode updated:', data);
+        // Refresh status to get updated state
+        setTimeout(fetchStatus, 500);
+      }
+    } catch (err) {
+      console.error('Failed to toggle auto trade mode:', err);
+    }
+  };
+
+  // Build carousel items from both crypto AND stock analysis results
+  const carouselItems: TickerItem[] = [];
+
+  // Add crypto items if mode allows
+  if ((assetMode === 'crypto' || assetMode === 'both') && status?.crypto_analysis_results) {
+    Object.entries(status.crypto_analysis_results).forEach(([symbol, result]) => {
+      carouselItems.push({
         symbol,
         analysis: result,
         aiDecision: result.ai_decision,
-      }))
-    : [];
+        assetType: 'crypto',
+        // Price would be added here if available in the result
+        // For now, indicators might have price data
+        price: result.indicators?.close,
+        change24h: result.indicators?.change_24h,
+      });
+    });
+  }
+
+  // Add stock items if mode allows
+  if ((assetMode === 'stocks' || assetMode === 'both') && status?.stock_analysis_results) {
+    Object.entries(status.stock_analysis_results).forEach(([symbol, result]) => {
+      carouselItems.push({
+        symbol,
+        analysis: result,
+        aiDecision: result.ai_decision,
+        assetType: 'stock',
+        price: result.current_price,
+        change24h: result.indicators?.change_24h,
+      });
+    });
+  }
 
   return (
     <div className="space-y-6">
@@ -404,14 +444,13 @@ export default function TradingBot() {
         </div>
       </div>
 
-      {/* Quick Navigation Carousel */}
-      {carouselItems.length > 0 && (
-        <TickerCarousel
-          items={carouselItems}
-          currentIndex={carouselIndex}
-          onIndexChange={setCarouselIndex}
-        />
-      )}
+      {/* Quick Navigation Carousel - Always show for scanner visibility */}
+      <TickerCarousel
+        items={carouselItems}
+        currentIndex={carouselIndex}
+        onIndexChange={setCarouselIndex}
+        cardsPerView={4}
+      />
 
       {/* Top Row - Status, Controls, Account */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -425,10 +464,16 @@ export default function TradingBot() {
           onEmergencyCloseAll={handleEmergencyCloseAll}
           onPauseNewEntries={handlePauseNewEntries}
           onStrategyOverride={handleStrategyOverride}
+          onToggleAutoTrade={handleToggleAutoTrade}
           loading={actionLoading}
           newEntriesPaused={newEntriesPaused}
           currentStrategy={currentStrategy}
           hasOpenPositions={positions.length > 0}
+          executionLog={status?.execution_log || []}
+          aiDecisions={status?.ai_decisions_history || []}
+          currentCycle={status?.current_cycle || 'idle'}
+          autoTradeMode={status?.auto_trade_mode || false}
+          totalScansToday={status?.total_scans_today || scanCount}
         />
         <AccountSummary account={account} loading={accountLoading} />
       </div>

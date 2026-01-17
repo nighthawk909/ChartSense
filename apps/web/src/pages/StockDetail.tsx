@@ -1,7 +1,9 @@
 import { useState, useEffect } from 'react'
 import { useParams } from 'react-router-dom'
-import { Star, TrendingUp, TrendingDown, Loader2, RefreshCw, Activity, Target, GitBranch, CheckCircle, XCircle, Zap } from 'lucide-react'
+import { Star, TrendingUp, TrendingDown, Loader2, RefreshCw, Activity, Target, GitBranch } from 'lucide-react'
 import StockChart from '../components/StockChart'
+import MultiTimeframeInsight from '../components/indicators/MultiTimeframeInsight'
+import TripleScreenPanel from '../components/indicators/TripleScreenPanel'
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
 
@@ -88,7 +90,7 @@ export default function StockDetail() {
   const [quote, setQuote] = useState<StockQuote | null>(null)
   const [technicals, setTechnicals] = useState<TechnicalAnalysis>({})
   const [aiInsight, setAiInsight] = useState<AIInsight | null>(null)
-  const [aiInsightLoading, setAiInsightLoading] = useState(false)
+  const [_aiInsightLoading, setAiInsightLoading] = useState(false)
   const [supportResistance, setSupportResistance] = useState<SupportResistance | null>(null)
   const [elliottWave, setElliottWave] = useState<ElliottWave | null>(null)
   const [trendLines, setTrendLines] = useState<TrendLine[]>([])
@@ -544,153 +546,11 @@ export default function StockDetail() {
             </div>
           </div>
 
-          {/* AI Insight - Comprehensive Analysis */}
-          <div className="bg-gradient-to-br from-blue-900/50 to-purple-900/50 rounded-lg p-4 border border-blue-700/50">
-            <div className="flex items-center justify-between mb-3">
-              <div className="flex items-center gap-2">
-                <Zap className="h-5 w-5 text-blue-400" />
-                <h2 className="text-lg font-semibold">AI Insight</h2>
-              </div>
-              {aiInsight && (
-                <span className={`text-xs font-bold px-2 py-1 rounded ${
-                  aiInsight.recommendation === 'STRONG BUY' ? 'bg-green-600 text-white' :
-                  aiInsight.recommendation === 'BUY' ? 'bg-green-500/80 text-white' :
-                  aiInsight.recommendation === 'HOLD' ? 'bg-yellow-500/80 text-black' :
-                  aiInsight.recommendation === 'SELL' ? 'bg-red-500/80 text-white' :
-                  'bg-red-600 text-white'
-                }`}>
-                  {aiInsight.recommendation}
-                </span>
-              )}
-            </div>
+          {/* Multi-Timeframe AI Insight */}
+          <MultiTimeframeInsight symbol={symbol || 'AAPL'} />
 
-            {aiInsightLoading ? (
-              <div className="flex items-center justify-center py-4">
-                <Loader2 className="h-5 w-5 animate-spin text-blue-400" />
-              </div>
-            ) : aiInsight ? (
-              <div className="space-y-3">
-                {/* Score Bar */}
-                <div>
-                  <div className="flex items-center justify-between text-xs text-slate-400 mb-1">
-                    <span>Score</span>
-                    <span className="font-medium">{aiInsight.score}/100</span>
-                  </div>
-                  <div className="w-full h-2 bg-slate-700 rounded-full overflow-hidden">
-                    <div
-                      className={`h-full transition-all ${
-                        aiInsight.score >= 70 ? 'bg-green-500' :
-                        aiInsight.score >= 50 ? 'bg-yellow-500' :
-                        'bg-red-500'
-                      }`}
-                      style={{ width: `${aiInsight.score}%` }}
-                    />
-                  </div>
-                </div>
-
-                {/* Action */}
-                <p className="text-sm font-medium text-blue-300">{aiInsight.action}</p>
-
-                {/* Signals (Bullish) */}
-                {aiInsight.signals.length > 0 && (
-                  <div>
-                    <p className="text-xs text-slate-400 mb-1">Bullish Signals</p>
-                    <div className="space-y-1">
-                      {aiInsight.signals.slice(0, 3).map((signal, i) => (
-                        <div key={i} className="flex items-center gap-2 text-xs">
-                          <CheckCircle className="h-3 w-3 text-green-500 flex-shrink-0" />
-                          <span className="text-green-400">{signal}</span>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                {/* Concerns (Bearish) */}
-                {aiInsight.concerns.length > 0 && (
-                  <div>
-                    <p className="text-xs text-slate-400 mb-1">Concerns</p>
-                    <div className="space-y-1">
-                      {aiInsight.concerns.slice(0, 3).map((concern, i) => (
-                        <div key={i} className="flex items-center gap-2 text-xs">
-                          <XCircle className="h-3 w-3 text-red-500 flex-shrink-0" />
-                          <span className="text-red-400">{concern}</span>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                {/* Key Indicators */}
-                <div className="pt-2 border-t border-slate-700/50">
-                  <p className="text-xs text-slate-400 mb-2">Key Indicators</p>
-                  <div className="grid grid-cols-2 gap-2 text-xs">
-                    <div className="flex justify-between">
-                      <span className="text-slate-500">RSI</span>
-                      <span className={
-                        aiInsight.indicators.rsi_14 > 70 ? 'text-red-400' :
-                        aiInsight.indicators.rsi_14 < 30 ? 'text-green-400' :
-                        'text-slate-300'
-                      }>{aiInsight.indicators.rsi_14?.toFixed(1)}</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-slate-500">MACD</span>
-                      <span className={aiInsight.indicators.macd_histogram > 0 ? 'text-green-400' : 'text-red-400'}>
-                        {aiInsight.indicators.macd_histogram > 0 ? '+' : ''}{aiInsight.indicators.macd_histogram?.toFixed(2)}
-                      </span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-slate-500">Vol Ratio</span>
-                      <span className={aiInsight.indicators.volume_ratio > 1.5 ? 'text-yellow-400' : 'text-slate-300'}>
-                        {aiInsight.indicators.volume_ratio?.toFixed(2)}x
-                      </span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-slate-500">ATR</span>
-                      <span className="text-slate-300">${aiInsight.indicators.atr_14?.toFixed(2)}</span>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Moving Average Position */}
-                <div className="pt-2 border-t border-slate-700/50">
-                  <p className="text-xs text-slate-400 mb-2">Price vs Moving Averages</p>
-                  <div className="flex gap-2">
-                    <span className={`text-xs px-2 py-0.5 rounded ${aiInsight.price_vs_ma.above_sma_20 ? 'bg-green-900/50 text-green-400' : 'bg-red-900/50 text-red-400'}`}>
-                      SMA20 {aiInsight.price_vs_ma.above_sma_20 ? '↑' : '↓'}
-                    </span>
-                    <span className={`text-xs px-2 py-0.5 rounded ${aiInsight.price_vs_ma.above_sma_50 ? 'bg-green-900/50 text-green-400' : 'bg-red-900/50 text-red-400'}`}>
-                      SMA50 {aiInsight.price_vs_ma.above_sma_50 ? '↑' : '↓'}
-                    </span>
-                    <span className={`text-xs px-2 py-0.5 rounded ${aiInsight.price_vs_ma.above_sma_200 ? 'bg-green-900/50 text-green-400' : 'bg-red-900/50 text-red-400'}`}>
-                      SMA200 {aiInsight.price_vs_ma.above_sma_200 ? '↑' : '↓'}
-                    </span>
-                  </div>
-                </div>
-
-                {/* Momentum */}
-                <div className="pt-2 border-t border-slate-700/50">
-                  <p className="text-xs text-slate-400 mb-1">Momentum</p>
-                  <div className="flex gap-4 text-xs">
-                    <div>
-                      <span className="text-slate-500">1W: </span>
-                      <span className={aiInsight.momentum.week_change_pct >= 0 ? 'text-green-400' : 'text-red-400'}>
-                        {aiInsight.momentum.week_change_pct >= 0 ? '+' : ''}{aiInsight.momentum.week_change_pct?.toFixed(1)}%
-                      </span>
-                    </div>
-                    <div>
-                      <span className="text-slate-500">1M: </span>
-                      <span className={aiInsight.momentum.month_change_pct >= 0 ? 'text-green-400' : 'text-red-400'}>
-                        {aiInsight.momentum.month_change_pct >= 0 ? '+' : ''}{aiInsight.momentum.month_change_pct?.toFixed(1)}%
-                      </span>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            ) : (
-              <p className="text-sm text-slate-400">Unable to load AI insights.</p>
-            )}
-          </div>
+          {/* Triple Screen Analysis (Elder's System) */}
+          <TripleScreenPanel symbol={symbol || 'AAPL'} />
 
           {/* Support & Resistance */}
           {supportResistance && (

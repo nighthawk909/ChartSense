@@ -188,6 +188,29 @@ export default function StockChart({
         )
       }
 
+      // For intraday intervals (1m, 5m, 15m, etc.), ensure we show the most recent trading session
+      // This handles cases where 1D period filter returns old data from a previous session
+      if (isIntraday && filteredData.length > 0) {
+        const sortedFiltered = [...filteredData].sort((a: HistoricalData, b: HistoricalData) =>
+          new Date(b.date).getTime() - new Date(a.date).getTime()
+        )
+        const mostRecentTimestamp = new Date(sortedFiltered[0].date)
+        const now = new Date()
+        const ageHours = (now.getTime() - mostRecentTimestamp.getTime()) / (1000 * 60 * 60)
+
+        // If data is more than 24 hours old AND we have more recent data in the full history
+        if (ageHours > 24 && data.history.length > filteredData.length) {
+          console.log(`[StockChart] Intraday data ${ageHours.toFixed(1)}h old, using most recent session from full history`)
+          const fullSortedHistory = [...data.history].sort((a: HistoricalData, b: HistoricalData) =>
+            new Date(b.date).getTime() - new Date(a.date).getTime()
+          )
+          const newestDate = new Date(fullSortedHistory[0].date).toDateString()
+          filteredData = data.history.filter((item: HistoricalData) =>
+            new Date(item.date).toDateString() === newestDate
+          )
+        }
+      }
+
       const sortedData = [...filteredData].sort((a: HistoricalData, b: HistoricalData) =>
         new Date(a.date).getTime() - new Date(b.date).getTime()
       )

@@ -649,3 +649,263 @@ const { latestBar, status: wsStatus, forceRefresh } = useRealTimeData(symbol)
 - [ ] Open Dashboard → Select 1m interval → Should show "Live WebSocket Connected"
 - [ ] Open Watchlist → Should show AI Insights Carousel
 - [ ] Open Trading Bot → Click Start → Check console for diagnostic logs
+
+---
+
+## 🎯 SMR HYBRID IMPLEMENTATION (2026-01-16)
+
+### Target Asset: SMR (NuScale Power Corp)
+SMR is the primary test case for the Multi-Timeframe Analysis system. The AI must recognize that SMR may be:
+- **Bullish on Daily** but **Bearish on 5-minute**
+- **BUY for Scalping/Swing** but **HOLD for Long-term**
+
+### Alexander Elder Triple Screen System
+
+The system uses three "screens" across different timeframes:
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                    TRIPLE SCREEN METHODOLOGY                         │
+├─────────────────────────────────────────────────────────────────────┤
+│                                                                      │
+│  SCREEN 1: THE TIDE (Daily - 9 months)                              │
+│  └── Determines overall direction                                    │
+│      • MACD Histogram slope                                          │
+│      • 50/200 SMA (Golden/Death Cross)                              │
+│      • ADX > 25 with +DI/-DI leadership                             │
+│                                                                      │
+│  SCREEN 2: THE WAVE (Hourly - 2 weeks)                              │
+│  └── Identifies pullbacks for entry                                  │
+│      • RSI < 40 in bullish tide = buy zone                          │
+│      • Stochastic oversold = entry setup                            │
+│      • EMA 9/21 cross                                               │
+│                                                                      │
+│  SCREEN 3: THE RIPPLE (5-Minute - 3 days)                           │
+│  └── Precise entry timing                                            │
+│      • RSI < 35 oversold = BUY trigger                              │
+│      • MACD bullish cross                                           │
+│      • Below VWAP = value entry                                     │
+│      • Lower Bollinger Band = mean reversion                        │
+│                                                                      │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+### API Endpoints for SMR Analysis
+
+```bash
+# Triple Screen Analysis
+GET /api/analysis/triple-screen/SMR
+
+# Multi-Timeframe AI Insight
+GET /api/analysis/ai-insight-multi/SMR
+
+# Adaptive Indicators by Interval
+GET /api/analysis/adaptive-indicators/SMR?interval=5min
+GET /api/analysis/adaptive-indicators/SMR?interval=1day
+```
+
+### Adaptive Indicator Engine
+
+**Short-Term/Intraday (1m, 5m, 15m):**
+- Focus: Momentum & Breakouts
+- Indicators: VWAP, ADX/DI crossovers, RSI (7-period), Bollinger Bands squeeze, Bull/Bear Flags
+
+**Long-Term/Swing (1h, 1d, 1w):**
+- Focus: Trend & Structure
+- Indicators: 50/200 SMA, RSI (14-period), MACD, Volume Profile, Golden/Death Cross
+
+### Frontend Components
+
+| Component | Location | Purpose |
+|-----------|----------|---------|
+| `MultiTimeframeInsight` | `apps/web/src/components/indicators/MultiTimeframeInsight.tsx` | Shows Scalp/Intraday/Swing/Long-term analysis |
+| `TripleScreenPanel` | `apps/web/src/components/indicators/TripleScreenPanel.tsx` | Elder's Triple Screen System display |
+
+### Stock Scanner Concurrent Execution
+
+Stock and Crypto scanners now run **truly in parallel** using `asyncio.gather()`:
+
+```python
+# In trading_bot.py - _main_loop()
+concurrent_tasks = []
+if should_scan_stocks:
+    concurrent_tasks.append(self._run_trading_cycle(extended_hours=False))
+if should_scan_crypto:
+    concurrent_tasks.append(self._run_crypto_cycle())
+
+# Execute CONCURRENTLY - neither waits for the other
+await asyncio.gather(*concurrent_tasks, return_exceptions=True)
+```
+
+### Diagnostic Question for Stock Scanner
+
+If stock scanning appears idle while crypto is working:
+
+> "Check the `asset_class_mode` in bot status. If set to 'crypto', stocks won't scan.
+> Also verify `enabled_symbols` list is populated and market hours are active."
+
+```bash
+# Check bot configuration
+curl http://localhost:8000/api/bot/status | jq '.asset_class_mode, .enabled_symbols'
+
+# Verify market hours
+curl http://localhost:8000/api/bot/status | jq '.stock_scan_progress'
+```
+
+### SMR Testing Checklist
+- [ ] Navigate to `/stock/SMR` to view the stock detail page
+- [ ] Verify Triple Screen Panel shows all three screens
+- [ ] Check that Daily tide direction aligns with chart
+- [ ] Verify 5-minute ripple indicators update with chart interval
+- [ ] Test `/api/analysis/triple-screen/SMR` returns valid alignment score
+
+---
+
+## 🤖 HIERARCHICAL TRADING STRATEGY (2026-01-16)
+
+### Philosophy: "Make Money Every Day"
+
+The bot now implements an intelligent **Hierarchical Trading Strategy** that cascades through trading horizons to find opportunities:
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                    HIERARCHICAL CASCADE LOGIC                        │
+├─────────────────────────────────────────────────────────────────────┤
+│                                                                      │
+│  1. SWING SCAN (First Priority)                                     │
+│     └── Target: 5-15% gains over 2-10 days                          │
+│         • RSI Period: 21 (less noise)                               │
+│         • MACD: 19/39/9 (slower, fewer whipsaws)                    │
+│         • Bollinger: 30 period, 2.5 std dev                         │
+│         • Min R:R: 2.0                                              │
+│         • Scan Interval: Hourly                                     │
+│                                                                      │
+│  2. INTRADAY SCAN (If no swing setups)                              │
+│     └── Target: 1-3% gains within trading day                       │
+│         • RSI Period: 14 (standard)                                 │
+│         • MACD: 12/26/9 (standard)                                  │
+│         • Bollinger: 20 period, 2.0 std dev                         │
+│         • Min R:R: 1.5                                              │
+│         • Scan Interval: Every 15 minutes                           │
+│                                                                      │
+│  3. SCALP SCAN (If no intraday setups)                              │
+│     └── Target: 0.3-1% quick gains, 5-60 minutes                    │
+│         • RSI Period: 7 (fast response)                             │
+│         • MACD: 6/13/5 (very sensitive)                             │
+│         • Bollinger: 10 period, 2.0 std dev                         │
+│         • Min R:R: 1.2                                              │
+│         • Scan Interval: Every 5 minutes                            │
+│                                                                      │
+│  → Goal: Find profitable opportunities EVERY trading day            │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+### How It Works
+
+1. **Bot starts by looking for SWING trades** - These are the "big fish"
+2. **If no swing opportunities found**, mark horizon as "exhausted" and cascade down
+3. **Try INTRADAY trades** - Same-day, medium moves
+4. **If nothing**, look for **SCALP opportunities** - Quick profits
+5. **Reset exhausted flags periodically** (hourly for swing, 15min for intraday, 5min for scalp)
+
+### Technical Indicators by Horizon
+
+| Indicator | SWING | INTRADAY | SCALP |
+|-----------|-------|----------|-------|
+| RSI Period | 21 | 14 | 7 |
+| MACD Fast/Slow/Signal | 19/39/9 | 12/26/9 | 6/13/5 |
+| Bollinger Period | 30 | 20 | 10 |
+| Bollinger Std Dev | 2.5 | 2.0 | 2.0 |
+| ATR Period | 21 | 14 | 7 |
+| Stop Loss (ATR multiplier) | 2.5x | 1.5x | 0.75x |
+| Profit Target (ATR multiplier) | 4.0x | 2.5x | 1.5x |
+| Max Hold Time | 7 days | 8 hours | 60 min |
+
+### Opportunity Scoring
+
+Each opportunity is scored on 5 components:
+
+1. **Trend Score (25%)** - SMA alignment, Golden/Death Cross, ADX strength
+2. **Momentum Score (25%)** - RSI, Stochastic, MACD crossover, ROC
+3. **Pattern Score (20%)** - Bull/Bear Flags, H&S, Elliott Wave position
+4. **Volume Score (15%)** - Volume ratio, OBV trend, VWAP position
+5. **Multi-TF Score (15%)** - Alignment across timeframes
+
+**Quality Ratings:**
+- **EXCELLENT** (85+): Multiple confirmations, strong signal - TRADE
+- **GOOD** (70-84): Solid setup - TRADE
+- **FAIR** (55-69): Acceptable but risky - CONSIDER
+- **POOR** (<55): Not recommended - SKIP
+
+### Daily Goal Tracking
+
+The bot tracks progress toward a daily profit goal (default 0.5%):
+
+```json
+{
+  "date": "2026-01-16",
+  "target_pct": 0.5,
+  "achieved_pct": 0.35,
+  "progress_pct": 70,
+  "trades_taken": 3,
+  "wins": 2,
+  "losses": 1,
+  "win_rate": 66.7,
+  "horizons_used": ["SWING", "SCALP"]
+}
+```
+
+### API Endpoints
+
+```bash
+# Get hierarchical strategy status
+GET /api/bot/hierarchical/status
+
+# Enable/disable hierarchical mode
+POST /api/bot/hierarchical/toggle?enabled=true
+
+# Set daily profit target
+POST /api/bot/hierarchical/set-daily-target?target_pct=0.5
+
+# Get all current opportunities
+GET /api/bot/hierarchical/opportunities
+
+# Force a specific horizon (override auto-cascade)
+POST /api/bot/hierarchical/force-horizon?horizon=SCALP
+
+# Get daily goal progress
+GET /api/bot/hierarchical/daily-goal
+```
+
+### Key Files
+
+| File | Purpose |
+|------|---------|
+| `api/services/hierarchical_strategy.py` | Core cascading logic, opportunity evaluation |
+| `api/services/smart_scanner.py` | Orchestrates scans across horizons |
+| `api/services/trading_bot.py` | Integration with main bot loop |
+| `api/routes/bot.py` | API endpoints for hierarchical strategy |
+
+### Elliott Wave Integration
+
+The hierarchical strategy uses Elliott Wave analysis for pattern scoring:
+
+- **Wave 3 position**: +25% bonus (strongest momentum)
+- **Wave 5 position**: +20% bonus (final impulse)
+- **Wave 1 position**: +15% bonus (early trend)
+- **Wave 4 pullback**: +10% bonus (entry opportunity)
+- **Corrective waves (A, C)**: +10% bonus (counter-trend plays)
+
+### Diagnostic Questions
+
+If the bot isn't finding opportunities:
+
+> "Check `/api/bot/hierarchical/status` to see which horizons are exhausted.
+> If all horizons show exhausted=true, the bot has scanned everything and
+> found nothing meeting the quality thresholds."
+
+If trades aren't executing despite opportunities:
+
+> "Check the opportunity quality in `/api/bot/hierarchical/opportunities`.
+> Only EXCELLENT and GOOD quality opportunities trigger trades.
+> FAIR opportunities are logged but not executed automatically."

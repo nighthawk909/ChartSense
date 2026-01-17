@@ -55,6 +55,19 @@ export interface CryptoAnalysisResult {
   ai_decision?: AIDecision;
 }
 
+export interface StockAnalysisResult {
+  signal: string;
+  confidence: number;
+  threshold: number;
+  meets_threshold?: boolean;
+  reason: string;
+  timestamp: string;
+  indicators?: Record<string, number>;
+  current_price?: number;
+  trade_type?: string;
+  ai_decision?: AIDecision;
+}
+
 export interface CryptoBestOpportunity {
   symbol: string;
   confidence: number;
@@ -144,6 +157,11 @@ export interface BotStatus {
   crypto_scan_progress?: CryptoScanProgress;
   // Stock scan progress tracking
   stock_scan_progress?: StockScanProgress;
+  // Stock analysis results (similar to crypto)
+  stock_analysis_results?: Record<string, StockAnalysisResult>;
+  last_stock_analysis_time?: string | null;
+  // Entry threshold
+  entry_threshold?: number;
   // AI Decision Tracking
   last_ai_decision?: AIDecision | null;
   ai_decisions_history?: AIDecision[];

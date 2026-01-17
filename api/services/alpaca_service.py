@@ -626,21 +626,58 @@ class AlpacaService:
 
             tf = timeframe_map.get(timeframe.lower(), TimeFrame.Day)
 
+            # Calculate start date based on timeframe
+            # For daily bars, go back 'limit' days (plus buffer for weekends/holidays)
+            # For intraday, go back 7 days
+            is_daily = timeframe.lower() == "1day"
             if not start:
-                start = datetime.now() - timedelta(days=limit if tf == TimeFrame.Day else 7)
+                if is_daily:
+                    # Add 50% buffer for weekends and holidays
+                    days_back = int(limit * 1.5)
+                    start = datetime.now() - timedelta(days=days_back)
+                    logger.info(f"[STOCK BARS] Daily bars: going back {days_back} days for {limit} bars")
+                else:
+                    start = datetime.now() - timedelta(days=7)
 
             data_client = self._get_data_client()
+
+            # IMPORTANT: When start is provided, do NOT pass limit to Alpaca
+            # Alpaca returns FIRST N bars from start date, not the MOST RECENT N
+            # We'll fetch all bars from start to now, then take the last N on our side
             request = StockBarsRequest(
                 symbol_or_symbols=symbol.upper(),
                 timeframe=tf,
                 start=start,
                 end=end,
-                limit=limit
+                # Don't pass limit - we'll slice the results ourselves
             )
 
+            logger.info(f"[STOCK BARS] Fetching for {symbol}: tf={tf}, start={start}, end={end}")
             bars = data_client.get_stock_bars(request)
 
-            return [
+            # BarSet is dict-like but access via .data attribute or directly with symbol key
+            sym = symbol.upper()
+
+            # Try to access data - BarSet may return data differently
+            bar_data = None
+            try:
+                # Method 1: Direct dict-like access
+                if sym in bars:
+                    bar_data = bars[sym]
+                # Method 2: Try .data attribute if it exists
+                elif hasattr(bars, 'data') and sym in bars.data:
+                    bar_data = bars.data[sym]
+                # Method 3: The BarSet might have the data directly
+                elif hasattr(bars, sym):
+                    bar_data = getattr(bars, sym)
+            except Exception as access_err:
+                logger.warning(f"[STOCK BARS] Error accessing bar data for {sym}: {access_err}")
+
+            if bar_data is None:
+                logger.warning(f"[STOCK BARS] No data found for {symbol}")
+                return []
+
+            result = [
                 {
                     "timestamp": bar.timestamp.isoformat(),
                     "open": float(bar.open),
@@ -649,8 +686,19 @@ class AlpacaService:
                     "close": float(bar.close),
                     "volume": bar.volume,
                 }
-                for bar in bars[symbol.upper()]
+                for bar in bar_data
             ]
+
+            # Take only the LAST N bars if limit was specified
+            # This ensures we get the MOST RECENT data, not the oldest
+            total_bars = len(result)
+            if limit and total_bars > limit:
+                result = result[-limit:]
+                logger.info(f"[STOCK BARS] Got {total_bars} bars, returning last {limit} for {symbol}")
+            else:
+                logger.info(f"[STOCK BARS] Got {len(result)} bars for {symbol}")
+
+            return result
         except Exception as e:
             logger.error(f"Failed to get bars for {symbol}: {e}")
             raise

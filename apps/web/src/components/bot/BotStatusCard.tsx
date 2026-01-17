@@ -4,7 +4,7 @@
  */
 import { useState } from 'react';
 import { Activity, Clock, AlertCircle, Zap, TrendingUp, TrendingDown, Minus, Search, Loader2, CheckCircle2, XCircle, Target, Brain, ThumbsUp, ThumbsDown, Pause, Timer, Crosshair } from 'lucide-react';
-import type { BotStatus, CryptoAnalysisResult, CryptoScanProgress, StockScanProgress, AIDecision, TimeHorizon } from '../../types/bot';
+import type { BotStatus, CryptoAnalysisResult, StockAnalysisResult, CryptoScanProgress, StockScanProgress, AIDecision, TimeHorizon } from '../../types/bot';
 import { formatUptime, getStateColor } from '../../services/botApi';
 import ConfidenceReasoningModal from './ConfidenceReasoningModal';
 
@@ -136,12 +136,44 @@ export default function BotStatusCard({ status, loading }: BotStatusCardProps) {
         <AIDecisionHistory decisions={status.ai_decisions_history} />
       )}
 
+      {/* Stock Analysis Results - SORTED BY CONFIDENCE */}
+      {status.stock_analysis_results && Object.keys(status.stock_analysis_results).length > 0 && (status.asset_class_mode === 'stocks' || status.asset_class_mode === 'both') && (
+        <div className="mt-4 pt-4 border-t border-slate-700">
+          <div className="flex items-center gap-2 mb-2">
+            <Search className="w-4 h-4 text-green-400" />
+            <span className="text-sm font-medium text-white">Stock Analysis</span>
+            {status.entry_threshold && (
+              <span className="text-xs text-slate-400">
+                (threshold: {status.entry_threshold}%)
+              </span>
+            )}
+            {status.last_stock_analysis_time && (
+              <span className="text-xs text-slate-500 ml-auto">
+                {new Date(status.last_stock_analysis_time).toLocaleTimeString()}
+              </span>
+            )}
+          </div>
+          <div className="space-y-2 max-h-48 overflow-y-auto">
+            {Object.entries(status.stock_analysis_results)
+              .sort(([, a], [, b]) => (b.confidence ?? 0) - (a.confidence ?? 0))
+              .map(([symbol, result]) => (
+                <StockAnalysisItem key={symbol} symbol={symbol} result={result} />
+              ))}
+          </div>
+        </div>
+      )}
+
       {/* Crypto Analysis Results */}
       {status.crypto_trading_enabled && status.crypto_analysis_results && (
         <div className="mt-4 pt-4 border-t border-slate-700">
           <div className="flex items-center gap-2 mb-2">
             <Search className="w-4 h-4 text-blue-400" />
             <span className="text-sm font-medium text-white">Crypto Analysis</span>
+            {status.entry_threshold && (
+              <span className="text-xs text-slate-400">
+                (threshold: {status.entry_threshold}%)
+              </span>
+            )}
             {status.last_crypto_analysis_time && (
               <span className="text-xs text-slate-500 ml-auto">
                 {new Date(status.last_crypto_analysis_time).toLocaleTimeString()}
@@ -149,9 +181,11 @@ export default function BotStatusCard({ status, loading }: BotStatusCardProps) {
             )}
           </div>
           <div className="space-y-2 max-h-48 overflow-y-auto">
-            {Object.entries(status.crypto_analysis_results).map(([symbol, result]) => (
-              <CryptoAnalysisItem key={symbol} symbol={symbol} result={result} />
-            ))}
+            {Object.entries(status.crypto_analysis_results)
+              .sort(([, a], [, b]) => (b.confidence ?? 0) - (a.confidence ?? 0))
+              .map(([symbol, result]) => (
+                <CryptoAnalysisItem key={symbol} symbol={symbol} result={result} />
+              ))}
             {Object.keys(status.crypto_analysis_results).length === 0 && (
               <p className="text-xs text-slate-500">Waiting for analysis...</p>
             )}
@@ -199,7 +233,8 @@ function ScanProgressCard({
   const getStatusColor = () => {
     switch (progress.scan_status) {
       case 'scanning':
-        return type === 'stock' ? 'bg-green-500/20 border-green-500/30' : 'bg-blue-500/20 border-blue-500/30';
+        // Both stock and crypto use blue when actively scanning for consistency
+        return 'bg-blue-500/20 border-blue-500/30';
       case 'found_opportunity':
         return 'bg-green-500/20 border-green-500/30';
       case 'exhausted':
@@ -212,7 +247,10 @@ function ScanProgressCard({
   };
 
   const progressPct = progress.total > 0 ? (progress.scanned / progress.total) * 100 : 0;
-  const progressBarColor = type === 'stock' ? 'bg-green-500' : 'bg-blue-500';
+  // Both use blue when scanning, green when found opportunity
+  const progressBarColor = progress.scan_status === 'scanning' ? 'bg-blue-500' :
+                           progress.scan_status === 'found_opportunity' ? 'bg-green-500' :
+                           'bg-blue-500';
 
   return (
     <div className={`mt-4 p-3 rounded-lg border ${getStatusColor()}`}>
@@ -256,6 +294,22 @@ function ScanProgressCard({
       {/* Scan Summary */}
       <p className="text-xs text-slate-300">{progress.scan_summary}</p>
 
+      {/* Last Scan Completed Timestamp */}
+      {progress.last_scan_completed && (
+        <div className="mt-2 flex items-center gap-1 text-xs text-slate-500">
+          <Clock className="w-3 h-3" />
+          Last scan: {new Date(progress.last_scan_completed).toLocaleString()}
+        </div>
+      )}
+
+      {/* Next Scan Countdown */}
+      {progress.next_scan_in_seconds > 0 && progress.scan_status !== 'scanning' && (
+        <div className="mt-1 flex items-center gap-1 text-xs text-slate-400">
+          <Timer className="w-3 h-3" />
+          Next scan in: {progress.next_scan_in_seconds}s
+        </div>
+      )}
+
       {/* Best Opportunity (if below threshold) */}
       {progress.best_opportunity && !progress.best_opportunity.meets_threshold && progress.scan_status === 'exhausted' && (
         <div className="mt-2 p-2 bg-slate-700/50 rounded flex items-center gap-2">
@@ -275,6 +329,53 @@ function ScanProgressCard({
         <div className="mt-2 flex items-center gap-1 text-xs text-green-400">
           <CheckCircle2 className="w-3 h-3" />
           {progress.signals_found} signal{progress.signals_found > 1 ? 's' : ''} above threshold
+        </div>
+      )}
+    </div>
+  );
+}
+
+function StockAnalysisItem({ symbol, result }: { symbol: string; result: StockAnalysisResult }) {
+  const getSignalIcon = () => {
+    if (result.signal === 'BUY') return <TrendingUp className="w-3 h-3 text-green-500" />;
+    if (result.signal === 'SELL') return <TrendingDown className="w-3 h-3 text-red-500" />;
+    return <Minus className="w-3 h-3 text-slate-400" />;
+  };
+
+  const getSignalColor = () => {
+    if (result.meets_threshold) return 'text-green-400';
+    if (result.signal === 'BUY') return 'text-yellow-400';
+    if (result.signal === 'SELL') return 'text-red-400';
+    return 'text-slate-400';
+  };
+
+  return (
+    <div className="bg-slate-700/30 rounded p-2">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          {getSignalIcon()}
+          <span className="text-sm font-medium text-white">{symbol}</span>
+          {result.current_price && (
+            <span className="text-xs text-slate-500">${result.current_price.toFixed(2)}</span>
+          )}
+        </div>
+        <span className={`text-xs font-medium ${getSignalColor()}`}>
+          {result.confidence.toFixed(0)}% / {result.threshold.toFixed(0)}%
+        </span>
+      </div>
+      <p className="text-xs text-slate-400 mt-1">{result.reason}</p>
+      {result.trade_type && (
+        <span className="text-xs text-slate-500">Type: {result.trade_type}</span>
+      )}
+      {/* Show AI decision if available */}
+      {result.ai_decision && (
+        <div className={`mt-1 flex items-center gap-1 text-xs ${
+          result.ai_decision.decision === 'APPROVE' ? 'text-green-400' :
+          result.ai_decision.decision === 'WAIT' ? 'text-yellow-400' :
+          'text-red-400'
+        }`}>
+          <Brain className="w-3 h-3" />
+          AI: {result.ai_decision.decision}
         </div>
       )}
     </div>

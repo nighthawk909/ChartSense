@@ -24,6 +24,8 @@ from .ai_advisor import get_ai_advisor
 from .crypto_service import CryptoService
 from .priority_scanner import PriorityScannerService, get_priority_scanner, PriorityTier
 from .execution_logger import ExecutionLogger, ExecutionErrorCode, parse_api_error
+from .smart_scanner import SmartScanner, get_smart_scanner
+from .hierarchical_strategy import TradingHorizon, OpportunityQuality
 from database.models import Trade, Position, BotConfiguration, StockRepository, UserWatchlist
 from database.connection import SessionLocal
 
@@ -152,6 +154,10 @@ class TradingBot:
         self._stock_scores: Dict[str, float] = {}  # Symbol -> last score
         self._ready_stocks: List[str] = []  # Stocks ready for entry
 
+        # Stock analysis results (similar to crypto)
+        self._stock_analysis_results: Dict[str, Dict] = {}  # Track latest analysis for each stock
+        self._last_stock_analysis_time: Optional[datetime] = None
+
         # AI Decision Tracking
         self._ai_decisions: List[Dict[str, Any]] = []  # History of AI decisions
         self._last_ai_decision: Optional[Dict[str, Any]] = None  # Most recent AI decision
@@ -181,6 +187,14 @@ class TradingBot:
         # Asset Class Mode for hybrid scanning
         # 'crypto' = crypto only, 'stocks' = stocks only, 'both' = hybrid
         self.asset_class_mode: str = 'both'
+
+        # ===== HIERARCHICAL TRADING MODE =====
+        # This is the "make money every day" intelligent strategy
+        self.hierarchical_mode_enabled = True  # Use smart cascading scan
+        self.smart_scanner = get_smart_scanner()  # Intelligent scanner
+        self.daily_profit_target_pct = 0.5  # 0.5% daily goal
+        self.current_trading_horizon: Optional[TradingHorizon] = None
+        self._hierarchical_scan_results: Dict[str, Any] = {}
 
         # Stock scan tracking (similar to crypto scan tracking)
         self._stock_scan_progress: Dict[str, Any] = {
@@ -687,6 +701,249 @@ class TradingBot:
         except Exception as e:
             logger.debug(f"Could not update repository scores: {e}")
 
+    async def _run_hierarchical_trading_cycle(self, extended_hours: bool = False):
+        """
+        Run intelligent hierarchical trading cycle - the "make money every day" logic.
+
+        This method cascades through trading horizons:
+        1. First check for SWING opportunities (multi-day, 5-15% targets)
+        2. If nothing good, check INTRADAY (same-day, 1-3% targets)
+        3. If nothing good, check SCALP (quick 0.3-1% gains)
+
+        Goal: Find profitable opportunities EVERY trading day.
+        """
+        self.current_cycle = "hierarchical_scanning"
+        logger.info("[Hierarchical] Starting intelligent cascading scan...")
+
+        try:
+            # Get account info
+            account = await self.alpaca.get_account()
+            equity = account["equity"]
+            buying_power = account["buying_power"]
+
+            # Get current positions
+            positions = await self.alpaca.get_positions()
+            self._positions_cache = {p["symbol"]: p for p in positions}
+
+            # Check existing positions for exits first
+            self.current_cycle = "checking_exits"
+            await self._check_exit_signals(positions)
+
+            # Refresh symbols from watchlist
+            await self._refresh_symbols_from_watchlist()
+
+            # Get symbols to scan (exclude those we already have positions in)
+            symbols_to_scan = [s for s in self.enabled_symbols if s not in self._positions_cache]
+
+            if not symbols_to_scan:
+                logger.info("[Hierarchical] No symbols to scan (all in positions)")
+                self._stock_scan_progress["scan_summary"] = "All symbols already in positions"
+                return
+
+            # Update scan progress
+            self._stock_scan_progress = {
+                "total": len(symbols_to_scan),
+                "scanned": 0,
+                "current_symbol": None,
+                "signals_found": 0,
+                "best_opportunity": None,
+                "scan_status": "hierarchical_scanning",
+                "scan_summary": "Starting hierarchical cascade scan...",
+                "last_scan_completed": None,
+                "next_scan_in_seconds": self.cycle_interval_seconds,
+                "market_status": "regular" if not extended_hours else "extended",
+            }
+
+            # Run the full cascade scan (Swing -> Intraday -> Scalp)
+            best_opportunity, scan_results = await self.smart_scanner.full_cascade_scan(
+                symbols=symbols_to_scan,
+                max_cascades=3,
+            )
+
+            # Store results for UI
+            self._hierarchical_scan_results = {
+                "best_opportunity": {
+                    "symbol": best_opportunity.symbol,
+                    "horizon": best_opportunity.horizon.value,
+                    "quality": best_opportunity.quality.value,
+                    "score": best_opportunity.overall_score,
+                    "direction": best_opportunity.direction,
+                    "entry_price": best_opportunity.entry_price,
+                    "stop_loss": best_opportunity.stop_loss,
+                    "target_1": best_opportunity.target_1,
+                    "target_2": best_opportunity.target_2,
+                    "risk_reward": best_opportunity.risk_reward_ratio,
+                    "patterns": best_opportunity.patterns_detected,
+                    "elliott_wave": best_opportunity.elliott_wave,
+                    "confluence_factors": best_opportunity.confluence_factors,
+                    "warnings": best_opportunity.warnings,
+                } if best_opportunity else None,
+                "scan_summary": self.smart_scanner.get_scan_summary(),
+                "cascades_run": len(scan_results),
+                "timestamp": datetime.now().isoformat(),
+            }
+
+            # Update stock scan progress
+            self._stock_scan_progress["scanned"] = len(symbols_to_scan)
+            self._stock_scan_progress["signals_found"] = sum(r.opportunities_found for r in scan_results)
+
+            if best_opportunity:
+                self.current_trading_horizon = best_opportunity.horizon
+                self._stock_scan_progress["best_opportunity"] = {
+                    "symbol": best_opportunity.symbol,
+                    "horizon": best_opportunity.horizon.value,
+                    "quality": best_opportunity.quality.value,
+                    "score": best_opportunity.overall_score,
+                }
+
+                # Check if we should execute
+                if best_opportunity.quality in [OpportunityQuality.EXCELLENT, OpportunityQuality.GOOD]:
+                    logger.info(
+                        f"[Hierarchical] Found {best_opportunity.quality.value} opportunity: "
+                        f"{best_opportunity.symbol} ({best_opportunity.horizon.value}) "
+                        f"Score: {best_opportunity.overall_score:.1f}"
+                    )
+
+                    # Check risk management
+                    can_trade, reason = self.risk_manager.can_open_position(
+                        equity=equity,
+                        buying_power=buying_power,
+                        current_positions=len(positions),
+                    )
+
+                    if can_trade and not self.new_entries_paused:
+                        # Calculate position size
+                        position_size = self.risk_manager.calculate_position_size(
+                            equity=equity,
+                            price=best_opportunity.entry_price,
+                            stop_loss_pct=abs(
+                                (best_opportunity.entry_price - best_opportunity.stop_loss) /
+                                best_opportunity.entry_price
+                            ),
+                        )
+
+                        if position_size > 0:
+                            logger.info(
+                                f"[Hierarchical] Executing {best_opportunity.direction} on "
+                                f"{best_opportunity.symbol}: {position_size} shares @ ${best_opportunity.entry_price:.2f}"
+                            )
+
+                            # Execute the trade
+                            await self._execute_hierarchical_entry(
+                                opportunity=best_opportunity,
+                                quantity=position_size,
+                                extended_hours=extended_hours,
+                            )
+                        else:
+                            logger.warning(f"[Hierarchical] Position size calculated as 0 - skipping")
+                    else:
+                        logger.info(f"[Hierarchical] Cannot trade: {reason}")
+                        self._stock_scan_progress["scan_summary"] = f"Opportunity found but blocked: {reason}"
+                else:
+                    self._stock_scan_progress["scan_summary"] = (
+                        f"Best opportunity is {best_opportunity.quality.value} - "
+                        f"waiting for better setup"
+                    )
+            else:
+                self._stock_scan_progress["scan_summary"] = "No opportunities found after full cascade"
+                logger.info("[Hierarchical] No tradeable opportunities found after full cascade")
+
+            self._stock_scan_progress["last_scan_completed"] = datetime.now().isoformat()
+            self.current_cycle = "cycle_complete"
+
+        except Exception as e:
+            logger.error(f"[Hierarchical] Error in hierarchical trading cycle: {e}")
+            self._stock_scan_progress["scan_status"] = "error"
+            self._stock_scan_progress["scan_summary"] = f"Error: {str(e)}"
+
+    async def _execute_hierarchical_entry(
+        self,
+        opportunity,  # TradingOpportunity
+        quantity: int,
+        extended_hours: bool = False,
+    ):
+        """Execute a trade based on hierarchical opportunity"""
+        symbol = opportunity.symbol
+        side = "buy" if opportunity.direction == "LONG" else "sell"
+
+        try:
+            # Use limit order for extended hours, market order otherwise
+            order_type = "limit" if extended_hours else "market"
+            limit_price = opportunity.entry_price if extended_hours else None
+
+            result = await self.alpaca.place_order(
+                symbol=symbol,
+                qty=quantity,
+                side=side,
+                order_type=order_type,
+                limit_price=limit_price,
+                extended_hours=extended_hours,
+            )
+
+            if result and result.get("id"):
+                logger.info(f"[Hierarchical] Order placed: {result['id']} for {symbol}")
+
+                # Store position in database with hierarchical metadata
+                db = SessionLocal()
+                try:
+                    # Map horizon to trade type
+                    trade_type_map = {
+                        TradingHorizon.SWING: "SWING",
+                        TradingHorizon.INTRADAY: "INTRADAY",
+                        TradingHorizon.SCALP: "SCALP",
+                    }
+
+                    new_position = Position(
+                        symbol=symbol,
+                        quantity=quantity,
+                        entry_price=opportunity.entry_price,
+                        stop_loss_price=opportunity.stop_loss,
+                        profit_target_price=opportunity.target_1,
+                        trade_type=trade_type_map.get(opportunity.horizon, "SWING"),
+                        entry_reason=f"Hierarchical {opportunity.horizon.value}: {', '.join(opportunity.confluence_factors[:3])}",
+                        entry_score=opportunity.overall_score,
+                        opened_at=datetime.now(),
+                    )
+                    db.add(new_position)
+                    db.commit()
+                finally:
+                    db.close()
+
+                self.last_trade_time = datetime.now()
+                self.trades_today += 1
+
+                # Log success
+                self.execution_logger.log_success(
+                    symbol=symbol,
+                    side=side,
+                    quantity=quantity,
+                    price=opportunity.entry_price,
+                    order_id=result["id"],
+                    metadata={
+                        "horizon": opportunity.horizon.value,
+                        "quality": opportunity.quality.value,
+                        "score": opportunity.overall_score,
+                        "patterns": opportunity.patterns_detected,
+                        "elliott_wave": opportunity.elliott_wave,
+                    },
+                )
+
+                return result
+
+        except Exception as e:
+            logger.error(f"[Hierarchical] Error executing entry for {symbol}: {e}")
+            error_code, error_msg = parse_api_error(str(e))
+            self.execution_logger.log_failure(
+                symbol=symbol,
+                side=side,
+                quantity=quantity,
+                price=opportunity.entry_price,
+                error_code=error_code,
+                error_message=error_msg,
+                api_response=str(e),
+            )
+            return None
+
     async def _run_trading_cycle(self, extended_hours: bool = False):
         """
         Run one trading cycle - analyze, decide, execute.
@@ -694,6 +951,11 @@ class TradingBot:
         Args:
             extended_hours: If True, use limit orders for extended hours trading
         """
+        # If hierarchical mode is enabled, use the smart scanner
+        if self.hierarchical_mode_enabled:
+            await self._run_hierarchical_trading_cycle(extended_hours)
+            return
+
         self.current_cycle = "analyzing"
         logger.debug(f"Running trading cycle (extended_hours={extended_hours})...")
 
@@ -714,6 +976,10 @@ class TradingBot:
             # Periodically discover new stocks using AI (every 4 hours)
             if self.use_ai_discovery and self.ai_advisor.enabled:
                 await self._ai_discover_stocks()
+
+            # REFRESH STOCKS FROM WATCHLIST before each scan
+            # This allows users to add stocks to watchlist and have them scanned immediately
+            await self._refresh_symbols_from_watchlist()
 
             # Initialize stock scan tracking
             symbols_to_scan = [s for s in self.enabled_symbols if s not in self._positions_cache]
@@ -750,6 +1016,47 @@ class TradingBot:
                 # Analyze symbol
                 signal = await self._analyze_symbol(symbol)
 
+                # Store analysis results for UI display (like crypto) - store ALL results
+                if signal:
+                    signal_type = signal.signal_type.value if signal.signal_type else "NEUTRAL"
+                    confidence = signal.score
+                    meets_threshold = signal.signal_type == SignalType.BUY and signal.score >= self.strategy.entry_threshold
+
+                    self._stock_analysis_results[symbol] = {
+                        "signal": signal_type,
+                        "confidence": confidence,
+                        "threshold": self.strategy.entry_threshold,
+                        "meets_threshold": meets_threshold,
+                        "reason": self._get_analysis_reason(
+                            signal_type,
+                            confidence,
+                            self.strategy.entry_threshold
+                        ),
+                        "timestamp": datetime.now().isoformat(),
+                        "indicators": signal.indicators if hasattr(signal, 'indicators') else {},
+                        "current_price": signal.current_price,
+                        "trade_type": signal.trade_type.value if signal.trade_type else None,
+                    }
+                    self._last_stock_analysis_time = datetime.now()
+
+                    # Log stock analysis like crypto does
+                    logger.info(f"Stock analysis for {symbol}: signal={signal_type}, confidence={confidence:.1f}, threshold={self.strategy.entry_threshold}")
+                else:
+                    # Store NO_DATA result for visibility
+                    self._stock_analysis_results[symbol] = {
+                        "signal": "NO_DATA",
+                        "confidence": 0,
+                        "threshold": self.strategy.entry_threshold,
+                        "meets_threshold": False,
+                        "reason": "Insufficient historical data (need 50+ days)",
+                        "timestamp": datetime.now().isoformat(),
+                        "indicators": {},
+                        "current_price": None,
+                        "trade_type": None,
+                    }
+                    self._last_stock_analysis_time = datetime.now()
+                    # Debug log moved to _analyze_symbol for actual bar count
+
                 # Track best opportunity
                 if signal and signal.signal_type == SignalType.BUY:
                     if signal.score > best_buy_confidence:
@@ -785,26 +1092,26 @@ class TradingBot:
                         )
 
                         if risk_check.can_trade:
-                            # === TRUE AI CONTROL FOR STOCKS ===
-                            # When auto_trade_mode is enabled, AI makes the final decision
+                            # === AI EVALUATION FOR ALL SIGNALS (for transparency) ===
+                            # Always run AI evaluation so users can see why trades pass/fail
                             ai_decision = None
-                            if self.auto_trade_mode:
-                                logger.info(f"AI Auto Trade Mode: Evaluating {symbol} stock trade...")
+                            logger.info(f"AI Evaluating {symbol} stock trade (auto_trade_mode={self.auto_trade_mode})...")
 
-                                # Get existing positions for portfolio context
-                                existing_symbols = list(self._positions_cache.keys())
+                            # Get existing positions for portfolio context
+                            existing_symbols = list(self._positions_cache.keys())
 
-                                # Build signal data for AI
-                                signal_data = {
-                                    "signal_type": signal.signal_type.value,
-                                    "score": signal.score,
-                                    "trade_type": signal.trade_type.value,
-                                    "suggested_stop_loss": signal.suggested_stop_loss,
-                                    "suggested_profit_target": signal.suggested_profit_target,
-                                    "indicators": signal.indicators,
-                                }
+                            # Build signal data for AI
+                            signal_data = {
+                                "signal_type": signal.signal_type.value,
+                                "score": signal.score,
+                                "trade_type": signal.trade_type.value,
+                                "suggested_stop_loss": signal.suggested_stop_loss,
+                                "suggested_profit_target": signal.suggested_profit_target,
+                                "indicators": signal.indicators,
+                            }
 
-                                # Ask AI to evaluate the trade
+                            # Ask AI to evaluate the trade
+                            try:
                                 ai_decision = await self.ai_advisor.evaluate_stock_trade(
                                     symbol=symbol,
                                     signal_data=signal_data,
@@ -817,21 +1124,75 @@ class TradingBot:
                                     },
                                     existing_positions=existing_symbols,
                                 )
+                            except Exception as e:
+                                logger.warning(f"AI evaluation failed for {symbol}: {e}")
+                                ai_decision = {
+                                    "decision": "WAIT",
+                                    "confidence": 0,
+                                    "reasoning": f"AI evaluation unavailable: {str(e)[:50]}",
+                                    "concerns": ["AI service error"],
+                                }
 
-                                # Log AI decision
-                                self._log_ai_decision(symbol, ai_decision, signal_data)
+                            # Log AI decision
+                            self._log_ai_decision(symbol, ai_decision, signal_data)
 
-                                # If AI rejects or says wait, skip this stock
+                            # UPDATE STOCK ANALYSIS RESULTS WITH AI DECISION
+                            # This fixes the disconnect between scanner confidence and AI decision
+                            if symbol in self._stock_analysis_results:
+                                self._stock_analysis_results[symbol]["ai_decision"] = {
+                                    "decision": ai_decision.get("decision"),
+                                    "confidence": ai_decision.get("confidence", 0),
+                                    "reasoning": ai_decision.get("reasoning", ""),
+                                    "concerns": ai_decision.get("concerns", []),
+                                    "timestamp": datetime.now().isoformat(),
+                                    "symbol": symbol,
+                                    "ai_generated": True,
+                                    "model": ai_decision.get("model", "gpt-4"),
+                                    "technical_score": ai_decision.get("technical_score", signal.score),
+                                    "technical_signal": signal.signal_type.value,
+                                }
+                                # If AI rejects, update the signal to reflect reality
                                 if ai_decision.get("decision") != "APPROVE":
-                                    logger.info(
-                                        f"AI {ai_decision.get('decision', 'REJECTED')} trade for {symbol}: "
-                                        f"{ai_decision.get('reasoning', 'No reason provided')}"
-                                    )
-                                    continue
+                                    self._stock_analysis_results[symbol]["signal"] = "HOLD"
+                                    self._stock_analysis_results[symbol]["meets_threshold"] = False
+                                    self._stock_analysis_results[symbol]["reason"] = f"AI {ai_decision.get('decision')}: {ai_decision.get('reasoning', '')[:50]}"
 
+                            # If AI rejects or says wait, skip this stock
+                            if ai_decision.get("decision") != "APPROVE":
                                 logger.info(
-                                    f"AI APPROVED trade for {symbol}: {ai_decision.get('reasoning', '')}"
+                                    f"AI {ai_decision.get('decision', 'REJECTED')} trade for {symbol}: "
+                                    f"{ai_decision.get('reasoning', 'No reason provided')}"
                                 )
+                                # Log to execution log for Activity tab visibility
+                                self._log_execution_event(
+                                    symbol=symbol,
+                                    event_type=f"AI_{ai_decision.get('decision', 'REJECTED')}",
+                                    executed=False,
+                                    reason=ai_decision.get('reasoning', 'No reason provided')[:100],
+                                    details={
+                                        "score": signal.score,
+                                        "ai_decision": ai_decision.get("decision"),
+                                        "confidence": ai_decision.get("confidence", 0),
+                                        "concerns": ai_decision.get("concerns", [])[:3],
+                                    }
+                                )
+                                continue
+
+                            logger.info(
+                                f"AI APPROVED trade for {symbol}: {ai_decision.get('reasoning', '')}"
+                            )
+
+                            # ONLY EXECUTE IF AUTO_TRADE_MODE IS ON
+                            if not self.auto_trade_mode:
+                                logger.info(f"Auto trade mode OFF - Signal approved for {symbol} but not executing")
+                                self._log_execution_event(
+                                    symbol=symbol,
+                                    event_type="ENTRY_SKIPPED",
+                                    executed=False,
+                                    reason="Auto trade mode is OFF - manual execution required",
+                                    details={"score": signal.score, "ai_decision": ai_decision.get("decision")}
+                                )
+                                continue
 
                             await self._execute_entry(symbol, signal, position_size.shares, extended_hours)
                             # Update positions list
@@ -884,6 +1245,36 @@ class TradingBot:
         except Exception as e:
             logger.error(f"Error in trading cycle: {e}")
             raise
+
+    async def _refresh_symbols_from_watchlist(self):
+        """
+        Refresh stock symbols from the user's watchlist.
+        This allows users to add/remove stocks from watchlist and have them
+        automatically included in the next scan cycle.
+        """
+        try:
+            db = SessionLocal()
+
+            # Get ALL stocks from watchlist (not just auto_trade=True)
+            # This makes the scanner follow the watchlist completely
+            from database.models import UserWatchlist
+            watchlist_stocks = db.query(UserWatchlist).all()
+            watchlist_symbols = [s.symbol for s in watchlist_stocks if s.symbol]
+
+            if watchlist_symbols:
+                # Use watchlist as the primary source, but keep some defaults if empty
+                self.enabled_symbols = list(set(watchlist_symbols))
+                logger.info(f"Refreshed stock symbols from watchlist: {len(self.enabled_symbols)} stocks")
+            else:
+                # Fallback to defaults if watchlist is empty
+                if not self.enabled_symbols:
+                    self.enabled_symbols = ["AAPL", "MSFT", "GOOGL", "AMZN", "NVDA"]
+                logger.info(f"Watchlist empty, using defaults: {self.enabled_symbols}")
+
+            db.close()
+        except Exception as e:
+            logger.warning(f"Could not refresh from watchlist: {e}")
+            # Keep existing symbols on error
 
     async def _ai_discover_stocks(self):
         """Use AI to discover promising stocks to trade"""
@@ -948,10 +1339,12 @@ class TradingBot:
         """Analyze a symbol and generate trading signal"""
         try:
             # Get historical bars
+            logger.info(f"[ANALYZE] Fetching bars for {symbol}...")
             bars = await self.alpaca.get_bars(symbol, timeframe="1day", limit=200)
+            logger.info(f"[ANALYZE] Got {len(bars)} bars for {symbol}")
 
             if len(bars) < 50:
-                logger.debug(f"Insufficient data for {symbol}: {len(bars)} bars")
+                logger.warning(f"Insufficient data for {symbol}: {len(bars)} bars (need 50+)")
                 return None
 
             # Extract OHLCV data
@@ -1381,6 +1774,11 @@ class TradingBot:
             "crypto_scan_progress": self._crypto_scan_progress,
             # Stock scan progress tracking
             "stock_scan_progress": self._stock_scan_progress,
+            # Stock analysis results (similar to crypto)
+            "stock_analysis_results": self._stock_analysis_results,
+            "last_stock_analysis_time": self._last_stock_analysis_time.isoformat() if self._last_stock_analysis_time else None,
+            # Entry threshold (important for understanding why signals aren't traded)
+            "entry_threshold": self.strategy.entry_threshold,
             # Asset Class Mode
             "asset_class_mode": self.asset_class_mode,
             # 24/7 Mode
@@ -1666,17 +2064,17 @@ class TradingBot:
 
                             price = quote["price"]
 
-                            # === TRUE AI CONTROL ===
-                            # When auto_trade_mode is enabled, AI makes the final decision
+                            # === AI EVALUATION FOR ALL SIGNALS (for transparency) ===
+                            # Always run AI evaluation so users can see why trades pass/fail
                             ai_decision = None
-                            if self.auto_trade_mode:
-                                logger.info(f"AI Auto Trade Mode: Evaluating {symbol} trade...")
-                                self._crypto_scan_progress["scan_summary"] = f"AI evaluating {symbol}..."
+                            logger.info(f"AI Evaluating {symbol} crypto trade (auto_trade_mode={self.auto_trade_mode})...")
+                            self._crypto_scan_progress["scan_summary"] = f"AI evaluating {symbol}..."
 
-                                # Get existing crypto positions for portfolio context
-                                existing_crypto_symbols = list(current_crypto_positions.keys())
+                            # Get existing crypto positions for portfolio context
+                            existing_crypto_symbols = list(current_crypto_positions.keys())
 
-                                # Ask AI to evaluate the trade
+                            # Ask AI to evaluate the trade
+                            try:
                                 ai_decision = await self.ai_advisor.evaluate_crypto_trade(
                                     symbol=symbol,
                                     technical_analysis=analysis,
@@ -1689,28 +2087,67 @@ class TradingBot:
                                     },
                                     existing_positions=existing_crypto_symbols,
                                 )
+                            except Exception as e:
+                                logger.warning(f"AI evaluation failed for {symbol}: {e}")
+                                ai_decision = {
+                                    "decision": "WAIT",
+                                    "confidence": 0,
+                                    "reasoning": f"AI evaluation unavailable: {str(e)[:50]}",
+                                    "concerns": ["AI service error"],
+                                }
 
-                                # Log AI decision
-                                self._log_ai_decision(symbol, ai_decision, analysis)
+                            # Log AI decision
+                            self._log_ai_decision(symbol, ai_decision, analysis)
 
-                                # Update analysis result with AI decision
-                                self._crypto_analysis_results[symbol]["ai_decision"] = ai_decision
+                            # Update analysis result with AI decision
+                            self._crypto_analysis_results[symbol]["ai_decision"] = ai_decision
 
-                                # If AI rejects or says wait, skip this crypto
-                                if ai_decision.get("decision") != "APPROVE":
-                                    logger.info(
-                                        f"AI {ai_decision.get('decision', 'REJECTED')} trade for {symbol}: "
-                                        f"{ai_decision.get('reasoning', 'No reason provided')}"
-                                    )
-                                    if ai_decision.get("decision") == "WAIT":
-                                        self._crypto_scan_progress["scan_summary"] = (
-                                            f"AI says WAIT on {symbol}: {ai_decision.get('wait_for', 'better entry')}"
-                                        )
-                                    continue
+                            # If AI rejects, update the signal to reflect reality
+                            if ai_decision.get("decision") != "APPROVE":
+                                self._crypto_analysis_results[symbol]["signal"] = "HOLD"
+                                self._crypto_analysis_results[symbol]["meets_threshold"] = False
+                                self._crypto_analysis_results[symbol]["reason"] = f"AI {ai_decision.get('decision')}: {ai_decision.get('reasoning', '')[:50]}"
 
+                            # If AI rejects or says wait, skip this crypto
+                            if ai_decision.get("decision") != "APPROVE":
                                 logger.info(
-                                    f"AI APPROVED trade for {symbol}: {ai_decision.get('reasoning', '')}"
+                                    f"AI {ai_decision.get('decision', 'REJECTED')} trade for {symbol}: "
+                                    f"{ai_decision.get('reasoning', 'No reason provided')}"
                                 )
+                                # Log to execution log for Activity tab visibility
+                                self._log_execution_event(
+                                    symbol=symbol,
+                                    event_type=f"AI_{ai_decision.get('decision', 'REJECTED')}",
+                                    executed=False,
+                                    reason=ai_decision.get('reasoning', 'No reason provided')[:100],
+                                    details={
+                                        "score": confidence,
+                                        "ai_decision": ai_decision.get("decision"),
+                                        "confidence": ai_decision.get("confidence", 0),
+                                        "concerns": ai_decision.get("concerns", [])[:3],
+                                    }
+                                )
+                                if ai_decision.get("decision") == "WAIT":
+                                    self._crypto_scan_progress["scan_summary"] = (
+                                        f"AI says WAIT on {symbol}: {ai_decision.get('wait_for', 'better entry')}"
+                                    )
+                                continue
+
+                            logger.info(
+                                f"AI APPROVED trade for {symbol}: {ai_decision.get('reasoning', '')}"
+                            )
+
+                            # ONLY EXECUTE IF AUTO_TRADE_MODE IS ON
+                            if not self.auto_trade_mode:
+                                logger.info(f"Auto trade mode OFF - Signal approved for {symbol} but not executing")
+                                self._log_execution_event(
+                                    symbol=symbol,
+                                    event_type="CRYPTO_ENTRY_SKIPPED",
+                                    executed=False,
+                                    reason="Auto trade mode is OFF - manual execution required",
+                                    details={"confidence": confidence, "ai_decision": ai_decision.get("decision")}
+                                )
+                                continue
 
                             # Position size based on risk per trade (or AI-suggested if available)
                             position_size_pct = self.risk_manager.risk_per_trade_pct

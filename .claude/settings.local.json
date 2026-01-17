@@ -58,7 +58,26 @@
       "Bash(start /B python -m uvicorn:*)",
       "Bash(git commit -m \"$\\(cat <<''EOF''\nfeat: Complete trading dashboard roadmap - tactical controls, priority scanning, AI insights\n\n## New Features\n\n### Tactical Control Bar\n- Emergency Close All \\(2-click confirmation\\)\n- Pause New Entries toggle\n- Strategy Override dropdown \\(Conservative/Moderate/Aggressive\\)\n\n### Priority Tier System for Smart Scanning\n- Tier 1 \\(HIGH\\): 3-second scans for high volatility/news\n- Tier 2 \\(STANDARD\\): 30-second scans for normal watchlist\n- Tier 3 \\(LOW\\): 3-minute scans for consolidating symbols\n- Dynamic tier promotion/demotion based on metrics\n\n### Strategy Labels\n- Added SCALP and INTRADAY to TradeType enum\n- Time horizon badges on AI Decision cards\n\n### Execution Log & Paper Trade Debugging\n- Comprehensive execution event logging\n- /api/bot/execution-log endpoint\n- /api/bot/strong-buy-trace for debugging\n\n### UI Components\n- Asset Class Toggle \\(Crypto/Stocks/Both\\)\n- AI Intelligence Sidebar with Decisions/Analysis/Scan tabs\n- Ticker Carousel with quick-flip navigation\n- Confidence Score Reasoning Modal with weight breakdown\n\n### New API Endpoints\n- POST /api/bot/pause-entries\n- POST /api/bot/strategy-override\n- POST /api/bot/emergency-close-all\n- GET /api/bot/priority-tiers\n- GET /api/bot/execution-log\n- GET /api/bot/strong-buy-trace\n\nCo-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>\nEOF\n\\)\")",
       "Bash(git commit --no-verify -m \"$\\(cat <<''EOF''\nfeat: Complete trading dashboard roadmap - tactical controls, priority scanning, AI insights\n\n## New Features\n\n### Tactical Control Bar\n- Emergency Close All \\(2-click confirmation\\)\n- Pause New Entries toggle\n- Strategy Override dropdown \\(Conservative/Moderate/Aggressive\\)\n\n### Priority Tier System for Smart Scanning\n- Tier 1 \\(HIGH\\): 3-second scans for high volatility/news\n- Tier 2 \\(STANDARD\\): 30-second scans for normal watchlist\n- Tier 3 \\(LOW\\): 3-minute scans for consolidating symbols\n- Dynamic tier promotion/demotion based on metrics\n\n### Strategy Labels\n- Added SCALP and INTRADAY to TradeType enum\n- Time horizon badges on AI Decision cards\n\n### Execution Log & Paper Trade Debugging\n- Comprehensive execution event logging\n- /api/bot/execution-log endpoint\n- /api/bot/strong-buy-trace for debugging\n\n### UI Components\n- Asset Class Toggle \\(Crypto/Stocks/Both\\)\n- AI Intelligence Sidebar with Decisions/Analysis/Scan tabs\n- Ticker Carousel with quick-flip navigation\n- Confidence Score Reasoning Modal with weight breakdown\n\n### New API Endpoints\n- POST /api/bot/pause-entries\n- POST /api/bot/strategy-override\n- POST /api/bot/emergency-close-all\n- GET /api/bot/priority-tiers\n- GET /api/bot/execution-log\n- GET /api/bot/strong-buy-trace\n\nCo-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>\nEOF\n\\)\")",
-      "Bash(sort:*)"
+      "Bash(sort:*)",
+      "Bash(vercel whoami:*)",
+      "Bash(python -c:*)",
+      "Bash(powershell -command:*)",
+      "Bash(start cmd:*)",
+      "Bash(timeout /t 8 /nobreak)",
+      "Bash(uvicorn:*)",
+      "Bash(pip3.11 install:*)",
+      "Bash(python3.11 -m uvicorn:*)",
+      "Bash(powershell -Command:*)",
+      "Bash(timeout /t 3 /nobreak)",
+      "Bash(wmic:*)",
+      "mcp__Claude_in_Chrome__tabs_context_mcp",
+      "Bash(kill:*)",
+      "Bash(wmic process:*)",
+      "Bash(powershell -Command \"Get-Process -Name python*,uvicorn* 2>$null | Stop-Process -Force 2>$null; Write-Host ''Killed all Python processes''\")",
+      "Bash(Get-Process -Name python -ErrorAction SilentlyContinue)",
+      "Bash(Stop-Process -Force)",
+      "Bash(Start-Sleep -Seconds 2)",
+      "Bash(Write-Host \"Python processes stopped\")"
     ]
   },
   "hooks": {

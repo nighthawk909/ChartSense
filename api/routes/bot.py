@@ -5,6 +5,9 @@ Endpoints for starting, stopping, and monitoring the trading bot
 from fastapi import APIRouter, HTTPException, BackgroundTasks
 from typing import Optional
 
+from fastapi import Query
+from datetime import datetime, timedelta
+
 from models.bot import (
     BotStatusResponse,
     BotStartRequest,
@@ -15,8 +18,13 @@ from models.bot import (
     CryptoBestOpportunity,
     StockScanProgress,
     StockBestOpportunity,
+    StockAnalysisResult,
+    ExecutionLogEntry,
+    AIDecisionResult,
 )
 from services.trading_bot import get_trading_bot
+from services.performance_tracker import PerformanceTracker
+from services.alpaca_service import get_alpaca_service
 
 router = APIRouter()
 
@@ -84,6 +92,49 @@ async def get_bot_status():
             market_status=raw_stock_progress.get("market_status", "unknown"),
         )
 
+    # Convert stock analysis results to Pydantic models (similar to crypto)
+    stock_results = {}
+    for symbol, result in status.get("stock_analysis_results", {}).items():
+        stock_results[symbol] = StockAnalysisResult(
+            signal=result.get("signal", "NEUTRAL"),
+            confidence=result.get("confidence", 0),
+            threshold=result.get("threshold", 70),
+            meets_threshold=result.get("meets_threshold", False),
+            reason=result.get("reason", ""),
+            timestamp=result.get("timestamp", ""),
+            indicators=result.get("indicators", {}),
+            current_price=result.get("current_price"),
+            trade_type=result.get("trade_type"),
+        )
+
+    # Convert execution log entries to Pydantic models
+    execution_log_entries = []
+    for entry in status.get("execution_log", []):
+        execution_log_entries.append(ExecutionLogEntry(
+            timestamp=entry.get("timestamp", ""),
+            symbol=entry.get("symbol", ""),
+            event_type=entry.get("event_type", "UNKNOWN"),
+            executed=entry.get("executed", False),
+            reason=entry.get("reason", ""),
+            details=entry.get("details", {}),
+        ))
+
+    # Convert AI decisions to Pydantic models
+    ai_decisions = []
+    for decision in status.get("ai_decisions_history", []):
+        ai_decisions.append(AIDecisionResult(
+            decision=decision.get("decision", "WAIT"),
+            confidence=decision.get("confidence", 0),
+            reasoning=decision.get("reasoning", ""),
+            concerns=decision.get("concerns", []),
+            timestamp=decision.get("timestamp", ""),
+            symbol=decision.get("symbol", ""),
+            ai_generated=decision.get("ai_generated", True),
+            model=decision.get("model", "gpt-4"),
+            technical_score=decision.get("technical_score", 0),
+            technical_signal=decision.get("technical_signal", ""),
+        ))
+
     return BotStatusResponse(
         state=BotState(status["state"]),
         uptime_seconds=status["uptime_seconds"],
@@ -94,13 +145,28 @@ async def get_bot_status():
         paper_trading=status["paper_trading"],
         active_symbols=status["active_symbols"],
         asset_class_mode=status.get("asset_class_mode", "both"),
+        # Auto Trade Mode
+        auto_trade_mode=status.get("auto_trade_mode", False),
+        ai_risk_tolerance=status.get("ai_risk_tolerance", "moderate"),
+        # Entry threshold
+        entry_threshold=status.get("entry_threshold", 65.0),
         crypto_trading_enabled=status.get("crypto_trading_enabled", False),
         crypto_symbols=status.get("crypto_symbols", []),
+        crypto_max_positions=status.get("crypto_max_positions", 5),
         crypto_positions=status.get("crypto_positions", 0),
         crypto_analysis_results=crypto_results,
         last_crypto_analysis_time=status.get("last_crypto_analysis_time"),
         crypto_scan_progress=scan_progress,
         stock_scan_progress=stock_scan_progress,
+        stock_analysis_results=stock_results,
+        last_stock_analysis_time=status.get("last_stock_analysis_time"),
+        # Tactical Controls
+        new_entries_paused=status.get("new_entries_paused", False),
+        strategy_override=status.get("strategy_override"),
+        # Execution tracking
+        execution_log=execution_log_entries,
+        ai_decisions_history=ai_decisions,
+        total_scans_today=status.get("total_scans_today", 0),
     )
 
 
@@ -342,6 +408,10 @@ async def toggle_auto_trade(enabled: bool = None):
     Args:
         enabled: True to enable auto-trading, False to disable. If None, toggles current state.
     """
+    from database.connection import SessionLocal
+    from database.models import BotConfiguration
+    from datetime import datetime
+
     bot = get_trading_bot()
 
     if enabled is None:
@@ -349,6 +419,20 @@ async def toggle_auto_trade(enabled: bool = None):
         bot.auto_trade_mode = not bot.auto_trade_mode
     else:
         bot.auto_trade_mode = enabled
+
+    # Persist to database so it survives bot restarts
+    try:
+        db = SessionLocal()
+        config = db.query(BotConfiguration).filter(BotConfiguration.is_active == True).first()
+        if config:
+            config.auto_trade_mode = bot.auto_trade_mode
+            config.updated_at = datetime.now()
+            db.commit()
+        db.close()
+    except Exception as e:
+        # Log but don't fail - the in-memory setting is still active
+        import logging
+        logging.getLogger(__name__).warning(f"Failed to persist auto_trade_mode to database: {e}")
 
     return {
         "success": True,
@@ -651,4 +735,373 @@ async def get_execution_errors():
             for a in recent_failures
         ],
         "diagnosis": diagnosis,
+    }
+
+
+# ============== Performance Endpoints (under /api/bot/performance/) ==============
+
+@router.get("/performance/metrics")
+async def get_performance_metrics(period: str = Query("1M")):
+    """
+    Get detailed trading performance metrics.
+
+    Endpoint: /api/bot/performance/metrics
+
+    Args:
+        period: Time period - '1D', '1W', '1M', '3M', 'ALL'
+
+    Returns comprehensive metrics including:
+    - Win rate, profit factor, Sharpe ratio
+    - Max drawdown, expectancy
+    - Today's P&L and performance
+    """
+    # Convert period to days
+    period_map = {
+        '1D': 1,
+        '1W': 7,
+        '1M': 30,
+        '3M': 90,
+        'ALL': 365,
+    }
+    period_days = period_map.get(period, 30)
+
+    tracker = PerformanceTracker()
+    metrics = tracker.calculate_metrics(period_days)
+
+    # Calculate today's metrics separately
+    today_tracker = PerformanceTracker()
+    today_metrics = today_tracker.calculate_metrics(1)
+
+    return {
+        "period": period,
+        "period_days": period_days,
+        "total_trades": metrics.total_trades,
+        "winning_trades": metrics.winning_trades,
+        "losing_trades": metrics.losing_trades,
+        "win_rate": metrics.win_rate * 100,  # Convert to percentage
+        "total_pnl": metrics.total_pnl,
+        "total_pnl_pct": metrics.total_pnl_pct,
+        "profit_factor": metrics.profit_factor if metrics.profit_factor != float('inf') else 999.99,
+        "sharpe_ratio": metrics.sharpe_ratio,
+        "max_drawdown": metrics.max_drawdown,
+        "max_drawdown_pct": metrics.max_drawdown_pct,
+        "avg_win": metrics.avg_win,
+        "avg_loss": metrics.avg_loss,
+        "avg_trade_duration_hours": metrics.avg_trade_duration_hours,
+        "best_trade": metrics.best_trade,
+        "worst_trade": metrics.worst_trade,
+        "expectancy": (metrics.avg_win * metrics.win_rate - abs(metrics.avg_loss) * (1 - metrics.win_rate)) if metrics.total_trades > 0 else 0,
+        # Today's performance
+        "today_pnl": today_metrics.total_pnl,
+        "today_trades": today_metrics.total_trades,
+        "today_win_rate": today_metrics.win_rate * 100 if today_metrics.total_trades > 0 else 0,
+        # By trade type
+        "swing_trades": metrics.swing_trades,
+        "swing_win_rate": metrics.swing_win_rate * 100,
+        "longterm_trades": metrics.longterm_trades,
+        "longterm_win_rate": metrics.longterm_win_rate * 100,
+    }
+
+
+@router.get("/performance/equity-curve")
+async def get_equity_curve(period: str = Query("1M")):
+    """
+    Get equity curve data for charting.
+
+    Endpoint: /api/bot/performance/equity-curve
+
+    Args:
+        period: Time period - '1D', '1W', '1M', '3M', 'ALL'
+
+    Returns list of equity points for drawing the portfolio equity curve.
+    """
+    # Convert period to days
+    period_map = {
+        '1D': 1,
+        '1W': 7,
+        '1M': 30,
+        '3M': 90,
+        'ALL': 365,
+    }
+    period_days = period_map.get(period, 30)
+
+    tracker = PerformanceTracker()
+    curve_data = tracker.get_equity_curve(period_days)
+
+    # Get current equity from Alpaca
+    alpaca = get_alpaca_service()
+    try:
+        account = await alpaca.get_account()
+        current_equity = float(account.get("equity", 0))
+    except Exception:
+        current_equity = 10000  # Default for paper trading
+
+    # Calculate starting equity
+    total_pnl = sum(p["pnl"] for p in curve_data) if curve_data else 0
+    starting_equity = current_equity - total_pnl
+
+    # Format data for frontend
+    data = []
+    for point in curve_data:
+        equity_value = starting_equity + point["cumulative_pnl"]
+        data.append({
+            "date": point["date"],
+            "equity": equity_value,
+            "pnl": point["pnl"],
+            "cumulativePnl": point["cumulative_pnl"],
+        })
+
+    return {
+        "data": data,
+        "starting_equity": starting_equity,
+        "current_equity": current_equity,
+        "total_return_pct": (total_pnl / starting_equity * 100) if starting_equity > 0 else 0,
+    }
+
+
+@router.get("/performance/summary")
+async def get_performance_summary():
+    """
+    Get quick performance summary for the bot header.
+
+    Endpoint: /api/bot/performance/summary
+    """
+    tracker = PerformanceTracker()
+    metrics = tracker.calculate_metrics(30)
+
+    return {
+        "win_rate": round(metrics.win_rate * 100, 1),
+        "total_trades": metrics.total_trades,
+        "total_pnl": round(metrics.total_pnl, 2),
+        "profit_factor": round(metrics.profit_factor, 2) if metrics.profit_factor != float('inf') else "∞",
+    }
+
+
+# ===== HIERARCHICAL TRADING STRATEGY ENDPOINTS =====
+
+@router.get("/hierarchical/status")
+async def get_hierarchical_status():
+    """
+    Get the current status of the hierarchical trading strategy.
+
+    Returns:
+    - Current trading horizon (SWING, INTRADAY, SCALP)
+    - Daily goal progress
+    - Scan statistics
+    - Best current opportunity
+
+    Endpoint: /api/bot/hierarchical/status
+    """
+    bot = get_trading_bot()
+
+    return {
+        "enabled": bot.hierarchical_mode_enabled,
+        "current_horizon": bot.current_trading_horizon.value if bot.current_trading_horizon else None,
+        "daily_profit_target_pct": bot.daily_profit_target_pct,
+        "scan_results": bot._hierarchical_scan_results,
+        "smart_scanner_summary": bot.smart_scanner.get_scan_summary() if bot.smart_scanner else None,
+    }
+
+
+@router.post("/hierarchical/toggle")
+async def toggle_hierarchical_mode(enabled: bool = Query(..., description="Enable or disable hierarchical mode")):
+    """
+    Enable or disable the hierarchical trading mode.
+
+    When enabled:
+    - Bot uses intelligent cascading: SWING -> INTRADAY -> SCALP
+    - Adapts to market conditions automatically
+    - Aims to find profitable opportunities every trading day
+
+    When disabled:
+    - Bot uses traditional single-mode scanning
+
+    Endpoint: /api/bot/hierarchical/toggle?enabled=true
+    """
+    bot = get_trading_bot()
+    bot.hierarchical_mode_enabled = enabled
+
+    return {
+        "success": True,
+        "message": f"Hierarchical mode {'enabled' if enabled else 'disabled'}",
+        "hierarchical_mode_enabled": bot.hierarchical_mode_enabled,
+    }
+
+
+@router.post("/hierarchical/set-daily-target")
+async def set_daily_target(target_pct: float = Query(..., ge=0.1, le=5.0, description="Daily profit target percentage")):
+    """
+    Set the daily profit target for the hierarchical strategy.
+
+    The bot will track progress toward this daily goal and adapt its
+    trading horizon based on how close it is to achieving it.
+
+    Args:
+        target_pct: Daily profit target percentage (0.1% to 5.0%)
+
+    Endpoint: /api/bot/hierarchical/set-daily-target?target_pct=0.5
+    """
+    bot = get_trading_bot()
+    bot.daily_profit_target_pct = target_pct
+
+    # Also update the smart scanner's strategy
+    if bot.smart_scanner:
+        bot.smart_scanner.strategy.daily_goal.target_profit_pct = target_pct
+
+    return {
+        "success": True,
+        "message": f"Daily target set to {target_pct}%",
+        "daily_profit_target_pct": target_pct,
+    }
+
+
+@router.get("/hierarchical/opportunities")
+async def get_hierarchical_opportunities():
+    """
+    Get all current trading opportunities from the hierarchical scanner.
+
+    Returns opportunities organized by horizon (SWING, INTRADAY, SCALP)
+    with full analysis details including:
+    - Pattern detection (Bull Flags, H&S, etc.)
+    - Elliott Wave position
+    - Multi-timeframe confluence
+    - Entry/exit levels
+
+    Endpoint: /api/bot/hierarchical/opportunities
+    """
+    bot = get_trading_bot()
+
+    if not bot.smart_scanner:
+        return {
+            "error": "Smart scanner not initialized",
+            "opportunities": [],
+        }
+
+    # Get all valid opportunities (not expired)
+    all_opps = [
+        {
+            "symbol": opp.symbol,
+            "horizon": opp.horizon.value,
+            "quality": opp.quality.value,
+            "overall_score": opp.overall_score,
+            "trend_score": opp.trend_score,
+            "momentum_score": opp.momentum_score,
+            "pattern_score": opp.pattern_score,
+            "volume_score": opp.volume_score,
+            "multi_tf_score": opp.multi_tf_score,
+            "direction": opp.direction,
+            "entry_price": opp.entry_price,
+            "stop_loss": opp.stop_loss,
+            "target_1": opp.target_1,
+            "target_2": opp.target_2,
+            "risk_reward_ratio": opp.risk_reward_ratio,
+            "patterns_detected": opp.patterns_detected,
+            "elliott_wave": opp.elliott_wave,
+            "confluence_factors": opp.confluence_factors,
+            "warnings": opp.warnings,
+            "valid_until": opp.valid_until.isoformat() if opp.valid_until else None,
+        }
+        for opp in bot.smart_scanner.all_opportunities
+        if opp.valid_until and opp.valid_until > datetime.now()
+    ]
+
+    # Group by horizon
+    by_horizon = {
+        "SWING": [o for o in all_opps if o["horizon"] == "SWING"],
+        "INTRADAY": [o for o in all_opps if o["horizon"] == "INTRADAY"],
+        "SCALP": [o for o in all_opps if o["horizon"] == "SCALP"],
+    }
+
+    return {
+        "total_opportunities": len(all_opps),
+        "by_horizon": by_horizon,
+        "best_opportunity": bot._hierarchical_scan_results.get("best_opportunity"),
+    }
+
+
+@router.post("/hierarchical/force-horizon")
+async def force_trading_horizon(
+    horizon: str = Query(..., description="Force a specific horizon: SWING, INTRADAY, or SCALP")
+):
+    """
+    Force the bot to focus on a specific trading horizon.
+
+    This overrides the automatic cascading logic and forces the bot to
+    only look for opportunities in the specified horizon.
+
+    Useful when you have strong conviction about market conditions.
+
+    Args:
+        horizon: SWING, INTRADAY, or SCALP
+
+    Endpoint: /api/bot/hierarchical/force-horizon?horizon=SCALP
+    """
+    from services.hierarchical_strategy import TradingHorizon
+
+    bot = get_trading_bot()
+
+    horizon_upper = horizon.upper()
+    if horizon_upper not in ["SWING", "INTRADAY", "SCALP"]:
+        raise HTTPException(status_code=400, detail=f"Invalid horizon: {horizon}. Must be SWING, INTRADAY, or SCALP")
+
+    # Map string to enum
+    horizon_map = {
+        "SWING": TradingHorizon.SWING,
+        "INTRADAY": TradingHorizon.INTRADAY,
+        "SCALP": TradingHorizon.SCALP,
+    }
+
+    bot.current_trading_horizon = horizon_map[horizon_upper]
+
+    # Reset exhausted flags except for the forced horizon
+    if bot.smart_scanner:
+        for h in TradingHorizon:
+            bot.smart_scanner.strategy.horizon_exhausted[h] = h != horizon_map[horizon_upper]
+
+    return {
+        "success": True,
+        "message": f"Forced trading horizon to {horizon_upper}",
+        "current_horizon": horizon_upper,
+    }
+
+
+@router.get("/hierarchical/daily-goal")
+async def get_daily_goal_progress():
+    """
+    Get detailed progress toward the daily profit goal.
+
+    Returns:
+    - Target percentage
+    - Achieved percentage
+    - Trades taken today
+    - Win/loss count
+    - Best and worst trade
+    - Horizons used today
+
+    Endpoint: /api/bot/hierarchical/daily-goal
+    """
+    bot = get_trading_bot()
+
+    if not bot.smart_scanner:
+        return {
+            "error": "Smart scanner not initialized",
+            "daily_goal": None,
+        }
+
+    goal = bot.smart_scanner.strategy.daily_goal
+
+    return {
+        "date": goal.date,
+        "target_pct": goal.target_profit_pct,
+        "achieved_pct": goal.achieved_profit_pct,
+        "progress_pct": (goal.achieved_profit_pct / goal.target_profit_pct * 100)
+            if goal.target_profit_pct > 0 else 0,
+        "goal_achieved": goal.goal_achieved,
+        "trades_taken": goal.trades_taken,
+        "wins": goal.wins,
+        "losses": goal.losses,
+        "win_rate": (goal.wins / goal.trades_taken * 100) if goal.trades_taken > 0 else 0,
+        "best_trade_pct": goal.best_trade_pct,
+        "worst_trade_pct": goal.worst_trade_pct,
+        "horizons_used": goal.horizons_used,
     }

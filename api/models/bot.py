@@ -55,6 +55,34 @@ class CryptoAnalysisResult(BaseModel):
     signals: List[str] = []  # Technical signals detected
 
 
+class AIDecisionResult(BaseModel):
+    """AI decision result for a trade"""
+    decision: str  # APPROVE, REJECT, WAIT
+    confidence: float = 0
+    reasoning: str = ""
+    concerns: List[str] = []
+    timestamp: str = ""
+    symbol: str = ""
+    ai_generated: bool = True
+    model: str = "gpt-4"
+    technical_score: float = 0
+    technical_signal: str = ""
+
+
+class StockAnalysisResult(BaseModel):
+    """Result of stock analysis for a single symbol"""
+    signal: str  # BUY, SELL, NEUTRAL
+    confidence: float
+    threshold: float
+    meets_threshold: bool = False
+    reason: str
+    timestamp: str
+    indicators: Dict[str, Any] = {}
+    current_price: Optional[float] = None
+    trade_type: Optional[str] = None
+    ai_decision: Optional[AIDecisionResult] = None  # AI's decision on this trade
+
+
 class CryptoBestOpportunity(BaseModel):
     """Best crypto opportunity found during scan"""
     symbol: str
@@ -98,6 +126,16 @@ class StockScanProgress(BaseModel):
     market_status: str = "unknown"  # regular, extended, pre_market, after_hours, overnight, weekend
 
 
+class ExecutionLogEntry(BaseModel):
+    """Entry in the execution log"""
+    timestamp: str
+    symbol: str
+    event_type: str  # ENTRY_EXECUTED, EXIT_EXECUTED, ENTRY_SKIPPED, AI_REJECTED, etc.
+    executed: bool
+    reason: str
+    details: Dict[str, Any] = {}
+
+
 class BotStatusResponse(BaseModel):
     """Current bot status"""
     state: BotState
@@ -110,9 +148,15 @@ class BotStatusResponse(BaseModel):
     active_symbols: List[str] = []
     # Asset Class Mode
     asset_class_mode: str = "both"  # crypto, stocks, both
+    # Auto Trade Mode
+    auto_trade_mode: Optional[bool] = False
+    ai_risk_tolerance: Optional[str] = "moderate"
+    # Entry threshold (important for understanding why signals aren't traded)
+    entry_threshold: Optional[float] = 65.0
     # Crypto trading status
     crypto_trading_enabled: bool = False
     crypto_symbols: List[str] = []
+    crypto_max_positions: int = 5
     crypto_positions: int = 0
     crypto_analysis_results: Dict[str, CryptoAnalysisResult] = {}
     last_crypto_analysis_time: Optional[str] = None
@@ -120,6 +164,16 @@ class BotStatusResponse(BaseModel):
     crypto_scan_progress: Optional[CryptoScanProgress] = None
     # Stock scan progress tracking
     stock_scan_progress: Optional[StockScanProgress] = None
+    # Stock analysis results (similar to crypto)
+    stock_analysis_results: Dict[str, StockAnalysisResult] = {}
+    last_stock_analysis_time: Optional[str] = None
+    # Tactical Controls
+    new_entries_paused: Optional[bool] = False
+    strategy_override: Optional[str] = None
+    # Execution tracking
+    execution_log: List[ExecutionLogEntry] = []
+    ai_decisions_history: List[AIDecisionResult] = []
+    total_scans_today: int = 0
 
 
 class BotStartRequest(BaseModel):

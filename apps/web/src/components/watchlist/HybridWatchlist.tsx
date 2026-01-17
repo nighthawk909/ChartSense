@@ -8,10 +8,33 @@ import { Link } from 'react-router-dom';
 import {
   Eye, ChevronLeft, ChevronRight, Sparkles,
   ArrowUpRight, ArrowDownRight, Brain,
-  BarChart3
+  BarChart3, Flag
 } from 'lucide-react';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+
+// Format pattern type to human-readable name
+function formatPatternName(patternType: string): string {
+  const patternNames: Record<string, string> = {
+    'BULL_FLAG': 'Bull Flag',
+    'BEAR_FLAG': 'Bear Flag',
+    'GOLDEN_CROSS': 'Golden Cross',
+    'DEATH_CROSS': 'Death Cross',
+    'DI_BULLISH_CROSS': 'DI Bullish Cross',
+    'DI_BEARISH_CROSS': 'DI Bearish Cross',
+    'BB_UPPER_BREAKOUT': 'BB Breakout',
+    'BB_LOWER_TOUCH': 'BB Bounce Setup',
+    'MACD_BULLISH_CROSS': 'MACD Bullish',
+    'MACD_BEARISH_CROSS': 'MACD Bearish',
+  };
+  return patternNames[patternType] || patternType.replace(/_/g, ' ');
+}
+
+interface PatternInfo {
+  type: string;
+  signal: 'BUY' | 'SELL' | 'WATCH' | 'BOUNCE_POSSIBLE';
+  strength: 'strong' | 'moderate' | 'weak';
+}
 
 interface WatchlistItem {
   symbol: string;
@@ -26,6 +49,9 @@ interface WatchlistItem {
   aiSignal?: 'BUY' | 'SELL' | 'HOLD' | 'NEUTRAL';
   aiReasoning?: string;
   technicalSummary?: string;
+  // Pattern detection (for Smart Carousel)
+  detectedPatterns?: PatternInfo[];
+  primaryPattern?: string;
   // Position data (if active)
   isActive: boolean;
   entryPrice?: number;
@@ -115,7 +141,7 @@ export default function HybridWatchlist({
           });
         }
 
-        // Fetch AI analysis for each watchlist item directly
+        // Fetch AI analysis and patterns for each watchlist item
         // This works even when the bot isn't running
         const analysisPromises = watchlistData.map(async (item) => {
           try {
@@ -123,10 +149,16 @@ export default function HybridWatchlist({
             if (item.symbol.includes('/') || item.symbol.includes('USD')) {
               return;
             }
-            const res = await fetch(`${API_URL}/api/analysis/ai-insight/${item.symbol}`);
-            if (res.ok) {
-              const insight = await res.json();
-              // Map recommendation to signal format
+
+            // Fetch AI insight and adaptive indicators (patterns) in parallel
+            const [insightRes, patternsRes] = await Promise.all([
+              fetch(`${API_URL}/api/analysis/ai-insight/${item.symbol}`),
+              fetch(`${API_URL}/api/analysis/adaptive-indicators/${item.symbol}?interval=5min`)
+            ]);
+
+            // Process AI insight
+            if (insightRes.ok) {
+              const insight = await insightRes.json();
               const recToSignal: Record<string, 'BUY' | 'SELL' | 'HOLD' | 'NEUTRAL'> = {
                 'STRONG BUY': 'BUY',
                 'BUY': 'BUY',
@@ -139,15 +171,27 @@ export default function HybridWatchlist({
               item.aiReasoning = insight.action;
               item.technicalSummary = insight.signals?.slice(0, 2).join(' | ') || insight.insight?.substring(0, 80);
             }
+
+            // Process patterns from adaptive indicators
+            if (patternsRes.ok) {
+              const adaptiveData = await patternsRes.json();
+              if (adaptiveData.patterns && adaptiveData.patterns.length > 0) {
+                item.detectedPatterns = adaptiveData.patterns;
+                // Get the primary (strongest) pattern
+                const strongPatterns = adaptiveData.patterns.filter((p: PatternInfo) => p.strength === 'strong');
+                const primaryPatternObj = strongPatterns.length > 0 ? strongPatterns[0] : adaptiveData.patterns[0];
+                item.primaryPattern = formatPatternName(primaryPatternObj.type);
+              }
+            }
           } catch (err) {
-            console.debug(`Failed to fetch AI insight for ${item.symbol}:`, err);
+            console.debug(`Failed to fetch analysis for ${item.symbol}:`, err);
           }
         });
 
         // Wait for all analysis to complete (with timeout)
         await Promise.race([
           Promise.allSettled(analysisPromises),
-          new Promise(resolve => setTimeout(resolve, 8000)) // 8 second timeout
+          new Promise(resolve => setTimeout(resolve, 10000)) // 10 second timeout for patterns
         ]);
 
         // Filter by asset class
@@ -284,14 +328,15 @@ export default function HybridWatchlist({
 
       {/* Watchlist Items */}
       <div className="bg-slate-800 rounded-xl overflow-hidden">
-        {/* Header */}
-        <div className="grid grid-cols-12 gap-2 px-4 py-2 bg-slate-700/50 text-xs text-slate-400 uppercase tracking-wide">
-          <div className="col-span-3">Symbol</div>
-          <div className="col-span-2 text-right">Price</div>
-          <div className="col-span-2 text-right">Change</div>
-          <div className="col-span-2 text-center">AI Signal</div>
-          <div className="col-span-2 text-right">Confidence</div>
-          <div className="col-span-1"></div>
+        {/* Header - fully responsive grid that scales with container */}
+        <div className="grid grid-cols-[2fr_1fr_1fr_1fr_0.8fr_1.2fr_32px] gap-1 sm:gap-2 px-2 sm:px-4 py-2 bg-slate-700/50 text-xs text-slate-400 uppercase tracking-wide">
+          <div>Symbol</div>
+          <div className="text-right">Price</div>
+          <div className="text-right hidden sm:block">Change</div>
+          <div className="text-center">Signal</div>
+          <div className="text-right hidden md:block">Conf.</div>
+          <div className="text-center hidden lg:block">Pattern</div>
+          <div></div>
         </div>
 
         {/* Items */}
@@ -408,6 +453,7 @@ function InsightCard({
         </div>
       </div>
 
+      {/* Smart Carousel Format: Symbol - Confidence% - Pattern */}
       <div className="flex items-center justify-between gap-4">
         <div className="flex items-center gap-2">
           <span className={`px-2 py-1 rounded text-sm font-medium ${getSignalColor(item.aiSignal)}`}>
@@ -419,6 +465,13 @@ function InsightCard({
               {item.aiConfidence?.toFixed(0) || '--'}%
             </span>
           </div>
+          {/* Pattern Badge - Key Feature of Smart Carousel */}
+          {item.primaryPattern && (
+            <span className="px-2 py-0.5 text-xs bg-blue-500/20 text-blue-400 rounded flex items-center gap-1">
+              <Flag className="w-3 h-3" />
+              {item.primaryPattern}
+            </span>
+          )}
         </div>
         <div className="flex-1 text-xs text-slate-400 truncate">
           {item.technicalSummary || item.aiReasoning || 'No analysis available'}
@@ -463,79 +516,96 @@ function WatchlistRow({
     return 'text-red-400';
   };
 
+  // Get pattern badge color based on signal type
+  const getPatternBadge = (pattern?: string, patterns?: PatternInfo[]) => {
+    if (!pattern) return null;
+    const patternInfo = patterns?.find(p => formatPatternName(p.type) === pattern);
+    const isBullish = patternInfo?.signal === 'BUY';
+    const isBearish = patternInfo?.signal === 'SELL';
+
+    return (
+      <span className={`px-1.5 py-0.5 rounded text-xs font-medium flex items-center gap-1 ${
+        isBullish ? 'bg-green-500/20 text-green-400' :
+        isBearish ? 'bg-red-500/20 text-red-400' :
+        'bg-blue-500/20 text-blue-400'
+      }`}>
+        <Flag className="w-2.5 h-2.5" />
+        {pattern}
+      </span>
+    );
+  };
+
   return (
     <div
       onClick={() => onSelect?.(item.symbol)}
-      className={`grid grid-cols-12 gap-2 px-4 py-3 hover:bg-slate-700/50 cursor-pointer transition-colors ${
+      className={`grid grid-cols-[2fr_1fr_1fr_1fr_0.8fr_1.2fr_32px] gap-1 sm:gap-2 px-2 sm:px-4 py-3 hover:bg-slate-700/50 cursor-pointer transition-colors ${
         item.isActive ? 'bg-green-500/5' : ''
       }`}
     >
       {/* Symbol */}
-      <div className="col-span-3 flex items-center gap-2">
-        <div className="flex flex-col">
-          <div className="flex items-center gap-2">
-            <span className="font-semibold text-white">{item.symbol}</span>
+      <div className="flex items-center gap-2 overflow-hidden">
+        <div className="flex flex-col min-w-0">
+          <div className="flex items-center gap-1">
+            <span className="font-semibold text-white truncate text-sm">{item.symbol}</span>
             {item.isActive && (
-              <span className="w-2 h-2 bg-green-500 rounded-full animate-pulse" title="Active Position"></span>
+              <span className="w-2 h-2 bg-green-500 rounded-full animate-pulse flex-shrink-0" title="Active Position"></span>
             )}
             {item.isBotDiscovered && (
-              <span title="Bot Discovered"><Sparkles className="w-3 h-3 text-purple-400" /></span>
+              <span title="Bot Discovered" className="flex-shrink-0"><Sparkles className="w-3 h-3 text-purple-400" /></span>
             )}
           </div>
           {item.name && (
-            <span className="text-xs text-slate-500 truncate max-w-[150px]">{item.name}</span>
+            <span className="text-xs text-slate-500 truncate hidden sm:block">{item.name}</span>
           )}
         </div>
       </div>
 
       {/* Price */}
-      <div className="col-span-2 flex items-center justify-end">
-        <span className="font-medium text-white">${item.currentPrice.toFixed(2)}</span>
+      <div className="flex items-center justify-end">
+        <span className="font-medium text-white text-xs sm:text-sm">${item.currentPrice.toFixed(2)}</span>
       </div>
 
-      {/* Change */}
-      <div className="col-span-2 flex items-center justify-end">
-        <div className={`flex items-center gap-1 ${item.changePct >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+      {/* Change - hidden on mobile */}
+      <div className="hidden sm:flex items-center justify-end">
+        <div className={`flex items-center gap-0.5 text-xs sm:text-sm ${item.changePct >= 0 ? 'text-green-400' : 'text-red-400'}`}>
           {item.changePct >= 0 ? (
             <ArrowUpRight className="w-3 h-3" />
           ) : (
             <ArrowDownRight className="w-3 h-3" />
           )}
-          <span className="text-sm font-medium">
-            {item.changePct >= 0 ? '+' : ''}{item.changePct.toFixed(2)}%
+          <span className="font-medium">
+            {item.changePct >= 0 ? '+' : ''}{item.changePct.toFixed(1)}%
           </span>
         </div>
       </div>
 
       {/* AI Signal */}
-      <div className="col-span-2 flex items-center justify-center">
-        <span className={`px-2 py-0.5 rounded text-xs font-medium ${getSignalColor(item.aiSignal)}`}>
+      <div className="flex items-center justify-center">
+        <span className={`px-1 sm:px-1.5 py-0.5 rounded text-xs font-medium ${getSignalColor(item.aiSignal)}`}>
           {item.aiSignal || 'N/A'}
         </span>
       </div>
 
-      {/* Confidence */}
-      <div className="col-span-2 flex items-center justify-end gap-1">
-        <div className="w-16 h-1.5 bg-slate-700 rounded-full overflow-hidden">
-          <div
-            className={`h-full rounded-full transition-all ${
-              (item.aiConfidence || 0) >= 75 ? 'bg-green-500' :
-              (item.aiConfidence || 0) >= 50 ? 'bg-yellow-500' : 'bg-red-500'
-            }`}
-            style={{ width: `${item.aiConfidence || 0}%` }}
-          ></div>
-        </div>
+      {/* Confidence - hidden on smaller screens */}
+      <div className="hidden md:flex items-center justify-end">
         <span className={`text-xs font-medium ${getConfidenceColor(item.aiConfidence)}`}>
           {item.aiConfidence?.toFixed(0) || '--'}%
         </span>
       </div>
 
+      {/* Pattern - Smart Carousel Feature - hidden on smaller screens */}
+      <div className="hidden lg:flex items-center justify-center">
+        {getPatternBadge(item.primaryPattern, item.detectedPatterns) || (
+          <span className="text-xs text-slate-500">--</span>
+        )}
+      </div>
+
       {/* Actions */}
-      <div className="col-span-1 flex items-center justify-end">
+      <div className="flex items-center justify-end">
         <Link
           to={item.symbol.includes('/') ? `/crypto` : `/stock/${item.symbol}`}
           onClick={(e) => e.stopPropagation()}
-          className="p-1.5 hover:bg-slate-600 rounded transition-colors"
+          className="p-1 hover:bg-slate-600 rounded transition-colors"
           title="View Details"
         >
           <BarChart3 className="w-4 h-4 text-slate-400" />

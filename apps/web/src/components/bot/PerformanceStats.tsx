@@ -44,91 +44,91 @@ export default function PerformanceStats({ metrics, loading }: PerformanceStatsP
         </span>
       </div>
 
-      {/* Main Stats Grid */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+      {/* Main Stats Grid - responsive with min-width */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-4">
         {/* Win Rate */}
-        <div className="bg-slate-700/50 rounded-lg p-4">
-          <div className="flex items-center gap-2 text-slate-400 mb-2">
-            <Target className="w-4 h-4" />
-            <span className="text-sm">Win Rate</span>
+        <div className="bg-slate-700/50 rounded-lg p-3 min-w-0">
+          <div className="flex items-center gap-1.5 text-slate-400 mb-1">
+            <Target className="w-3.5 h-3.5 flex-shrink-0" />
+            <span className="text-xs truncate">Win Rate</span>
           </div>
-          <p className={`text-2xl font-bold ${
+          <p className={`text-xl font-bold ${
             metrics.win_rate >= 0.5 ? 'text-green-500' : 'text-red-500'
           }`}>
             {(metrics.win_rate * 100).toFixed(1)}%
           </p>
-          <p className="text-xs text-slate-500 mt-1">
+          <p className="text-[10px] text-slate-500 mt-0.5">
             {metrics.winning_trades}W / {metrics.losing_trades}L
           </p>
         </div>
 
         {/* Total P&L */}
-        <div className="bg-slate-700/50 rounded-lg p-4">
-          <div className="flex items-center gap-2 text-slate-400 mb-2">
-            <TrendingUp className="w-4 h-4" />
-            <span className="text-sm">Total P&L</span>
+        <div className="bg-slate-700/50 rounded-lg p-3 min-w-0">
+          <div className="flex items-center gap-1.5 text-slate-400 mb-1">
+            <TrendingUp className="w-3.5 h-3.5 flex-shrink-0" />
+            <span className="text-xs truncate">Total P&L</span>
           </div>
-          <p className={`text-2xl font-bold ${getPnLColor(metrics.total_pnl)}`}>
+          <p className={`text-xl font-bold truncate ${getPnLColor(metrics.total_pnl)}`}>
             {formatCurrency(metrics.total_pnl)}
           </p>
-          <p className={`text-xs ${getPnLColor(metrics.total_pnl_pct)}`}>
+          <p className={`text-[10px] ${getPnLColor(metrics.total_pnl_pct)}`}>
             {formatPercent(metrics.total_pnl_pct)}
           </p>
         </div>
 
         {/* Profit Factor */}
-        <div className="bg-slate-700/50 rounded-lg p-4">
-          <div className="flex items-center gap-2 text-slate-400 mb-2">
-            <Award className="w-4 h-4" />
-            <span className="text-sm">Profit Factor</span>
+        <div className="bg-slate-700/50 rounded-lg p-3 min-w-0">
+          <div className="flex items-center gap-1.5 text-slate-400 mb-1">
+            <Award className="w-3.5 h-3.5 flex-shrink-0" />
+            <span className="text-xs truncate">Profit Factor</span>
           </div>
-          <p className={`text-2xl font-bold ${
+          <p className={`text-xl font-bold ${
             metrics.profit_factor >= 1.5 ? 'text-green-500' :
             metrics.profit_factor >= 1 ? 'text-yellow-500' : 'text-red-500'
           }`}>
             {metrics.profit_factor.toFixed(2)}
           </p>
-          <p className="text-xs text-slate-500 mt-1">
+          <p className="text-[10px] text-slate-500 mt-0.5">
             {metrics.profit_factor >= 1.5 ? 'Good' :
              metrics.profit_factor >= 1 ? 'Break-even' : 'Losing'}
           </p>
         </div>
 
         {/* Max Drawdown */}
-        <div className="bg-slate-700/50 rounded-lg p-4">
-          <div className="flex items-center gap-2 text-slate-400 mb-2">
-            <AlertTriangle className="w-4 h-4" />
-            <span className="text-sm">Max Drawdown</span>
+        <div className="bg-slate-700/50 rounded-lg p-3 min-w-0">
+          <div className="flex items-center gap-1.5 text-slate-400 mb-1">
+            <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0" />
+            <span className="text-xs truncate">Max DD</span>
           </div>
-          <p className={`text-2xl font-bold ${
+          <p className={`text-xl font-bold ${
             metrics.max_drawdown_pct <= 5 ? 'text-green-500' :
             metrics.max_drawdown_pct <= 10 ? 'text-yellow-500' : 'text-red-500'
           }`}>
             {metrics.max_drawdown_pct.toFixed(1)}%
           </p>
-          <p className="text-xs text-slate-500 mt-1">
+          <p className="text-[10px] text-slate-500 mt-0.5 truncate">
             {formatCurrency(metrics.max_drawdown)}
           </p>
         </div>
       </div>
 
-      {/* Additional Stats */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
-        <div className="bg-slate-700/30 rounded-lg p-3">
-          <p className="text-slate-400">Avg Win</p>
-          <p className="font-semibold text-green-500">{formatCurrency(metrics.avg_win)}</p>
+      {/* Additional Stats - more compact */}
+      <div className="grid grid-cols-4 gap-2 text-xs">
+        <div className="bg-slate-700/30 rounded-lg p-2 min-w-0">
+          <p className="text-slate-400 truncate">Avg Win</p>
+          <p className="font-semibold text-green-500 truncate">{formatCurrency(metrics.avg_win)}</p>
         </div>
-        <div className="bg-slate-700/30 rounded-lg p-3">
-          <p className="text-slate-400">Avg Loss</p>
-          <p className="font-semibold text-red-500">{formatCurrency(metrics.avg_loss)}</p>
+        <div className="bg-slate-700/30 rounded-lg p-2 min-w-0">
+          <p className="text-slate-400 truncate">Avg Loss</p>
+          <p className="font-semibold text-red-500 truncate">{formatCurrency(metrics.avg_loss)}</p>
         </div>
-        <div className="bg-slate-700/30 rounded-lg p-3">
-          <p className="text-slate-400">Best Trade</p>
-          <p className="font-semibold text-green-500">{formatCurrency(metrics.best_trade)}</p>
+        <div className="bg-slate-700/30 rounded-lg p-2 min-w-0">
+          <p className="text-slate-400 truncate">Best</p>
+          <p className="font-semibold text-green-500 truncate">{formatCurrency(metrics.best_trade)}</p>
         </div>
-        <div className="bg-slate-700/30 rounded-lg p-3">
-          <p className="text-slate-400">Worst Trade</p>
-          <p className="font-semibold text-red-500">{formatCurrency(metrics.worst_trade)}</p>
+        <div className="bg-slate-700/30 rounded-lg p-2 min-w-0">
+          <p className="text-slate-400 truncate">Worst</p>
+          <p className="font-semibold text-red-500 truncate">{formatCurrency(metrics.worst_trade)}</p>
         </div>
       </div>
 

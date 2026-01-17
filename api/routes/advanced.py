@@ -12,6 +12,10 @@ from services.sentiment_analysis import get_sentiment_service
 from services.calendar_service import get_calendar_service
 from services.backtester import get_backtest_engine, StrategyType
 from services.alpha_vantage import AlphaVantageService
+from services.alpaca_service import get_alpaca_service
+import logging
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -44,26 +48,32 @@ async def detect_patterns(symbol: str):
     - Triangles
     - Candlestick patterns (Doji, Hammer, Engulfing, etc.)
     """
-    av_service = AlphaVantageService()
+    alpaca = get_alpaca_service()
     pattern_service = get_pattern_service()
 
-    # Get historical data
-    history = await av_service.get_history(symbol.upper(), "daily", "full")
+    try:
+        # Get historical data from Alpaca (no rate limit issues)
+        bars = await alpaca.get_bars(symbol.upper(), timeframe="1day", limit=200)
 
-    if not history or not history.data:
-        raise HTTPException(status_code=404, detail=f"No data found for {symbol}")
+        if not bars or len(bars) < 50:
+            raise HTTPException(status_code=404, detail=f"Insufficient data for {symbol} ({len(bars) if bars else 0} bars)")
 
-    # Extract OHLC data
-    opens = [d.open for d in history.data]
-    highs = [d.high for d in history.data]
-    lows = [d.low for d in history.data]
-    closes = [d.close for d in history.data]
+        # Extract OHLC data
+        opens = [b["open"] for b in bars]
+        highs = [b["high"] for b in bars]
+        lows = [b["low"] for b in bars]
+        closes = [b["close"] for b in bars]
 
-    # Analyze patterns
-    result = pattern_service.analyze(opens, highs, lows, closes)
-    result["symbol"] = symbol.upper()
+        # Analyze patterns
+        result = pattern_service.analyze(opens, highs, lows, closes)
+        result["symbol"] = symbol.upper()
 
-    return result
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error detecting patterns for {symbol}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.get("/elliott-wave/{symbol}")
@@ -74,42 +84,48 @@ async def get_elliott_wave(symbol: str):
     Elliott Wave Theory identifies 5-wave impulse patterns and 3-wave corrective patterns.
     Returns current wave position, confidence, and Fibonacci-based price targets.
     """
-    av_service = AlphaVantageService()
+    alpaca = get_alpaca_service()
     pattern_service = get_pattern_service()
 
-    # Get historical data
-    history = await av_service.get_history(symbol.upper(), "daily", "full")
+    try:
+        # Get historical data from Alpaca (no rate limit issues)
+        bars = await alpaca.get_bars(symbol.upper(), timeframe="1day", limit=200)
 
-    if not history or not history.data:
-        raise HTTPException(status_code=404, detail=f"No data found for {symbol}")
+        if not bars or len(bars) < 50:
+            raise HTTPException(status_code=404, detail=f"Insufficient data for {symbol} ({len(bars) if bars else 0} bars)")
 
-    highs = [d.high for d in history.data]
-    lows = [d.low for d in history.data]
-    closes = [d.close for d in history.data]
+        highs = [b["high"] for b in bars]
+        lows = [b["low"] for b in bars]
+        closes = [b["close"] for b in bars]
 
-    elliott = pattern_service.detect_elliott_wave(highs, lows, closes)
+        elliott = pattern_service.detect_elliott_wave(highs, lows, closes)
 
-    if not elliott:
+        if not elliott:
+            return {
+                "symbol": symbol.upper(),
+                "elliott_wave": None,
+                "message": "No clear Elliott Wave pattern detected"
+            }
+
         return {
             "symbol": symbol.upper(),
-            "elliott_wave": None,
-            "message": "No clear Elliott Wave pattern detected"
+            "elliott_wave": {
+                "wave_count": elliott.wave_count,
+                "wave_type": elliott.wave_type,
+                "wave_degree": elliott.wave_degree,
+                "direction": elliott.direction,
+                "current_position": elliott.current_position,
+                "confidence": elliott.confidence,
+                "next_target": elliott.next_target,
+                "description": elliott.description,
+                "wave_points": elliott.wave_points,
+            }
         }
-
-    return {
-        "symbol": symbol.upper(),
-        "elliott_wave": {
-            "wave_count": elliott.wave_count,
-            "wave_type": elliott.wave_type,
-            "wave_degree": elliott.wave_degree,
-            "direction": elliott.direction,
-            "current_position": elliott.current_position,
-            "confidence": elliott.confidence,
-            "next_target": elliott.next_target,
-            "description": elliott.description,
-            "wave_points": elliott.wave_points,
-        }
-    }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error detecting Elliott Wave for {symbol}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.get("/support-resistance/{symbol}")
@@ -120,49 +136,56 @@ async def get_support_resistance(symbol: str):
     Identifies key price levels based on historical pivot points and price clustering.
     Returns levels sorted by strength.
     """
-    av_service = AlphaVantageService()
+    alpaca = get_alpaca_service()
     pattern_service = get_pattern_service()
 
-    history = await av_service.get_history(symbol.upper(), "daily", "full")
+    try:
+        # Get historical data from Alpaca (no rate limit issues)
+        bars = await alpaca.get_bars(symbol.upper(), timeframe="1day", limit=200)
 
-    if not history or not history.data:
-        raise HTTPException(status_code=404, detail=f"No data found for {symbol}")
+        if not bars or len(bars) < 50:
+            raise HTTPException(status_code=404, detail=f"Insufficient data for {symbol} ({len(bars) if bars else 0} bars)")
 
-    highs = [d.high for d in history.data]
-    lows = [d.low for d in history.data]
-    closes = [d.close for d in history.data]
+        highs = [b["high"] for b in bars]
+        lows = [b["low"] for b in bars]
+        closes = [b["close"] for b in bars]
 
-    levels = pattern_service.detect_support_resistance(highs, lows, closes)
-    current_price = closes[-1] if closes else 0
+        levels = pattern_service.detect_support_resistance(highs, lows, closes)
+        current_price = closes[-1] if closes else 0
 
-    # Separate support and resistance
-    support_levels = [l for l in levels if l.level_type == "support"]
-    resistance_levels = [l for l in levels if l.level_type == "resistance"]
+        # Separate support and resistance
+        support_levels = [l for l in levels if l.level_type == "support"]
+        resistance_levels = [l for l in levels if l.level_type == "resistance"]
 
-    return {
-        "symbol": symbol.upper(),
-        "current_price": current_price,
-        "support_levels": [
-            {
-                "price": l.price,
-                "strength": l.strength,
-                "touches": l.touches,
-                "distance_pct": round(((current_price - l.price) / current_price) * 100, 2) if current_price else 0
-            }
-            for l in support_levels
-        ],
-        "resistance_levels": [
-            {
-                "price": l.price,
-                "strength": l.strength,
-                "touches": l.touches,
-                "distance_pct": round(((l.price - current_price) / current_price) * 100, 2) if current_price else 0
-            }
-            for l in resistance_levels
-        ],
-        "nearest_support": support_levels[0].price if support_levels else None,
-        "nearest_resistance": resistance_levels[0].price if resistance_levels else None,
-    }
+        return {
+            "symbol": symbol.upper(),
+            "current_price": current_price,
+            "support_levels": [
+                {
+                    "price": l.price,
+                    "strength": l.strength,
+                    "touches": l.touches,
+                    "distance_pct": round(((current_price - l.price) / current_price) * 100, 2) if current_price else 0
+                }
+                for l in support_levels
+            ],
+            "resistance_levels": [
+                {
+                    "price": l.price,
+                    "strength": l.strength,
+                    "touches": l.touches,
+                    "distance_pct": round(((l.price - current_price) / current_price) * 100, 2) if current_price else 0
+                }
+                for l in resistance_levels
+            ],
+            "nearest_support": support_levels[0].price if support_levels else None,
+            "nearest_resistance": resistance_levels[0].price if resistance_levels else None,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error detecting support/resistance for {symbol}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.get("/trend-lines/{symbol}")
@@ -172,40 +195,47 @@ async def get_trend_lines(symbol: str):
 
     Calculates support and resistance trend lines using linear regression on pivot points.
     """
-    av_service = AlphaVantageService()
+    alpaca = get_alpaca_service()
     pattern_service = get_pattern_service()
 
-    history = await av_service.get_history(symbol.upper(), "daily", "full")
+    try:
+        # Get historical data from Alpaca (no rate limit issues)
+        bars = await alpaca.get_bars(symbol.upper(), timeframe="1day", limit=200)
 
-    if not history or not history.data:
-        raise HTTPException(status_code=404, detail=f"No data found for {symbol}")
+        if not bars or len(bars) < 50:
+            raise HTTPException(status_code=404, detail=f"Insufficient data for {symbol} ({len(bars) if bars else 0} bars)")
 
-    highs = [d.high for d in history.data]
-    lows = [d.low for d in history.data]
-    closes = [d.close for d in history.data]
-    dates = [d.date for d in history.data]
+        highs = [b["high"] for b in bars]
+        lows = [b["low"] for b in bars]
+        closes = [b["close"] for b in bars]
+        dates = [b["timestamp"] for b in bars]
 
-    trend_lines = pattern_service.detect_trend_lines(highs, lows, closes)
+        trend_lines = pattern_service.detect_trend_lines(highs, lows, closes)
 
-    return {
-        "symbol": symbol.upper(),
-        "current_price": closes[-1] if closes else 0,
-        "trend_lines": [
-            {
-                "type": tl.line_type,
-                "direction": tl.direction,
-                "slope": tl.slope,
-                "intercept": tl.intercept,
-                "strength": tl.strength,
-                "touches": tl.touches,
-                "start_date": dates[tl.start_index] if tl.start_index < len(dates) else None,
-                "end_date": dates[tl.end_index] if tl.end_index < len(dates) else None,
-                # Project current value based on latest index
-                "current_value": round(tl.slope * (len(closes) - 1) + tl.intercept, 2),
-            }
-            for tl in trend_lines
-        ],
-    }
+        return {
+            "symbol": symbol.upper(),
+            "current_price": closes[-1] if closes else 0,
+            "trend_lines": [
+                {
+                    "type": tl.line_type,
+                    "direction": tl.direction,
+                    "slope": tl.slope,
+                    "intercept": tl.intercept,
+                    "strength": tl.strength,
+                    "touches": tl.touches,
+                    "start_date": dates[tl.start_index] if tl.start_index < len(dates) else None,
+                    "end_date": dates[tl.end_index] if tl.end_index < len(dates) else None,
+                    # Project current value based on latest index
+                    "current_value": round(tl.slope * (len(closes) - 1) + tl.intercept, 2),
+                }
+                for tl in trend_lines
+            ],
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error detecting trend lines for {symbol}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 # ==================== Sentiment Analysis ====================
