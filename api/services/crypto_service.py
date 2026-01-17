@@ -586,6 +586,46 @@ class CryptoService:
                 signals.append("Near support - buyers may step in")
                 score += 4
 
+        # === Elliott Wave Analysis ===
+        # Apply Elliott Wave detection to crypto for advanced pattern recognition
+        elliott_wave = None
+        try:
+            from services.pattern_recognition import PatternRecognitionService
+            pattern_svc = PatternRecognitionService()
+            elliott_wave = pattern_svc.detect_elliott_wave(highs, lows, closes)
+
+            if elliott_wave and elliott_wave.get("wave_count", 0) > 0:
+                wave_type = elliott_wave.get("wave_type", "")
+                current_wave = elliott_wave.get("current_position", elliott_wave.get("current_wave", ""))
+                direction = elliott_wave.get("direction", "")
+                confidence = elliott_wave.get("confidence", 0)
+
+                # Score adjustment based on Elliott Wave
+                if direction == "bullish":
+                    if "impulse" in wave_type.lower():
+                        signals.append(f"Elliott Wave: {current_wave} in bullish impulse")
+                        score += 10
+                    else:
+                        signals.append(f"Elliott Wave: {current_wave} ({direction})")
+                        score += 5
+                elif direction == "bearish":
+                    if "impulse" in wave_type.lower():
+                        signals.append(f"Elliott Wave: {current_wave} in bearish impulse")
+                        score -= 10
+                    else:
+                        signals.append(f"Elliott Wave: {current_wave} ({direction})")
+                        score -= 5
+
+                # Bonus for high confidence patterns
+                if confidence >= 0.7:
+                    signals.append(f"High confidence wave pattern ({confidence*100:.0f}%)")
+                    score += 5 if direction == "bullish" else -5
+
+        except Exception as e:
+            # Elliott Wave is optional - don't fail the whole analysis
+            import logging
+            logging.getLogger(__name__).debug(f"Elliott Wave analysis failed for {symbol}: {e}")
+
         # Clamp score to 0-100
         score = max(0, min(100, score))
 
@@ -624,6 +664,8 @@ class CryptoService:
             },
             "support": lower_bb[-1] if lower_bb else None,
             "resistance": upper_bb[-1] if upper_bb else None,
+            # Elliott Wave analysis for crypto
+            "elliott_wave": elliott_wave if elliott_wave else None,
         }
 
 

@@ -207,6 +207,8 @@ export default function Markets() {
         method: 'POST',
       });
 
+      console.log('[Markets] Execute trade response:', response.status, response.statusText);
+
       if (response.ok) {
         const result = await response.json();
         if (result.success) {
@@ -217,8 +219,16 @@ export default function Markets() {
           alert(`⚠️ Trade not executed: ${result.error || result.message}`);
         }
       } else {
-        const error = await response.json();
-        alert(`❌ Failed: ${error.detail || error.error || 'Unknown error'}`);
+        // Try to parse error response
+        let errorMsg = `${response.status}: ${response.statusText}`;
+        try {
+          const error = await response.json();
+          errorMsg = error.detail || error.error || error.message || errorMsg;
+        } catch {
+          // Response wasn't JSON
+        }
+        console.error('[Markets] Execute trade failed:', errorMsg);
+        alert(`❌ Failed: ${errorMsg}\n\nMake sure the API server is running:\ncd api && uvicorn main:app --reload`);
       }
     } catch (err) {
       console.error('Failed to execute trade:', err);
