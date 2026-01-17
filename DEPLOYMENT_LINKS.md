@@ -1,14 +1,14 @@
 # ChartSense Deployment Links
 
 ## Live Deployment
-- **Vercel App**: https://chart-sense.vercel.app
+- **Vercel App**: https://chart-sense-virid.vercel.app
 
 ## Repository
 - **GitHub**: https://github.com/nighthawk909/ChartSense
 
 ## Latest Commit
-- **Hash**: dd19463
-- **Message**: feat: Complete trading dashboard roadmap - tactical controls, priority scanning, AI insights
+- **Hash**: f20a502
+- **Message**: fix: Remove unused variables to fix Vercel build
 
 ## Features in This Release
 
