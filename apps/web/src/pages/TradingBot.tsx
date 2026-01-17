@@ -418,7 +418,7 @@ export default function TradingBot() {
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4 sm:space-y-6 max-w-full overflow-x-hidden">
       {/* Header with Asset Toggle and Stats */}
       <div className="flex flex-col gap-4">
         <div className="flex items-center justify-between">

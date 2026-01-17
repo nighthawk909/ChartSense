@@ -295,13 +295,23 @@ class PerformanceMetrics(BaseModel):
     total_pnl_pct: float = 0.0
     profit_factor: float = 0.0  # Gross profit / gross loss
     sharpe_ratio: Optional[float] = None
+    sortino_ratio: Optional[float] = None
+    calmar_ratio: Optional[float] = None
     max_drawdown: float = 0.0
     max_drawdown_pct: float = 0.0
+    current_drawdown_pct: float = 0.0
     avg_win: float = 0.0
     avg_loss: float = 0.0
+    avg_trade: float = 0.0
+    expectancy: float = 0.0
     avg_trade_duration_hours: float = 0.0
     best_trade: float = 0.0
     worst_trade: float = 0.0
+    # Consecutive tracking
+    consecutive_wins: int = 0
+    consecutive_losses: int = 0
+    max_consecutive_wins: int = 0
+    max_consecutive_losses: int = 0
     # By trade type
     swing_trades: int = 0
     swing_win_rate: float = 0.0

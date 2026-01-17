@@ -130,6 +130,7 @@ class TradingBot:
             "UNI/USD",   # Uniswap
         ]
         self.crypto_max_positions = 2
+        self.crypto_entry_threshold = 55.0  # Lower threshold for crypto (vs 70% for stocks)
         self._crypto_positions: Dict[str, Dict] = {}  # Track crypto positions
         self._crypto_analysis_results: Dict[str, Dict] = {}  # Track latest analysis for each crypto
         self._last_crypto_analysis_time: Optional[datetime] = None
@@ -2156,7 +2157,7 @@ class TradingBot:
                             self._crypto_analysis_results[symbol] = {
                                 "signal": "NO_DATA",
                                 "confidence": 0,
-                                "threshold": self.strategy.entry_threshold,
+                                "threshold": self.crypto_entry_threshold,
                                 "reason": "No analysis data available",
                                 "timestamp": datetime.now().isoformat(),
                             }
@@ -2167,9 +2168,9 @@ class TradingBot:
                         score = analysis.get("score", 50)
 
                         # Convert recommendation to simple signal
-                        if recommendation in ["BUY", "STRONG_BUY"]:
+                        if recommendation in ["BUY", "STRONG_BUY", "LEAN_BUY"]:
                             signal = "BUY"
-                        elif recommendation in ["SELL", "STRONG_SELL"]:
+                        elif recommendation in ["SELL", "STRONG_SELL", "LEAN_SELL"]:
                             signal = "SELL"
                         else:
                             signal = "NEUTRAL"
@@ -2182,27 +2183,27 @@ class TradingBot:
                             best_buy_signal = {
                                 "symbol": symbol,
                                 "confidence": confidence,
-                                "threshold": self.strategy.entry_threshold,
-                                "meets_threshold": confidence >= self.strategy.entry_threshold,
+                                "threshold": self.crypto_entry_threshold,
+                                "meets_threshold": confidence >= self.crypto_entry_threshold,
                             }
 
-                        # Track analysis result
+                        # Track analysis result - use lower crypto threshold
                         self._crypto_analysis_results[symbol] = {
                             "signal": signal,
                             "confidence": confidence,
-                            "threshold": self.strategy.entry_threshold,
-                            "meets_threshold": signal == "BUY" and confidence >= self.strategy.entry_threshold,
-                            "reason": self._get_analysis_reason(signal, confidence, self.strategy.entry_threshold),
+                            "threshold": self.crypto_entry_threshold,
+                            "meets_threshold": signal == "BUY" and confidence >= self.crypto_entry_threshold,
+                            "reason": self._get_analysis_reason(signal, confidence, self.crypto_entry_threshold),
                             "timestamp": datetime.now().isoformat(),
                             "indicators": analysis.get("indicators", {}),
                             "signals": analysis.get("signals", []),
                         }
                         self._last_crypto_analysis_time = datetime.now()
 
-                        logger.info(f"Crypto analysis for {symbol}: signal={signal}, confidence={confidence:.1f}, threshold={self.strategy.entry_threshold}")
+                        logger.info(f"Crypto analysis for {symbol}: signal={signal}, confidence={confidence:.1f}, threshold={self.crypto_entry_threshold}")
 
-                        # Use same entry threshold as stocks
-                        if signal == "BUY" and confidence >= self.strategy.entry_threshold:
+                        # Use CRYPTO-SPECIFIC threshold (lower than stocks)
+                        if signal == "BUY" and confidence >= self.crypto_entry_threshold:
                             signals_above_threshold += 1
                             self._crypto_scan_progress["signals_found"] = signals_above_threshold
 
@@ -2457,7 +2458,7 @@ class TradingBot:
                     self._crypto_scan_progress["scan_status"] = "exhausted"
                     gap = best_buy_signal["threshold"] - best_buy_signal["confidence"]
                     self._crypto_scan_progress["scan_summary"] = (
-                        f"Scanned {len(symbols_to_scan)} cryptos - no signals above {self.strategy.entry_threshold:.0f}% threshold. "
+                        f"Scanned {len(symbols_to_scan)} cryptos - no signals above {self.crypto_entry_threshold:.0f}% threshold. "
                         f"Best: {best_buy_signal['symbol']} at {best_buy_signal['confidence']:.0f}% ({gap:.0f}% below threshold)"
                     )
                 else:

@@ -167,7 +167,7 @@ class CryptoService:
             timeframe: Bar timeframe (1Min, 5Min, 15Min, 1Hour, 1Day)
             limit: Number of bars to fetch
         """
-        from datetime import datetime, timedelta
+        from datetime import datetime, timedelta, timezone
 
         # Normalize symbol to format: BTC/USD (Alpaca requires slash format)
         symbol = symbol.upper().replace("/", "")
@@ -177,15 +177,28 @@ class CryptoService:
             symbol = symbol + "/USD"
 
         # Calculate start date to get enough historical data
-        # For hourly bars, go back enough days to get the requested limit
-        if timeframe == "1Hour":
-            days_back = max(7, (limit // 24) + 2)  # At least 7 days for indicators
-        elif timeframe == "1Day":
-            days_back = limit + 10
-        else:
-            days_back = 3  # For minute bars, 3 days should be enough
+        # Use UTC timezone explicitly and ensure we include recent data
+        now = datetime.now(timezone.utc)
 
-        start_date = (datetime.utcnow() - timedelta(days=days_back)).strftime("%Y-%m-%dT00:00:00Z")
+        # For minute bars, go back enough hours/days
+        if timeframe == "1Min":
+            start_delta = timedelta(hours=max(3, (limit // 60) + 1))
+        elif timeframe == "5Min":
+            start_delta = timedelta(hours=max(12, (limit * 5 // 60) + 2))
+        elif timeframe == "15Min":
+            start_delta = timedelta(days=max(2, (limit * 15 // 60 // 24) + 1))
+        elif timeframe == "1Hour":
+            start_delta = timedelta(days=max(7, (limit // 24) + 2))
+        elif timeframe == "1Day":
+            start_delta = timedelta(days=limit + 10)
+        else:
+            start_delta = timedelta(days=7)
+
+        # Start date - go back from NOW
+        start_date = (now - start_delta).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+        # End date - use current time to ensure we get the LATEST bars
+        end_date = now.strftime("%Y-%m-%dT%H:%M:%SZ")
 
         endpoint = f"/v1beta3/crypto/us/bars"
         params = {
@@ -193,9 +206,11 @@ class CryptoService:
             "timeframe": timeframe,
             "limit": limit,
             "start": start_date,
+            "end": end_date,  # CRITICAL: Include end date to get latest data
+            "sort": "asc",    # Sort chronologically for proper chart display
         }
 
-        logger.debug(f"Fetching crypto bars: {symbol}, {timeframe}, limit={limit}, start={start_date}")
+        logger.debug(f"Fetching crypto bars: {symbol}, {timeframe}, limit={limit}, start={start_date}, end={end_date}")
         data = await self._make_request("GET", endpoint, base_url=self.data_url, params=params)
 
         if data and "bars" in data and symbol in data["bars"]:
@@ -363,15 +378,27 @@ class CryptoService:
         """Crypto markets are always open 24/7"""
         return True
 
-    async def analyze_crypto(self, symbol: str) -> Dict[str, Any]:
+    async def analyze_crypto(self, symbol: str, timeframe: str = "1Hour") -> Dict[str, Any]:
         """
         Analyze a cryptocurrency for trading signals.
+
+        Args:
+            symbol: Crypto symbol (e.g., BTC/USD)
+            timeframe: Analysis timeframe (1Min, 5Min, 15Min, 1Hour, 1Day)
 
         Returns technical analysis with buy/sell signals.
         Uses nuanced scoring to differentiate between cryptos even in normal conditions.
         """
+        # Map friendly timeframe names
+        tf_map = {
+            "1m": "1Min", "5m": "5Min", "15m": "15Min",
+            "1h": "1Hour", "4h": "1Hour",  # No 4h in Alpaca, use 1h
+            "1d": "1Day", "1w": "1Day",  # No 1w, use daily
+        }
+        timeframe = tf_map.get(timeframe.lower(), timeframe)
+
         # Try to get more bars - request 200 to ensure we have enough for indicators
-        bars = await self.get_crypto_bars(symbol, "1Hour", 200)
+        bars = await self.get_crypto_bars(symbol, timeframe, 200)
 
         # Require at least 10 bars for basic analysis (reduced from 20)
         if not bars or len(bars) < 10:
@@ -645,11 +672,19 @@ class CryptoService:
         else:
             recommendation = "HOLD"
 
+        # Map timeframe to friendly name for display
+        tf_display = {
+            "1Min": "1 minute", "5Min": "5 minutes", "15Min": "15 minutes",
+            "1Hour": "1 hour", "1Day": "Daily"
+        }
+
         return {
             "symbol": symbol,
             "current_price": current_price,
             "score": score,
             "recommendation": recommendation,
+            "timeframe": timeframe,
+            "timeframe_display": tf_display.get(timeframe, timeframe),
             "signals": signals,
             "indicators": {
                 "rsi": rsi[-1] if rsi else None,

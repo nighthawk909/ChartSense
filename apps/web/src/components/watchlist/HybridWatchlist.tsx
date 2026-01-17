@@ -3,7 +3,7 @@
  * Professional watchlist with Active Positions vs Watch Only segmentation
  * Includes AI Insights Carousel and dynamic ticker promotion
  */
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import {
   Eye, ChevronLeft, ChevronRight, Sparkles,
@@ -82,7 +82,6 @@ export default function HybridWatchlist({
   const [loading, setLoading] = useState(true);
   const [carouselIndex, setCarouselIndex] = useState(0);
   const [activeTab, setActiveTab] = useState<'all' | 'active' | 'watching' | 'discovered'>('all');
-  const carouselRef = useRef<HTMLDivElement>(null);
 
   // Fetch watchlist data
   useEffect(() => {
@@ -145,42 +144,76 @@ export default function HybridWatchlist({
         // This works even when the bot isn't running
         const analysisPromises = watchlistData.map(async (item) => {
           try {
-            // Skip crypto symbols for now (they use different analysis)
-            if (item.symbol.includes('/') || item.symbol.includes('USD')) {
-              return;
-            }
+            // Check if crypto symbol
+            const isCrypto = item.symbol.includes('/') || item.symbol.endsWith('USD') || item.symbol.endsWith('USDT');
 
-            // Fetch AI insight and adaptive indicators (patterns) in parallel
-            const [insightRes, patternsRes] = await Promise.all([
-              fetch(`${API_URL}/api/analysis/ai-insight/${item.symbol}`),
-              fetch(`${API_URL}/api/analysis/adaptive-indicators/${item.symbol}?interval=5min`)
-            ]);
+            if (isCrypto) {
+              // Fetch crypto analysis from crypto API
+              const [analysisRes, patternsRes] = await Promise.all([
+                fetch(`${API_URL}/api/crypto/analyze/${item.symbol}`),
+                fetch(`${API_URL}/api/crypto/patterns/${item.symbol}?interval=1hour`)
+              ]);
 
-            // Process AI insight
-            if (insightRes.ok) {
-              const insight = await insightRes.json();
-              const recToSignal: Record<string, 'BUY' | 'SELL' | 'HOLD' | 'NEUTRAL'> = {
-                'STRONG BUY': 'BUY',
-                'BUY': 'BUY',
-                'STRONG SELL': 'SELL',
-                'SELL': 'SELL',
-                'HOLD': 'HOLD',
-              };
-              item.aiConfidence = insight.score;
-              item.aiSignal = recToSignal[insight.recommendation] || 'NEUTRAL';
-              item.aiReasoning = insight.action;
-              item.technicalSummary = insight.signals?.slice(0, 2).join(' | ') || insight.insight?.substring(0, 80);
-            }
+              if (analysisRes.ok) {
+                const analysis = await analysisRes.json();
+                const recToSignal: Record<string, 'BUY' | 'SELL' | 'HOLD' | 'NEUTRAL'> = {
+                  'STRONG_BUY': 'BUY',
+                  'BUY': 'BUY',
+                  'LEAN_BUY': 'BUY',
+                  'STRONG_SELL': 'SELL',
+                  'SELL': 'SELL',
+                  'LEAN_SELL': 'SELL',
+                  'HOLD': 'HOLD',
+                };
+                item.aiConfidence = analysis.score;
+                item.aiSignal = recToSignal[analysis.recommendation] || 'NEUTRAL';
+                item.aiReasoning = analysis.signals?.slice(0, 2).join(' | ') || 'Crypto analysis';
+                item.technicalSummary = analysis.signals?.slice(0, 3).join(' | ');
+              }
 
-            // Process patterns from adaptive indicators
-            if (patternsRes.ok) {
-              const adaptiveData = await patternsRes.json();
-              if (adaptiveData.patterns && adaptiveData.patterns.length > 0) {
-                item.detectedPatterns = adaptiveData.patterns;
-                // Get the primary (strongest) pattern
-                const strongPatterns = adaptiveData.patterns.filter((p: PatternInfo) => p.strength === 'strong');
-                const primaryPatternObj = strongPatterns.length > 0 ? strongPatterns[0] : adaptiveData.patterns[0];
-                item.primaryPattern = formatPatternName(primaryPatternObj.type);
+              // Process crypto patterns
+              if (patternsRes.ok) {
+                const patternData = await patternsRes.json();
+                if (patternData.patterns && patternData.patterns.length > 0) {
+                  item.detectedPatterns = patternData.patterns;
+                  const strongPatterns = patternData.patterns.filter((p: PatternInfo) => p.strength === 'strong');
+                  const primaryPatternObj = strongPatterns.length > 0 ? strongPatterns[0] : patternData.patterns[0];
+                  item.primaryPattern = formatPatternName(primaryPatternObj.type);
+                }
+              }
+            } else {
+              // Fetch stock analysis from stock AI endpoint
+              const [insightRes, patternsRes] = await Promise.all([
+                fetch(`${API_URL}/api/analysis/ai-insight/${item.symbol}`),
+                fetch(`${API_URL}/api/analysis/adaptive-indicators/${item.symbol}?interval=5min`)
+              ]);
+
+              // Process AI insight
+              if (insightRes.ok) {
+                const insight = await insightRes.json();
+                const recToSignal: Record<string, 'BUY' | 'SELL' | 'HOLD' | 'NEUTRAL'> = {
+                  'STRONG BUY': 'BUY',
+                  'BUY': 'BUY',
+                  'STRONG SELL': 'SELL',
+                  'SELL': 'SELL',
+                  'HOLD': 'HOLD',
+                };
+                item.aiConfidence = insight.score;
+                item.aiSignal = recToSignal[insight.recommendation] || 'NEUTRAL';
+                item.aiReasoning = insight.action;
+                item.technicalSummary = insight.signals?.slice(0, 2).join(' | ') || insight.insight?.substring(0, 80);
+              }
+
+              // Process patterns from adaptive indicators
+              if (patternsRes.ok) {
+                const adaptiveData = await patternsRes.json();
+                if (adaptiveData.patterns && adaptiveData.patterns.length > 0) {
+                  item.detectedPatterns = adaptiveData.patterns;
+                  // Get the primary (strongest) pattern
+                  const strongPatterns = adaptiveData.patterns.filter((p: PatternInfo) => p.strength === 'strong');
+                  const primaryPatternObj = strongPatterns.length > 0 ? strongPatterns[0] : adaptiveData.patterns[0];
+                  item.primaryPattern = formatPatternName(primaryPatternObj.type);
+                }
               }
             }
           } catch (err) {
@@ -228,11 +261,27 @@ export default function HybridWatchlist({
   const carouselItems = watchlist.filter(item => item.aiConfidence !== undefined);
 
   const handleCarouselPrev = () => {
-    setCarouselIndex(prev => (prev > 0 ? prev - 1 : carouselItems.length - 1));
+    // Step back by 3 cards
+    setCarouselIndex(prev => {
+      const newIndex = prev - 3;
+      if (newIndex < 0) {
+        // Wrap to last page
+        const lastPageStart = Math.floor((carouselItems.length - 1) / 3) * 3;
+        return Math.max(0, lastPageStart);
+      }
+      return newIndex;
+    });
   };
 
   const handleCarouselNext = () => {
-    setCarouselIndex(prev => (prev < carouselItems.length - 1 ? prev + 1 : 0));
+    // Step forward by 3 cards
+    setCarouselIndex(prev => {
+      const newIndex = prev + 3;
+      if (newIndex >= carouselItems.length) {
+        return 0; // Wrap to beginning
+      }
+      return newIndex;
+    });
   };
 
   if (loading) {
@@ -250,44 +299,40 @@ export default function HybridWatchlist({
 
   return (
     <div className="space-y-4">
-      {/* AI Insights Carousel */}
+      {/* AI Insights Carousel - Shows 3 cards at once on desktop, 1 on mobile */}
       {showCarousel && carouselItems.length > 0 && (
         <div className="bg-gradient-to-r from-purple-900/30 to-blue-900/30 rounded-xl p-4 border border-purple-500/20">
           <div className="flex items-center justify-between mb-3">
             <div className="flex items-center gap-2">
               <Sparkles className="w-4 h-4 text-purple-400" />
-              <span className="text-sm font-medium text-purple-300">AI Insights Carousel</span>
+              <span className="text-sm font-medium text-purple-300">AI Insights ({carouselItems.length} symbols)</span>
             </div>
             <div className="flex items-center gap-2">
               <button
                 onClick={handleCarouselPrev}
-                className="p-1 hover:bg-slate-700 rounded transition-colors"
+                className="p-1.5 hover:bg-slate-700 rounded transition-colors"
               >
-                <ChevronLeft className="w-4 h-4 text-slate-400" />
+                <ChevronLeft className="w-5 h-5 text-slate-400" />
               </button>
               <span className="text-xs text-slate-500">
-                {carouselIndex + 1} / {carouselItems.length}
+                {Math.floor(carouselIndex / 3) + 1} / {Math.ceil(carouselItems.length / 3)}
               </span>
               <button
                 onClick={handleCarouselNext}
-                className="p-1 hover:bg-slate-700 rounded transition-colors"
+                className="p-1.5 hover:bg-slate-700 rounded transition-colors"
               >
-                <ChevronRight className="w-4 h-4 text-slate-400" />
+                <ChevronRight className="w-5 h-5 text-slate-400" />
               </button>
             </div>
           </div>
 
-          <div ref={carouselRef} className="overflow-hidden">
-            <div
-              className="flex transition-transform duration-300"
-              style={{ transform: `translateX(-${carouselIndex * 100}%)` }}
-            >
-              {carouselItems.map((item) => (
-                <div key={item.symbol} className="w-full flex-shrink-0 px-1">
-                  <InsightCard item={item} onSelect={onSymbolSelect} />
-                </div>
+          {/* Grid-based carousel showing 3 cards at a time */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+            {carouselItems
+              .slice(carouselIndex, carouselIndex + 3)
+              .map((item) => (
+                <InsightCard key={item.symbol} item={item} onSelect={onSymbolSelect} />
               ))}
-            </div>
           </div>
         </div>
       )}

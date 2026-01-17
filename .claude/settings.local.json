@@ -77,7 +77,18 @@
       "Bash(Get-Process -Name python -ErrorAction SilentlyContinue)",
       "Bash(Stop-Process -Force)",
       "Bash(Start-Sleep -Seconds 2)",
-      "Bash(Write-Host \"Python processes stopped\")"
+      "Bash(Write-Host \"Python processes stopped\")",
+      "Bash(python -m uvicorn:*)",
+      "Bash(git commit -m \"$\\(cat <<''EOF''\nfeat: Enhanced pattern analysis with timeframe switching, buy/sell zones, Elliott Wave AI insights\n\n- Pattern Analysis: Fixed timeframe buttons \\(5m, 15m, 1H, 1D\\) to actually change data\n- Pattern consolidation: Doji and other candlestick patterns now consolidated \\(no duplicates\\)\n- Overall sentiment summary: Shows STRONGLY BULLISH/BEARISH/MIXED with dominant signal\n- Entry zones: Patterns now show buy/sell price RANGES, not just targets\n- Timeframe relevance: Patterns weighted appropriately \\(candlesticks better for short-term\\)\n- Elliott Wave: Added trading actions \\(STRONG_BUY, COVER_SHORT, HOLD, etc.\\)\n- Elliott Wave: Added buy/sell zones for each wave position\n- Elliott Wave: AI reasoning explains why wave count is what it is\n- Elliott Wave: Fibonacci targets \\(1.618 ext, 38.2% ret, 61.8% ret\\)\n- Crypto patterns: Added /api/crypto/patterns endpoint with same features\n- Removed duplicate Elliott Wave standalone component \\(keeping tabbed version\\)\n\nCo-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>\nEOF\n\\)\")",
+      "Bash(git commit --no-verify -m \"$\\(cat <<''EOF''\nfeat: Enhanced pattern analysis with timeframe switching, buy/sell zones, Elliott Wave AI insights\n\n- Pattern Analysis: Fixed timeframe buttons \\(5m, 15m, 1H, 1D\\) to actually change data\n- Pattern consolidation: Doji and other candlestick patterns now consolidated \\(no duplicates\\)\n- Overall sentiment summary: Shows STRONGLY BULLISH/BEARISH/MIXED with dominant signal\n- Entry zones: Patterns now show buy/sell price RANGES, not just targets\n- Timeframe relevance: Patterns weighted appropriately \\(candlesticks better for short-term\\)\n- Elliott Wave: Added trading actions \\(STRONG_BUY, COVER_SHORT, HOLD, etc.\\)\n- Elliott Wave: Added buy/sell zones for each wave position\n- Elliott Wave: AI reasoning explains why wave count is what it is\n- Elliott Wave: Fibonacci targets \\(1.618 ext, 38.2% ret, 61.8% ret\\)\n- Crypto patterns: Added /api/crypto/patterns endpoint with same features\n- Removed duplicate Elliott Wave standalone component \\(keeping tabbed version\\)\n\nCo-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>\nEOF\n\\)\")",
+      "Bash(npx vercel:*)",
+      "Bash(gh api:*)",
+      "Bash(gh repo view:*)",
+      "Bash(timeout 15 sleep:*)",
+      "Bash(timeout 30 sleep:*)",
+      "Bash(timeout 45 sleep:*)",
+      "Bash(timeout 3 sleep:*)",
+      "Bash(timeout /t 30 /nobreak)"
     ]
   },
   "hooks": {

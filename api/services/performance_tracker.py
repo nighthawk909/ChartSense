@@ -29,13 +29,22 @@ class PerformanceMetrics:
     total_pnl_pct: float
     profit_factor: float
     sharpe_ratio: Optional[float]
+    sortino_ratio: Optional[float]
+    calmar_ratio: Optional[float]
     max_drawdown: float
     max_drawdown_pct: float
+    current_drawdown_pct: float
     avg_win: float
     avg_loss: float
+    avg_trade: float
+    expectancy: float
     avg_trade_duration_hours: float
     best_trade: float
     worst_trade: float
+    consecutive_wins: int
+    consecutive_losses: int
+    max_consecutive_wins: int
+    max_consecutive_losses: int
     swing_trades: int
     swing_win_rate: float
     longterm_trades: int
@@ -149,6 +158,18 @@ class PerformanceTracker:
             longterm_wins = len([t for t in longterm_trades_list if (t.profit_loss or 0) > 0])
             longterm_win_rate = longterm_wins / len(longterm_trades_list) if longterm_trades_list else 0
 
+            # Calculate additional risk metrics
+            sortino_ratio = self._calculate_sortino_ratio(trades, period_days)
+            calmar_ratio = self._calculate_calmar_ratio(total_pnl_pct, max_drawdown_pct)
+            current_drawdown_pct = self._calculate_current_drawdown(trades)
+
+            # Average trade and expectancy
+            avg_trade = statistics.mean(pnls) if pnls else 0
+            expectancy = (win_rate * avg_win) - ((1 - win_rate) * abs(avg_loss)) if total_trades > 0 else 0
+
+            # Consecutive tracking
+            cons_wins, cons_losses, max_cons_wins, max_cons_losses = self._calculate_consecutive_stats(trades)
+
             return PerformanceMetrics(
                 period_days=period_days,
                 total_trades=total_trades,
@@ -159,13 +180,22 @@ class PerformanceTracker:
                 total_pnl_pct=total_pnl_pct,
                 profit_factor=profit_factor,
                 sharpe_ratio=sharpe_ratio,
+                sortino_ratio=sortino_ratio,
+                calmar_ratio=calmar_ratio,
                 max_drawdown=max_drawdown,
                 max_drawdown_pct=max_drawdown_pct,
+                current_drawdown_pct=current_drawdown_pct,
                 avg_win=avg_win,
                 avg_loss=avg_loss,
+                avg_trade=avg_trade,
+                expectancy=expectancy,
                 avg_trade_duration_hours=avg_duration,
                 best_trade=best_trade,
                 worst_trade=worst_trade,
+                consecutive_wins=cons_wins,
+                consecutive_losses=cons_losses,
+                max_consecutive_wins=max_cons_wins,
+                max_consecutive_losses=max_cons_losses,
                 swing_trades=len(swing_trades_list),
                 swing_win_rate=swing_win_rate,
                 longterm_trades=len(longterm_trades_list),
@@ -187,13 +217,22 @@ class PerformanceTracker:
             total_pnl_pct=0,
             profit_factor=0,
             sharpe_ratio=None,
+            sortino_ratio=None,
+            calmar_ratio=None,
             max_drawdown=0,
             max_drawdown_pct=0,
+            current_drawdown_pct=0,
             avg_win=0,
             avg_loss=0,
+            avg_trade=0,
+            expectancy=0,
             avg_trade_duration_hours=0,
             best_trade=0,
             worst_trade=0,
+            consecutive_wins=0,
+            consecutive_losses=0,
+            max_consecutive_wins=0,
+            max_consecutive_losses=0,
             swing_trades=0,
             swing_win_rate=0,
             longterm_trades=0,
@@ -273,6 +312,220 @@ class PerformanceTracker:
         max_drawdown_pct = (max_drawdown / peak * 100) if peak > 0 else 0
 
         return max_drawdown, max_drawdown_pct
+
+    def _calculate_sortino_ratio(
+        self,
+        trades: List[Trade],
+        period_days: int,
+        risk_free_rate: float = 0.05
+    ) -> Optional[float]:
+        """
+        Calculate Sortino ratio (downside deviation only).
+
+        Args:
+            trades: List of completed trades
+            period_days: Period in days
+            risk_free_rate: Annual risk-free rate (default 5%)
+
+        Returns:
+            Sortino ratio or None if insufficient data
+        """
+        if len(trades) < 5:
+            return None
+
+        # Group trades by date and calculate daily returns
+        daily_pnl: Dict[str, float] = {}
+        for trade in trades:
+            if trade.exit_time:
+                date_key = trade.exit_time.strftime("%Y-%m-%d")
+                daily_pnl[date_key] = daily_pnl.get(date_key, 0) + (trade.profit_loss or 0)
+
+        if len(daily_pnl) < 5:
+            return None
+
+        returns = list(daily_pnl.values())
+        avg_return = statistics.mean(returns)
+
+        # Calculate downside deviation (only negative returns)
+        negative_returns = [r for r in returns if r < 0]
+        if not negative_returns:
+            return None  # No downside = infinite Sortino
+
+        import math
+        downside_dev = math.sqrt(statistics.mean([r**2 for r in negative_returns]))
+
+        if downside_dev == 0:
+            return None
+
+        daily_rf_rate = risk_free_rate / 252
+        sortino = (avg_return - daily_rf_rate) / downside_dev * (252 ** 0.5)
+
+        return round(sortino, 2)
+
+    def _calculate_calmar_ratio(
+        self,
+        total_return_pct: float,
+        max_drawdown_pct: float
+    ) -> Optional[float]:
+        """
+        Calculate Calmar ratio (return / max drawdown).
+
+        Args:
+            total_return_pct: Total return percentage
+            max_drawdown_pct: Maximum drawdown percentage
+
+        Returns:
+            Calmar ratio or None
+        """
+        if max_drawdown_pct <= 0:
+            return None
+
+        return round(total_return_pct / max_drawdown_pct, 2)
+
+    def _calculate_current_drawdown(self, trades: List[Trade]) -> float:
+        """Calculate current drawdown percentage from peak"""
+        if not trades:
+            return 0
+
+        sorted_trades = sorted(
+            [t for t in trades if t.exit_time],
+            key=lambda t: t.exit_time
+        )
+
+        if not sorted_trades:
+            return 0
+
+        cumulative_pnl = 0
+        peak = 0
+
+        for trade in sorted_trades:
+            cumulative_pnl += trade.profit_loss or 0
+            peak = max(peak, cumulative_pnl)
+
+        if peak <= 0:
+            return 0
+
+        current_dd = (peak - cumulative_pnl) / peak * 100
+        return round(current_dd, 2)
+
+    def _calculate_consecutive_stats(
+        self,
+        trades: List[Trade]
+    ) -> Tuple[int, int, int, int]:
+        """
+        Calculate consecutive win/loss statistics.
+
+        Returns:
+            (current_wins, current_losses, max_wins, max_losses)
+        """
+        if not trades:
+            return 0, 0, 0, 0
+
+        sorted_trades = sorted(
+            [t for t in trades if t.exit_time],
+            key=lambda t: t.exit_time
+        )
+
+        current_wins = 0
+        current_losses = 0
+        max_wins = 0
+        max_losses = 0
+        streak = 0
+        last_winner = None
+
+        for trade in sorted_trades:
+            is_winner = (trade.profit_loss or 0) > 0
+
+            if last_winner is None:
+                streak = 1
+            elif is_winner == last_winner:
+                streak += 1
+            else:
+                streak = 1
+
+            if is_winner:
+                max_wins = max(max_wins, streak)
+                current_wins = streak
+                current_losses = 0
+            else:
+                max_losses = max(max_losses, streak)
+                current_losses = streak
+                current_wins = 0
+
+            last_winner = is_winner
+
+        return current_wins, current_losses, max_wins, max_losses
+
+    def get_dashboard_data(self) -> Dict[str, Any]:
+        """
+        Get complete dashboard data for the frontend.
+
+        Returns:
+            Dict with all performance data needed for dashboard display
+        """
+        metrics_7d = self.calculate_metrics(period_days=7)
+        metrics_30d = self.calculate_metrics(period_days=30)
+        metrics_90d = self.calculate_metrics(period_days=90)
+        equity_curve = self.get_equity_curve(period_days=90)
+
+        return {
+            "summary": {
+                "total_trades": metrics_30d.total_trades,
+                "win_rate": round(metrics_30d.win_rate * 100, 1),
+                "total_pnl": round(metrics_30d.total_pnl, 2),
+                "total_pnl_pct": round(metrics_30d.total_pnl_pct, 2),
+                "sharpe_ratio": metrics_30d.sharpe_ratio,
+                "sortino_ratio": metrics_30d.sortino_ratio,
+                "calmar_ratio": metrics_30d.calmar_ratio,
+                "profit_factor": round(metrics_30d.profit_factor, 2),
+                "max_drawdown_pct": round(metrics_30d.max_drawdown_pct, 2),
+                "current_drawdown_pct": metrics_30d.current_drawdown_pct,
+                "expectancy": round(metrics_30d.expectancy, 2),
+            },
+            "periods": {
+                "7d": {
+                    "trades": metrics_7d.total_trades,
+                    "win_rate": round(metrics_7d.win_rate * 100, 1),
+                    "pnl": round(metrics_7d.total_pnl, 2),
+                    "pnl_pct": round(metrics_7d.total_pnl_pct, 2),
+                },
+                "30d": {
+                    "trades": metrics_30d.total_trades,
+                    "win_rate": round(metrics_30d.win_rate * 100, 1),
+                    "pnl": round(metrics_30d.total_pnl, 2),
+                    "pnl_pct": round(metrics_30d.total_pnl_pct, 2),
+                },
+                "90d": {
+                    "trades": metrics_90d.total_trades,
+                    "win_rate": round(metrics_90d.win_rate * 100, 1),
+                    "pnl": round(metrics_90d.total_pnl, 2),
+                    "pnl_pct": round(metrics_90d.total_pnl_pct, 2),
+                },
+            },
+            "trade_stats": {
+                "avg_win": round(metrics_30d.avg_win, 2),
+                "avg_loss": round(metrics_30d.avg_loss, 2),
+                "avg_trade": round(metrics_30d.avg_trade, 2),
+                "best_trade": round(metrics_30d.best_trade, 2),
+                "worst_trade": round(metrics_30d.worst_trade, 2),
+                "avg_duration_hours": round(metrics_30d.avg_trade_duration_hours, 1),
+                "consecutive_wins": metrics_30d.consecutive_wins,
+                "consecutive_losses": metrics_30d.consecutive_losses,
+                "max_consecutive_wins": metrics_30d.max_consecutive_wins,
+                "max_consecutive_losses": metrics_30d.max_consecutive_losses,
+            },
+            "by_type": {
+                "swing": {
+                    "trades": metrics_30d.swing_trades,
+                    "win_rate": round(metrics_30d.swing_win_rate * 100, 1),
+                },
+                "longterm": {
+                    "trades": metrics_30d.longterm_trades,
+                    "win_rate": round(metrics_30d.longterm_win_rate * 100, 1),
+                },
+            },
+            "equity_curve": equity_curve,
+        }
 
     def get_equity_curve(self, period_days: int = 30) -> List[Dict[str, Any]]:
         """

@@ -122,14 +122,33 @@ async def close_crypto_position(symbol: str):
 
 
 @router.get("/analyze/{symbol}")
-async def analyze_crypto(symbol: str):
+async def analyze_crypto(
+    symbol: str,
+    interval: str = Query("1hour", description="Analysis timeframe: 5min, 15min, 1hour, daily")
+):
     """
     Get technical analysis for a cryptocurrency.
 
-    Returns signals, indicators, and trading recommendation.
+    Args:
+        symbol: Crypto symbol (e.g., BTC/USD)
+        interval: Timeframe for analysis (5min, 15min, 1hour, daily)
+
+    Returns signals, indicators, and trading recommendation with timeframe context.
     """
     crypto_service = get_crypto_service()
-    analysis = await crypto_service.analyze_crypto(symbol)
+
+    # Map frontend interval names to API format
+    interval_map = {
+        "5min": "5Min",
+        "15min": "15Min",
+        "1hour": "1Hour",
+        "1h": "1Hour",
+        "daily": "1Day",
+        "1d": "1Day",
+    }
+    timeframe = interval_map.get(interval.lower(), "1Hour")
+
+    analysis = await crypto_service.analyze_crypto(symbol, timeframe)
 
     if "error" in analysis:
         raise HTTPException(status_code=400, detail=analysis["error"])

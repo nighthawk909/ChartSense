@@ -505,27 +505,62 @@ export default function MultiTimeframeInsight({ symbol, compact = false }: Multi
                       </div>
                     )}
 
-                    {/* Buy/Sell Zones */}
-                    {(selectedWave.buy_zone || selectedWave.sell_zone) && (
-                      <div className="grid grid-cols-2 gap-2">
-                        {selectedWave.buy_zone && (
-                          <div className="bg-green-900/20 rounded-lg p-2 border border-green-500/30">
-                            <p className="text-xs text-green-400 mb-1">Buy Zone</p>
-                            <p className="text-sm font-medium text-green-300">
-                              ${selectedWave.buy_zone.low.toFixed(2)} - ${selectedWave.buy_zone.high.toFixed(2)}
-                            </p>
+                    {/* Buy/Sell Zones with "Price In Zone" indicator */}
+                    {(selectedWave.buy_zone || selectedWave.sell_zone) && (() => {
+                      const currentPrice = data.current_price;
+                      const inBuyZone = selectedWave.buy_zone &&
+                        currentPrice >= selectedWave.buy_zone.low &&
+                        currentPrice <= selectedWave.buy_zone.high;
+                      const inSellZone = selectedWave.sell_zone &&
+                        currentPrice >= selectedWave.sell_zone.low &&
+                        currentPrice <= selectedWave.sell_zone.high;
+
+                      return (
+                        <div className="space-y-2">
+                          {/* Only ONE zone should be shown per wave direction */}
+                          <div className={`grid ${selectedWave.buy_zone && selectedWave.sell_zone ? 'grid-cols-2' : 'grid-cols-1'} gap-2`}>
+                            {selectedWave.buy_zone && (
+                              <div className={`rounded-lg p-2 border transition-all ${
+                                inBuyZone
+                                  ? 'bg-green-600/30 border-green-500 ring-2 ring-green-500/50'
+                                  : 'bg-green-900/20 border-green-500/30'
+                              }`}>
+                                <div className="flex items-center justify-between mb-1">
+                                  <p className="text-xs text-green-400">Buy Zone</p>
+                                  {inBuyZone && (
+                                    <span className="text-[10px] px-1.5 py-0.5 bg-green-500 text-white rounded-full animate-pulse">
+                                      PRICE IN ZONE
+                                    </span>
+                                  )}
+                                </div>
+                                <p className="text-sm font-medium text-green-300">
+                                  ${selectedWave.buy_zone.low.toFixed(2)} - ${selectedWave.buy_zone.high.toFixed(2)}
+                                </p>
+                              </div>
+                            )}
+                            {selectedWave.sell_zone && (
+                              <div className={`rounded-lg p-2 border transition-all ${
+                                inSellZone
+                                  ? 'bg-red-600/30 border-red-500 ring-2 ring-red-500/50'
+                                  : 'bg-red-900/20 border-red-500/30'
+                              }`}>
+                                <div className="flex items-center justify-between mb-1">
+                                  <p className="text-xs text-red-400">Sell Zone</p>
+                                  {inSellZone && (
+                                    <span className="text-[10px] px-1.5 py-0.5 bg-red-500 text-white rounded-full animate-pulse">
+                                      PRICE IN ZONE
+                                    </span>
+                                  )}
+                                </div>
+                                <p className="text-sm font-medium text-red-300">
+                                  ${selectedWave.sell_zone.low.toFixed(2)} - ${selectedWave.sell_zone.high.toFixed(2)}
+                                </p>
+                              </div>
+                            )}
                           </div>
-                        )}
-                        {selectedWave.sell_zone && (
-                          <div className="bg-red-900/20 rounded-lg p-2 border border-red-500/30">
-                            <p className="text-xs text-red-400 mb-1">Sell Zone</p>
-                            <p className="text-sm font-medium text-red-300">
-                              ${selectedWave.sell_zone.low.toFixed(2)} - ${selectedWave.sell_zone.high.toFixed(2)}
-                            </p>
-                          </div>
-                        )}
-                      </div>
-                    )}
+                        </div>
+                      );
+                    })()}
 
                     {/* Analysis Description */}
                     {selectedWave.description && (

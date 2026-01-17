@@ -105,19 +105,44 @@ async def detect_patterns(
 
 
 @router.get("/elliott-wave/{symbol}")
-async def get_elliott_wave(symbol: str):
+async def get_elliott_wave(symbol: str, interval: str = "1day"):
     """
     Get Elliott Wave analysis for a stock.
 
     Elliott Wave Theory identifies 5-wave impulse patterns and 3-wave corrective patterns.
     Returns current wave position, confidence, and Fibonacci-based price targets.
+
+    Args:
+        symbol: Stock symbol
+        interval: Timeframe for analysis (5min, 15min, 1hour, 1day, 1week)
     """
     alpaca = get_alpaca_service()
     pattern_service = get_pattern_service()
 
+    # Map interval to Alpaca timeframe format
+    INTERVAL_MAP = {
+        "1m": "1min",
+        "1min": "1min",
+        "5m": "5min",
+        "5min": "5min",
+        "15m": "15min",
+        "15min": "15min",
+        "1h": "1hour",
+        "1hour": "1hour",
+        "4h": "4hour",
+        "4hour": "4hour",
+        "1d": "1day",
+        "1day": "1day",
+        "daily": "1day",
+        "1w": "1week",
+        "1week": "1week",
+        "weekly": "1week",
+    }
+    timeframe = INTERVAL_MAP.get(interval.lower(), "1day")
+
     try:
         # Get historical data from Alpaca (no rate limit issues)
-        bars = await alpaca.get_bars(symbol.upper(), timeframe="1day", limit=200)
+        bars = await alpaca.get_bars(symbol.upper(), timeframe=timeframe, limit=200)
 
         if not bars or len(bars) < 50:
             raise HTTPException(status_code=404, detail=f"Insufficient data for {symbol} ({len(bars) if bars else 0} bars)")
@@ -126,17 +151,36 @@ async def get_elliott_wave(symbol: str):
         lows = [b["low"] for b in bars]
         closes = [b["close"] for b in bars]
 
-        elliott = pattern_service.detect_elliott_wave(highs, lows, closes)
+        # Pass timeframe to Elliott Wave detection for adaptive pivot sizing
+        elliott = pattern_service.detect_elliott_wave(highs, lows, closes, timeframe=timeframe)
+
+        # Map timeframe to display name
+        TIMEFRAME_DISPLAY = {
+            "1min": "1 Minute",
+            "5min": "5 Minute",
+            "15min": "15 Minute",
+            "1hour": "1 Hour",
+            "4hour": "4 Hour",
+            "1day": "Daily",
+            "1week": "Weekly",
+        }
+        timeframe_display = TIMEFRAME_DISPLAY.get(timeframe, timeframe)
 
         if not elliott:
             return {
                 "symbol": symbol.upper(),
+                "interval": interval,
+                "timeframe": timeframe,
+                "timeframe_display": timeframe_display,
                 "elliott_wave": None,
-                "message": "No clear Elliott Wave pattern detected"
+                "message": f"No clear Elliott Wave pattern detected on {timeframe_display} timeframe"
             }
 
         return {
             "symbol": symbol.upper(),
+            "interval": interval,
+            "timeframe": timeframe,
+            "timeframe_display": timeframe_display,
             "elliott_wave": {
                 "wave_count": elliott.wave_count,
                 "wave_type": elliott.wave_type,
@@ -147,6 +191,8 @@ async def get_elliott_wave(symbol: str):
                 "next_target": elliott.next_target,
                 "description": elliott.description,
                 "wave_points": elliott.wave_points,
+                "timeframe": timeframe,
+                "timeframe_display": timeframe_display,
             }
         }
     except HTTPException:

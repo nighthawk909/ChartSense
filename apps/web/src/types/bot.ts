@@ -212,6 +212,11 @@ export interface Position {
   trade_type: TradeType | null;
   entry_time: string;
   entry_score: number | null;
+  // Exit strategy fields
+  exit_strategy?: 'STOP_LOSS' | 'TAKE_PROFIT' | 'TRAILING_STOP' | 'TIME_BASED' | 'SIGNAL_BASED';
+  exit_reason?: string;  // Human-readable exit strategy explanation
+  hold_duration_hours?: number;
+  suggested_exit_time?: string;
 }
 
 export interface PositionsList {

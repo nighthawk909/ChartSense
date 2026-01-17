@@ -973,7 +973,8 @@ class PatternRecognitionService:
         self,
         highs: List[float],
         lows: List[float],
-        closes: List[float]
+        closes: List[float],
+        timeframe: str = "daily"
     ) -> Optional[ElliottWave]:
         """
         Detect Elliott Wave patterns.
@@ -986,12 +987,39 @@ class PatternRecognitionService:
         1. Wave 2 cannot retrace more than 100% of Wave 1
         2. Wave 3 cannot be the shortest of waves 1, 3, 5
         3. Wave 4 cannot overlap Wave 1 (except in diagonals)
+
+        Args:
+            highs: List of high prices
+            lows: List of low prices
+            closes: List of closing prices
+            timeframe: Timeframe for analysis (affects pivot window sizing)
         """
         if len(closes) < 30:
             return None
 
-        # Find significant pivot points
-        maxima, minima = self.find_local_extrema(closes, window=5)
+        # Timeframe-adaptive window size for finding pivots
+        # Shorter timeframes need smaller windows to catch micro-waves
+        # Longer timeframes need larger windows for significant pivots
+        tf_lower = timeframe.lower()
+        if "1m" in tf_lower or "1min" in tf_lower:
+            window = 3  # Very short timeframe - tight pivots
+        elif "5m" in tf_lower or "5min" in tf_lower:
+            window = 4  # Short timeframe
+        elif "15m" in tf_lower or "15min" in tf_lower:
+            window = 5  # Medium-short timeframe
+        elif "1h" in tf_lower or "hour" in tf_lower or "60" in tf_lower:
+            window = 7  # Hourly - moderate window
+        elif "4h" in tf_lower:
+            window = 10  # 4-hour - larger window
+        elif "1d" in tf_lower or "daily" in tf_lower or "day" in tf_lower:
+            window = 12  # Daily - significant pivots only
+        elif "1w" in tf_lower or "week" in tf_lower:
+            window = 15  # Weekly - major pivots
+        else:
+            window = 5  # Default fallback
+
+        # Find significant pivot points with timeframe-appropriate window
+        maxima, minima = self.find_local_extrema(closes, window=window)
 
         if len(maxima) < 3 or len(minima) < 3:
             return None
@@ -1278,8 +1306,8 @@ class PatternRecognitionService:
         # Detect trend lines
         trend_lines = self.detect_trend_lines(highs, lows, closes)
 
-        # Detect Elliott Wave
-        elliott = self.detect_elliott_wave(highs, lows, closes)
+        # Detect Elliott Wave - pass timeframe for adaptive pivot detection
+        elliott = self.detect_elliott_wave(highs, lows, closes, timeframe=tf_key)
 
         # Calculate entry zones based on support/resistance and current price
         current_price = closes[-1] if closes else 0

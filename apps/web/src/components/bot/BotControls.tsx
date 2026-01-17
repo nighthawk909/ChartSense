@@ -225,6 +225,22 @@ export default function BotControls({
         </button>
       </div>
 
+      {/* Warning when signals exist but auto-trade is off */}
+      {!autoTradeMode && approvedCount > 0 && (
+        <div className="flex items-center gap-2 p-2 mb-2 bg-yellow-500/10 border border-yellow-500/30 rounded text-xs">
+          <AlertTriangle className="w-4 h-4 text-yellow-400 flex-shrink-0" />
+          <span className="text-yellow-400">
+            {approvedCount} trade{approvedCount > 1 ? 's' : ''} approved but Auto Trade is OFF
+          </span>
+          <button
+            onClick={onToggleAutoTrade}
+            className="ml-auto px-2 py-0.5 bg-yellow-500/20 hover:bg-yellow-500/30 text-yellow-400 rounded text-[10px] font-medium"
+          >
+            Enable
+          </button>
+        </div>
+      )}
+
       {/* AI Decisions List - Show all recent decisions without scroll */}
       <div className="space-y-1.5">
         {recentDecisions.length > 0 ? (
@@ -232,10 +248,13 @@ export default function BotControls({
             <AIDecisionEntry key={idx} decision={decision} />
           ))
         ) : (
-          <div className="text-center py-6 text-slate-500 text-xs">
-            <Brain className="w-8 h-8 mx-auto mb-2 opacity-40" />
-            <p>No AI decisions yet</p>
-            <p className="text-[10px] mt-1">Start scanning to see AI trade analysis</p>
+          <div className="flex items-center gap-2 p-2 bg-slate-700/30 rounded text-xs text-slate-400">
+            <Brain className={`w-4 h-4 ${isRunning ? 'text-blue-400 animate-pulse' : 'opacity-40'}`} />
+            <span>
+              {isRunning
+                ? 'Scanning for opportunities...'
+                : 'Start bot to see AI trade decisions'}
+            </span>
           </div>
         )}
       </div>

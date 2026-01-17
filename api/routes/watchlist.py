@@ -1,5 +1,6 @@
 """
 Watchlist management routes
+Includes both stocks and crypto from scanning
 """
 from fastapi import APIRouter, HTTPException
 from typing import List, Optional
@@ -12,6 +13,9 @@ router = APIRouter()
 
 # In-memory storage (replace with database in production)
 user_watchlist: List[str] = ["AAPL", "MSFT", "GOOGL", "AMZN", "NVDA"]
+
+# Crypto watchlist - synced from bot's crypto scanning
+crypto_watchlist: List[str] = ["BTC/USD", "ETH/USD", "SOL/USD", "DOGE/USD", "AVAX/USD"]
 
 
 class WatchlistItemInput(BaseModel):
@@ -44,22 +48,17 @@ class WatchlistDetailResponse(BaseModel):
 
 @router.get("/")
 async def get_watchlist():
-    """Get all symbols in the watchlist with enriched data"""
+    """Get all symbols in the watchlist with enriched data (stocks + crypto)"""
     import asyncio
     from services.alpaca_service import get_alpaca_service
+    from services.crypto_service import get_crypto_service
 
     alpaca = get_alpaca_service()
+    crypto_service = get_crypto_service()
 
     async def fetch_stock_data(symbol: str) -> WatchlistItemDetail:
         """Fetch data for a single stock symbol"""
         try:
-            # Check if it's a crypto symbol (skip Alpaca for crypto)
-            if '/' in symbol or symbol.endswith('USD') or symbol.endswith('USDT'):
-                return WatchlistItemDetail(
-                    symbol=symbol,
-                    name=get_company_name(symbol),
-                )
-
             # Get latest bar data for stocks (includes OHLCV)
             bar = await alpaca.get_latest_bar(symbol)
 
@@ -84,10 +83,41 @@ async def get_watchlist():
                 name=get_company_name(symbol),
             )
 
-    # Fetch all stock data in parallel
-    items = await asyncio.gather(*[fetch_stock_data(s) for s in user_watchlist])
+    async def fetch_crypto_data(symbol: str) -> WatchlistItemDetail:
+        """Fetch data for a crypto symbol"""
+        try:
+            quote = await crypto_service.get_crypto_quote(symbol)
+            if quote:
+                return WatchlistItemDetail(
+                    symbol=symbol,
+                    name=get_company_name(symbol),
+                    current_price=quote.get('price', 0),
+                    change=quote.get('change_24h', 0),
+                    change_pct=quote.get('change_percent_24h', 0),
+                    volume=int(quote.get('volume_24h', 0)) if quote.get('volume_24h') else None,
+                    bot_discovered=True,  # Crypto is always from bot scanning
+                )
+            return WatchlistItemDetail(
+                symbol=symbol,
+                name=get_company_name(symbol),
+                bot_discovered=True,
+            )
+        except Exception as e:
+            logger.warning(f"Failed to get crypto data for {symbol}: {e}")
+            return WatchlistItemDetail(
+                symbol=symbol,
+                name=get_company_name(symbol),
+                bot_discovered=True,
+            )
 
-    return {"items": list(items), "count": len(items)}
+    # Fetch stock data and crypto data in parallel
+    stock_items = await asyncio.gather(*[fetch_stock_data(s) for s in user_watchlist])
+    crypto_items = await asyncio.gather(*[fetch_crypto_data(s) for s in crypto_watchlist])
+
+    # Combine stocks and crypto
+    all_items = list(stock_items) + list(crypto_items)
+
+    return {"items": all_items, "count": len(all_items)}
 
 
 def get_company_name(symbol: str) -> str:
@@ -109,12 +139,26 @@ def get_company_name(symbol: str) -> str:
 
 @router.post("/add")
 async def add_to_watchlist(item: WatchlistItemInput):
-    """Add a symbol to the watchlist"""
+    """Add a symbol to the watchlist (stocks or crypto)"""
     symbol = item.symbol.upper()
-    if symbol in user_watchlist:
-        raise HTTPException(status_code=400, detail=f"{symbol} already in watchlist")
-    user_watchlist.append(symbol)
-    return {"success": True, "symbol": symbol, "count": len(user_watchlist)}
+    is_crypto = '/' in symbol or symbol.endswith('USD') or symbol.endswith('USDT') or item.asset_class == 'crypto'
+
+    if is_crypto:
+        # Ensure proper format for crypto (e.g., BTC/USD)
+        if not '/' in symbol and symbol.endswith('USD'):
+            # Convert BTCUSD -> BTC/USD
+            base = symbol[:-3]
+            symbol = f"{base}/USD"
+
+        if symbol in crypto_watchlist:
+            raise HTTPException(status_code=400, detail=f"{symbol} already in crypto watchlist")
+        crypto_watchlist.append(symbol)
+        return {"success": True, "symbol": symbol, "asset_class": "crypto", "count": len(crypto_watchlist)}
+    else:
+        if symbol in user_watchlist:
+            raise HTTPException(status_code=400, detail=f"{symbol} already in watchlist")
+        user_watchlist.append(symbol)
+        return {"success": True, "symbol": symbol, "asset_class": "stock", "count": len(user_watchlist)}
 
 
 @router.delete("/remove/{symbol}", response_model=WatchlistResponse)

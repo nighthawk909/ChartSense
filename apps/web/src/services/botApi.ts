@@ -26,8 +26,9 @@ import type {
   WeeklyReport,
 } from '../types/bot';
 
-// Base API URL - uses Vite proxy in development
-const API_BASE = '/api';
+// Base API URL - uses Vite proxy in development, full URL in production
+const API_URL = import.meta.env.VITE_API_URL || '';
+const API_BASE = API_URL ? `${API_URL}/api` : '/api';
 
 // Create axios instance with defaults
 const api = axios.create({

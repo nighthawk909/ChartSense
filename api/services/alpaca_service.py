@@ -346,6 +346,301 @@ class AlpacaService:
             logger.error(f"Failed to submit stop-loss order: {e}")
             raise
 
+    async def submit_bracket_order(
+        self,
+        symbol: str,
+        quantity: float,
+        side: str,
+        stop_loss_price: float,
+        take_profit_price: float,
+        limit_price: Optional[float] = None,
+        time_in_force: str = "gtc"
+    ) -> Dict[str, Any]:
+        """
+        Submit a bracket order with attached stop-loss and take-profit.
+
+        A bracket order consists of:
+        1. Entry order (market or limit)
+        2. Take-profit limit order (auto-attached)
+        3. Stop-loss stop order (auto-attached)
+
+        When one of the exit orders fills, the other is automatically cancelled.
+        This is an OCO (One-Cancels-Other) setup.
+
+        Args:
+            symbol: Stock symbol
+            quantity: Number of shares
+            side: "buy" or "sell"
+            stop_loss_price: Stop-loss trigger price
+            take_profit_price: Take-profit limit price
+            limit_price: Optional limit price for entry (None = market order)
+            time_in_force: "day", "gtc", etc.
+
+        Returns:
+            Order details including child order IDs
+        """
+        try:
+            from alpaca.trading.requests import (
+                MarketOrderRequest,
+                LimitOrderRequest,
+                TakeProfitRequest,
+                StopLossRequest,
+            )
+            from alpaca.trading.enums import OrderSide, TimeInForce, OrderClass
+
+            api = self._get_api()
+
+            order_side = OrderSide.BUY if side.lower() == "buy" else OrderSide.SELL
+            tif = getattr(TimeInForce, time_in_force.upper(), TimeInForce.GTC)
+
+            # Create bracket order components
+            take_profit = TakeProfitRequest(limit_price=take_profit_price)
+            stop_loss = StopLossRequest(stop_price=stop_loss_price)
+
+            if limit_price:
+                # Bracket with limit entry
+                order_data = LimitOrderRequest(
+                    symbol=symbol.upper(),
+                    qty=quantity,
+                    side=order_side,
+                    limit_price=limit_price,
+                    time_in_force=tif,
+                    order_class=OrderClass.BRACKET,
+                    take_profit=take_profit,
+                    stop_loss=stop_loss,
+                )
+            else:
+                # Bracket with market entry
+                order_data = MarketOrderRequest(
+                    symbol=symbol.upper(),
+                    qty=quantity,
+                    side=order_side,
+                    time_in_force=tif,
+                    order_class=OrderClass.BRACKET,
+                    take_profit=take_profit,
+                    stop_loss=stop_loss,
+                )
+
+            order = api.submit_order(order_data)
+
+            logger.info(
+                f"Submitted bracket order: {side} {quantity} {symbol} "
+                f"(SL: ${stop_loss_price:.2f}, TP: ${take_profit_price:.2f})"
+            )
+
+            # Extract child order IDs if available
+            legs = []
+            if hasattr(order, 'legs') and order.legs:
+                for leg in order.legs:
+                    legs.append({
+                        "id": str(leg.id),
+                        "type": leg.type.value if hasattr(leg.type, 'value') else str(leg.type),
+                        "status": leg.status.value if hasattr(leg.status, 'value') else str(leg.status),
+                    })
+
+            return {
+                "id": str(order.id),
+                "client_order_id": order.client_order_id,
+                "symbol": order.symbol,
+                "quantity": float(order.qty) if order.qty else quantity,
+                "side": order.side.value,
+                "type": order.type.value,
+                "order_class": "bracket",
+                "stop_loss_price": stop_loss_price,
+                "take_profit_price": take_profit_price,
+                "limit_price": limit_price,
+                "status": order.status.value,
+                "legs": legs,
+                "submitted_at": order.submitted_at.isoformat() if order.submitted_at else None,
+            }
+        except Exception as e:
+            logger.error(f"Failed to submit bracket order: {e}")
+            raise
+
+    async def submit_oco_order(
+        self,
+        symbol: str,
+        quantity: float,
+        stop_loss_price: float,
+        take_profit_price: float,
+        time_in_force: str = "gtc"
+    ) -> Dict[str, Any]:
+        """
+        Submit an OCO (One-Cancels-Other) order for an existing position.
+
+        This creates two exit orders:
+        1. A stop-loss order at stop_loss_price
+        2. A take-profit limit order at take_profit_price
+
+        When one fills, the other is automatically cancelled.
+
+        Args:
+            symbol: Stock symbol
+            quantity: Number of shares to exit
+            stop_loss_price: Stop-loss trigger price
+            take_profit_price: Take-profit limit price
+            time_in_force: "day", "gtc", etc.
+
+        Returns:
+            Order details
+        """
+        try:
+            from alpaca.trading.requests import LimitOrderRequest, StopLossRequest, TakeProfitRequest
+            from alpaca.trading.enums import OrderSide, TimeInForce, OrderClass
+
+            api = self._get_api()
+            tif = getattr(TimeInForce, time_in_force.upper(), TimeInForce.GTC)
+
+            # OCO order to exit position (sell side for long positions)
+            take_profit = TakeProfitRequest(limit_price=take_profit_price)
+            stop_loss = StopLossRequest(stop_price=stop_loss_price)
+
+            order_data = LimitOrderRequest(
+                symbol=symbol.upper(),
+                qty=quantity,
+                side=OrderSide.SELL,
+                limit_price=take_profit_price,
+                time_in_force=tif,
+                order_class=OrderClass.OCO,
+                stop_loss=stop_loss,
+            )
+
+            order = api.submit_order(order_data)
+
+            logger.info(
+                f"Submitted OCO exit order: {symbol} "
+                f"(SL: ${stop_loss_price:.2f}, TP: ${take_profit_price:.2f})"
+            )
+
+            return {
+                "id": str(order.id),
+                "symbol": order.symbol,
+                "quantity": float(order.qty) if order.qty else quantity,
+                "order_class": "oco",
+                "stop_loss_price": stop_loss_price,
+                "take_profit_price": take_profit_price,
+                "status": order.status.value,
+            }
+        except Exception as e:
+            logger.error(f"Failed to submit OCO order: {e}")
+            raise
+
+    async def submit_trailing_stop_order(
+        self,
+        symbol: str,
+        quantity: float,
+        trail_percent: Optional[float] = None,
+        trail_price: Optional[float] = None,
+        time_in_force: str = "gtc"
+    ) -> Dict[str, Any]:
+        """
+        Submit a trailing stop order.
+
+        The trailing stop follows the price up (for long positions) but doesn't
+        move down. If price drops by the trail amount, the stop is triggered.
+
+        Args:
+            symbol: Stock symbol
+            quantity: Number of shares
+            trail_percent: Trail percentage (e.g., 0.03 for 3%)
+            trail_price: Trail dollar amount (alternative to trail_percent)
+            time_in_force: "day", "gtc", etc.
+
+        Returns:
+            Order details
+        """
+        try:
+            from alpaca.trading.requests import TrailingStopOrderRequest
+            from alpaca.trading.enums import OrderSide, TimeInForce
+
+            api = self._get_api()
+            tif = getattr(TimeInForce, time_in_force.upper(), TimeInForce.GTC)
+
+            order_data = TrailingStopOrderRequest(
+                symbol=symbol.upper(),
+                qty=quantity,
+                side=OrderSide.SELL,
+                time_in_force=tif,
+                trail_percent=trail_percent * 100 if trail_percent else None,  # Alpaca expects percentage as 3 not 0.03
+                trail_price=trail_price,
+            )
+
+            order = api.submit_order(order_data)
+
+            logger.info(
+                f"Submitted trailing stop order: {symbol} "
+                f"(trail: {trail_percent*100 if trail_percent else trail_price}{'%' if trail_percent else '$'})"
+            )
+
+            return {
+                "id": str(order.id),
+                "symbol": order.symbol,
+                "quantity": float(order.qty) if order.qty else quantity,
+                "type": "trailing_stop",
+                "trail_percent": trail_percent,
+                "trail_price": trail_price,
+                "status": order.status.value,
+            }
+        except Exception as e:
+            logger.error(f"Failed to submit trailing stop order: {e}")
+            raise
+
+    async def replace_order(
+        self,
+        order_id: str,
+        quantity: Optional[float] = None,
+        limit_price: Optional[float] = None,
+        stop_price: Optional[float] = None,
+        trail_price: Optional[float] = None,
+        time_in_force: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Replace/modify an existing order.
+
+        Used to update stop-loss or take-profit prices without cancelling
+        and recreating orders (which could leave gaps in protection).
+
+        Args:
+            order_id: Order ID to replace
+            quantity: New quantity (optional)
+            limit_price: New limit price (optional)
+            stop_price: New stop price (optional)
+            trail_price: New trail price (optional)
+            time_in_force: New TIF (optional)
+
+        Returns:
+            New order details
+        """
+        try:
+            from alpaca.trading.requests import ReplaceOrderRequest
+            from alpaca.trading.enums import TimeInForce
+
+            api = self._get_api()
+
+            replace_data = ReplaceOrderRequest(
+                qty=quantity,
+                limit_price=limit_price,
+                stop_price=stop_price,
+                trail=trail_price,
+                time_in_force=getattr(TimeInForce, time_in_force.upper(), None) if time_in_force else None,
+            )
+
+            order = api.replace_order_by_id(order_id, replace_data)
+
+            logger.info(f"Replaced order {order_id}")
+
+            return {
+                "id": str(order.id),
+                "symbol": order.symbol,
+                "quantity": float(order.qty) if order.qty else None,
+                "status": order.status.value,
+                "limit_price": float(order.limit_price) if order.limit_price else None,
+                "stop_price": float(order.stop_price) if order.stop_price else None,
+            }
+        except Exception as e:
+            logger.error(f"Failed to replace order {order_id}: {e}")
+            raise
+
     async def cancel_order(self, order_id: str) -> bool:
         """
         Cancel an open order.

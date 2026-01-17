@@ -816,8 +816,8 @@ async def get_multi_timeframe_ai_insight(symbol: str):
         longterm_rec = _get_recommendation(longterm_score)
 
         # ============= MULTI-TIMEFRAME ELLIOTT WAVE =============
-        # Calculate Elliott Wave for each timeframe
-        elliott_wave_daily = _estimate_elliott_wave(daily_closes, daily_highs, daily_lows)
+        # Calculate Elliott Wave for each timeframe with appropriate window sizes
+        elliott_wave_daily = _estimate_elliott_wave(daily_closes, daily_highs, daily_lows, timeframe="daily")
 
         # Hourly Elliott Wave
         elliott_wave_hourly = None
@@ -825,7 +825,7 @@ async def get_multi_timeframe_ai_insight(symbol: str):
             hourly_closes = [b["close"] for b in hourly_bars]
             hourly_highs_list = [b["high"] for b in hourly_bars]
             hourly_lows_list = [b["low"] for b in hourly_bars]
-            elliott_wave_hourly = _estimate_elliott_wave(hourly_closes, hourly_highs_list, hourly_lows_list)
+            elliott_wave_hourly = _estimate_elliott_wave(hourly_closes, hourly_highs_list, hourly_lows_list, timeframe="1hour")
 
         # 15-minute Elliott Wave
         elliott_wave_15m = None
@@ -833,7 +833,7 @@ async def get_multi_timeframe_ai_insight(symbol: str):
             min15_closes_all = [b["close"] for b in min_15_bars]
             min15_highs_list = [b["high"] for b in min_15_bars]
             min15_lows_list = [b["low"] for b in min_15_bars]
-            elliott_wave_15m = _estimate_elliott_wave(min15_closes_all, min15_highs_list, min15_lows_list)
+            elliott_wave_15m = _estimate_elliott_wave(min15_closes_all, min15_highs_list, min15_lows_list, timeframe="15min")
 
         # Combined Elliott Wave object with all timeframes
         elliott_wave = {
@@ -1499,7 +1499,7 @@ async def get_adaptive_indicators(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-def _estimate_elliott_wave(closes: list, highs: list, lows: list) -> dict:
+def _estimate_elliott_wave(closes: list, highs: list, lows: list, timeframe: str = "daily") -> dict:
     """
     Estimate Elliott Wave position based on price action.
     This is a simplified estimation - real Elliott Wave analysis is complex.
@@ -1510,6 +1510,12 @@ def _estimate_elliott_wave(closes: list, highs: list, lows: list) -> dict:
     - Wave 3: Strongest and longest (never the shortest, often 1.618x Wave 1)
     - Wave 4: Shallow correction (usually 38.2% of Wave 3)
     - Wave 5: Final push (often equals Wave 1 or 0.618x Wave 1)
+
+    Args:
+        closes: List of closing prices
+        highs: List of high prices
+        lows: List of low prices
+        timeframe: Timeframe string (affects swing detection window)
     """
     if len(closes) < 50:
         return {
@@ -1524,6 +1530,26 @@ def _estimate_elliott_wave(closes: list, highs: list, lows: list) -> dict:
             "action_reason": "Insufficient data for analysis"
         }
 
+    # Timeframe-adaptive window size for swing detection
+    # Shorter timeframes need smaller windows, longer need larger
+    tf_lower = timeframe.lower() if timeframe else "daily"
+    if "1min" in tf_lower or "1m" in tf_lower:
+        swing_window = 3
+    elif "5min" in tf_lower or "5m" in tf_lower:
+        swing_window = 4
+    elif "15min" in tf_lower or "15m" in tf_lower:
+        swing_window = 5
+    elif "hour" in tf_lower or "1h" in tf_lower or "60" in tf_lower:
+        swing_window = 7
+    elif "4h" in tf_lower:
+        swing_window = 10
+    elif "day" in tf_lower or "1d" in tf_lower:
+        swing_window = 10
+    elif "week" in tf_lower or "1w" in tf_lower:
+        swing_window = 12
+    else:
+        swing_window = 5  # Default
+
     # Find significant swing points
     lookback = min(100, len(closes))
     recent_closes = closes[-lookback:]
@@ -1535,14 +1561,14 @@ def _estimate_elliott_wave(closes: list, highs: list, lows: list) -> dict:
     sma_20 = sum(closes[-20:]) / 20 if len(closes) >= 20 else sma_50
     current = closes[-1]
 
-    # Find local highs and lows for wave counting
+    # Find local highs and lows for wave counting with timeframe-adaptive window
     swing_highs = []
     swing_lows = []
 
-    for i in range(5, lookback - 5):
-        if recent_highs[i] == max(recent_highs[i-5:i+6]):
+    for i in range(swing_window, lookback - swing_window):
+        if recent_highs[i] == max(recent_highs[i-swing_window:i+swing_window+1]):
             swing_highs.append((i, recent_highs[i]))
-        if recent_lows[i] == min(recent_lows[i-5:i+6]):
+        if recent_lows[i] == min(recent_lows[i-swing_window:i+swing_window+1]):
             swing_lows.append((i, recent_lows[i]))
 
     # Determine overall direction
@@ -1618,15 +1644,17 @@ def _estimate_elliott_wave(closes: list, highs: list, lows: list) -> dict:
         confidence = 40
         trading_action = "TAKE_PROFIT" if direction == "bullish" else "COVER_SHORT"
         action_reason = "Wave 5 is the final impulse wave. Consider taking profits. A major correction (A-B-C) typically follows."
-        # For bullish Wave 5: sell zone to take profits near highs
-        # For bearish Wave 5: buy zone for potential reversal, sell zone for shorts to cover
+        # For bullish Wave 5: sell zone to take profits near highs - no buy zone (too late to buy)
+        # For bearish Wave 5: buy zone for potential reversal only - shorts should have already covered
+        # IMPORTANT: Only show ONE zone to avoid confusion
         if direction == "bullish":
             buy_zone = None
             sell_zone = {"low": round(fib_618, 2), "high": round(recent_high, 2)}
         else:
-            # Bearish Wave 5 ending - prepare for bullish reversal
+            # Bearish Wave 5 ending - PRIMARY action is to prepare for reversal (buy zone)
+            # Don't show both zones as it confuses the user
             buy_zone = {"low": round(recent_low, 2), "high": round(recent_low + range_size * 0.236, 2)}
-            sell_zone = {"low": round(current * 0.98, 2), "high": round(current * 1.02, 2)}
+            sell_zone = None  # Shorts should cover within buy zone price, not a separate zone
 
     # Calculate Fibonacci targets
     fib_targets = {

@@ -72,18 +72,43 @@ async def get_detailed_metrics(period_days: int = Query(30, ge=1, le=365)):
         total_pnl_pct=metrics.total_pnl_pct,
         profit_factor=metrics.profit_factor,
         sharpe_ratio=metrics.sharpe_ratio,
+        sortino_ratio=metrics.sortino_ratio,
+        calmar_ratio=metrics.calmar_ratio,
         max_drawdown=metrics.max_drawdown,
         max_drawdown_pct=metrics.max_drawdown_pct,
+        current_drawdown_pct=metrics.current_drawdown_pct,
         avg_win=metrics.avg_win,
         avg_loss=metrics.avg_loss,
+        avg_trade=metrics.avg_trade,
+        expectancy=metrics.expectancy,
         avg_trade_duration_hours=metrics.avg_trade_duration_hours,
         best_trade=metrics.best_trade,
         worst_trade=metrics.worst_trade,
+        consecutive_wins=metrics.consecutive_wins,
+        consecutive_losses=metrics.consecutive_losses,
+        max_consecutive_wins=metrics.max_consecutive_wins,
+        max_consecutive_losses=metrics.max_consecutive_losses,
         swing_trades=metrics.swing_trades,
         swing_win_rate=metrics.swing_win_rate,
         longterm_trades=metrics.longterm_trades,
         longterm_win_rate=metrics.longterm_win_rate,
     )
+
+
+@router.get("/dashboard")
+async def get_performance_dashboard():
+    """
+    Get complete performance dashboard data.
+
+    Returns all metrics needed for the performance dashboard UI including:
+    - Summary metrics (win rate, Sharpe, Sortino, drawdown)
+    - Period comparisons (7d, 30d, 90d)
+    - Trade statistics
+    - Equity curve
+    - Performance by trade type
+    """
+    tracker = PerformanceTracker()
+    return tracker.get_dashboard_data()
 
 
 @router.get("/equity-curve", response_model=EquityCurveResponse)

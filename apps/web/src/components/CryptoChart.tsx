@@ -1,5 +1,6 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, useCallback } from 'react'
 import { createChart, ColorType, IChartApi, UTCTimestamp } from 'lightweight-charts'
+import { RefreshCw, AlertTriangle } from 'lucide-react'
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
 
@@ -20,6 +21,15 @@ interface BarData {
   volume: number
 }
 
+// Stale threshold in seconds by timeframe
+const STALE_THRESHOLDS: Record<TimeInterval, number> = {
+  '1Min': 120,   // 2 minutes for 1-min chart
+  '5Min': 600,   // 10 minutes for 5-min chart
+  '15Min': 1800, // 30 minutes for 15-min chart
+  '1Hour': 7200, // 2 hours for hourly chart
+  '1Day': 86400, // 1 day for daily chart
+}
+
 export default function CryptoChart({ symbol, chartType = 'candlestick', timeframe = '1Hour' }: CryptoChartProps) {
   const chartContainerRef = useRef<HTMLDivElement>(null)
   const chartRef = useRef<IChartApi | null>(null)
@@ -27,6 +37,10 @@ export default function CryptoChart({ symbol, chartType = 'candlestick', timefra
   const [error, setError] = useState<string | null>(null)
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null)
   const [dataPoints, setDataPoints] = useState<number>(0)
+  const [lastBarTime, setLastBarTime] = useState<Date | null>(null)
+  const [isStale, setIsStale] = useState(false)
+  const [refreshing, setRefreshing] = useState(false)
+  const [refreshKey, setRefreshKey] = useState(0)  // Used to force chart recreation
 
   useEffect(() => {
     if (!chartContainerRef.current) return
@@ -102,6 +116,19 @@ export default function CryptoChart({ symbol, chartType = 'candlestick', timefra
         setLastUpdated(new Date())
         setDataPoints(sortedData.length)
 
+        // Check last bar time for staleness detection
+        if (sortedData.length > 0) {
+          const lastBar = sortedData[sortedData.length - 1]
+          const lastTime = new Date(lastBar.timestamp)
+          setLastBarTime(lastTime)
+
+          // Check if data is stale
+          const now = new Date()
+          const ageSeconds = (now.getTime() - lastTime.getTime()) / 1000
+          const threshold = STALE_THRESHOLDS[timeframe] || 3600
+          setIsStale(ageSeconds > threshold)
+        }
+
         if (chartType === 'candlestick') {
           const series = chart.addCandlestickSeries({
             upColor: '#22c55e',
@@ -165,7 +192,19 @@ export default function CryptoChart({ symbol, chartType = 'candlestick', timefra
       window.removeEventListener('resize', handleResize)
       chart.remove()
     }
-  }, [symbol, chartType, timeframe])
+  }, [symbol, chartType, timeframe, refreshKey])  // Include refreshKey to trigger recreation
+
+  // Handle manual refresh - forces chart recreation with fresh data
+  const handleRefresh = useCallback(() => {
+    if (refreshing) return
+    setRefreshing(true)
+    setIsStale(false)
+    setError(null)
+    // Increment refreshKey to trigger useEffect to recreate chart with new data
+    setRefreshKey(prev => prev + 1)
+    // Reset refreshing state after a short delay
+    setTimeout(() => setRefreshing(false), 500)
+  }, [refreshing])
 
   return (
     <div className="w-full">
@@ -190,13 +229,49 @@ export default function CryptoChart({ symbol, chartType = 'candlestick', timefra
         </div>
       )}
 
-      {/* Data freshness indicator */}
+      {/* Data freshness indicator with refresh button */}
       {!loading && !error && lastUpdated && (
-        <div className="flex items-center justify-between mt-2 px-1 text-xs text-slate-500">
-          <span>{dataPoints} data points</span>
-          <div className="flex items-center gap-1">
-            <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></span>
-            <span>Updated {lastUpdated.toLocaleTimeString()}</span>
+        <div className="space-y-2 mt-2">
+          {/* Stale data warning */}
+          {isStale && (
+            <div className="flex items-center justify-between px-2 py-1.5 bg-yellow-500/10 border border-yellow-500/30 rounded text-xs">
+              <div className="flex items-center gap-1.5 text-yellow-400">
+                <AlertTriangle className="w-3.5 h-3.5" />
+                <span>Chart data may be outdated</span>
+              </div>
+              <button
+                onClick={handleRefresh}
+                disabled={refreshing}
+                className="flex items-center gap-1 px-2 py-0.5 bg-yellow-500/20 hover:bg-yellow-500/30 text-yellow-400 rounded text-[10px] font-medium"
+              >
+                <RefreshCw className={`w-3 h-3 ${refreshing ? 'animate-spin' : ''}`} />
+                Refresh
+              </button>
+            </div>
+          )}
+
+          {/* Data info bar */}
+          <div className="flex items-center justify-between px-1 text-xs text-slate-500">
+            <span>{dataPoints} data points</span>
+            <div className="flex items-center gap-2">
+              {lastBarTime && (
+                <span className="text-slate-600">
+                  Last bar: {lastBarTime.toLocaleTimeString()}
+                </span>
+              )}
+              <div className="flex items-center gap-1">
+                <span className={`w-2 h-2 rounded-full ${isStale ? 'bg-yellow-500' : 'bg-green-500 animate-pulse'}`}></span>
+                <span>Fetched {lastUpdated.toLocaleTimeString()}</span>
+              </div>
+              <button
+                onClick={handleRefresh}
+                disabled={refreshing}
+                className="p-1 hover:bg-slate-700 rounded transition-colors"
+                title="Refresh chart data"
+              >
+                <RefreshCw className={`w-3 h-3 ${refreshing ? 'animate-spin' : ''}`} />
+              </button>
+            </div>
           </div>
         </div>
       )}
