@@ -24,6 +24,11 @@ for /f "tokens=5" %%a in ('netstat -ano 2^>nul ^| findstr ":5173" ^| findstr "LI
     taskkill /F /PID %%a >nul 2>&1
 )
 
+REM Clear Python cache to ensure fresh imports
+if exist "%PROJECT_DIR%api\__pycache__" rd /s /q "%PROJECT_DIR%api\__pycache__" >nul 2>&1
+if exist "%PROJECT_DIR%api\routes\__pycache__" rd /s /q "%PROJECT_DIR%api\routes\__pycache__" >nul 2>&1
+if exist "%PROJECT_DIR%api\services\__pycache__" rd /s /q "%PROJECT_DIR%api\services\__pycache__" >nul 2>&1
+
 echo         Done.
 echo.
 
@@ -54,7 +59,7 @@ echo.
 echo  [4/7] Starting API Server (port 8000)...
 echo  --------------------------------------------------------
 cd /d "%PROJECT_DIR%api"
-start "ChartSense API" cmd /k python -m uvicorn main:app --host 0.0.0.0 --port 8000
+start "ChartSense API" cmd /k python -m uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 echo         API server starting...
 timeout /t 3 /nobreak >nul
 echo.
