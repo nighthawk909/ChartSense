@@ -250,10 +250,10 @@ export default function StockDetail() {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex items-start justify-between">
+      <div className="flex flex-col sm:flex-row items-start sm:justify-between gap-3 sm:gap-0">
         <div>
-          <div className="flex items-center gap-3">
-            <h1 className="text-2xl font-bold">{symbol}</h1>
+          <div className="flex items-center gap-2 sm:gap-3">
+            <h1 className="text-xl sm:text-2xl font-bold">{symbol}</h1>
             <button
               onClick={toggleWatchlist}
               className="p-2 hover:bg-slate-700 rounded-lg transition-colors"
@@ -280,12 +280,12 @@ export default function StockDetail() {
             )}
           </div>
         </div>
-        <div className="text-right">
-          <p className="text-3xl font-bold">${quote?.price?.toFixed(2) || '—'}</p>
+        <div className="text-left sm:text-right">
+          <p className="text-2xl sm:text-3xl font-bold">${quote?.price?.toFixed(2) || '—'}</p>
           {quote && (
-            <div className={`flex items-center justify-end gap-1 ${quote.change >= 0 ? 'text-green-500' : 'text-red-500'}`}>
-              {quote.change >= 0 ? <TrendingUp className="h-5 w-5" /> : <TrendingDown className="h-5 w-5" />}
-              <span className="text-lg font-medium">
+            <div className={`flex items-center sm:justify-end gap-1 ${quote.change >= 0 ? 'text-green-500' : 'text-red-500'}`}>
+              {quote.change >= 0 ? <TrendingUp className="h-4 w-4 sm:h-5 sm:w-5" /> : <TrendingDown className="h-4 w-4 sm:h-5 sm:w-5" />}
+              <span className="text-base sm:text-lg font-medium">
                 {quote.change >= 0 ? '+' : ''}{quote.change?.toFixed(2)} ({quote.change_percent?.toFixed(2)}%)
               </span>
             </div>
@@ -293,16 +293,16 @@ export default function StockDetail() {
         </div>
       </div>
 
-      <div className="grid grid-cols-3 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 lg:gap-6">
         {/* Chart */}
-        <div className="col-span-2 space-y-6">
+        <div className="lg:col-span-2 space-y-4 lg:space-y-6">
           <div className="bg-slate-800 rounded-lg p-4 border border-slate-700">
             {/* Chart Controls */}
             <div className="flex flex-col gap-3 mb-4">
               {/* Interval selector (granularity) */}
               <div className="flex items-center gap-2">
-                <span className="text-xs text-slate-400 w-16">Interval:</span>
-                <div className="flex gap-1">
+                <span className="text-xs text-slate-400 shrink-0">Interval:</span>
+                <div className="flex gap-1 overflow-x-auto pb-1">
                   {[
                     { value: '1min', label: '1m' },
                     { value: '5min', label: '5m' },
@@ -324,10 +324,10 @@ export default function StockDetail() {
                 </div>
               </div>
               {/* Period and chart type */}
-              <div className="flex items-center justify-between">
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
                 <div className="flex items-center gap-2">
-                  <span className="text-xs text-slate-400 w-16">Period:</span>
-                  <div className="flex gap-1">
+                  <span className="text-xs text-slate-400 shrink-0">Period:</span>
+                  <div className="flex gap-1 overflow-x-auto pb-1 sm:pb-0">
                     {['1D', '1W', '1M', '3M', '1Y', 'ALL'].map((p) => (
                       <button
                         key={p}
@@ -361,15 +361,15 @@ export default function StockDetail() {
                 </div>
               </div>
             </div>
-            <div className="h-96">
+            <div className="h-64 sm:h-80 lg:h-96">
               <StockChart symbol={symbol || 'AAPL'} chartType={chartType} period={period} interval={interval} />
             </div>
           </div>
 
           {/* Technical Analysis - Enhanced */}
-          <div className="bg-slate-800 rounded-lg p-4 border border-slate-700">
-            <h2 className="text-lg font-semibold mb-4">Technical Analysis</h2>
-            <div className="grid grid-cols-2 gap-6">
+          <div className="bg-slate-800 rounded-lg p-3 sm:p-4 border border-slate-700">
+            <h2 className="text-base sm:text-lg font-semibold mb-3 sm:mb-4">Technical Analysis</h2>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 sm:gap-6">
               {/* Momentum Indicators */}
               <div>
                 <h3 className="text-sm font-medium text-slate-400 mb-3">Momentum Indicators</h3>
@@ -469,7 +469,7 @@ export default function StockDetail() {
             {aiInsight && (
               <div className="mt-4 pt-4 border-t border-slate-700">
                 <h3 className="text-sm font-medium text-slate-400 mb-3">Volatility & Volume</h3>
-                <div className="grid grid-cols-4 gap-4">
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 sm:gap-4">
                   {/* ATR */}
                   <div className="bg-slate-700/50 rounded-lg p-3">
                     <p className="text-xs text-slate-400 mb-1">ATR (14)</p>
@@ -507,9 +507,9 @@ export default function StockDetail() {
             {/* Overall Signal Summary */}
             {aiInsight && (
               <div className="mt-4 pt-4 border-t border-slate-700">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-3">
-                    <span className="text-sm text-slate-400">Overall Signal:</span>
+                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                  <div className="flex items-center gap-2 sm:gap-3">
+                    <span className="text-xs sm:text-sm text-slate-400">Overall Signal:</span>
                     <span className={`text-sm font-bold px-3 py-1 rounded ${
                       aiInsight.score >= 70 ? 'bg-green-600 text-white' :
                       aiInsight.score >= 50 ? 'bg-yellow-500 text-black' :
@@ -535,9 +535,9 @@ export default function StockDetail() {
         </div>
 
         {/* Sidebar */}
-        <div className="space-y-6">
-          <div className="bg-slate-800 rounded-lg p-4 border border-slate-700">
-            <h2 className="text-lg font-semibold mb-4">Key Statistics</h2>
+        <div className="space-y-4 lg:space-y-6">
+          <div className="bg-slate-800 rounded-lg p-3 sm:p-4 border border-slate-700">
+            <h2 className="text-base sm:text-lg font-semibold mb-3 sm:mb-4">Key Statistics</h2>
             <div className="space-y-3">
               <StatRow label="Open" value={quote?.open ? `$${quote.open.toFixed(2)}` : '—'} />
               <StatRow label="High" value={quote?.high ? `$${quote.high.toFixed(2)}` : '—'} />
@@ -558,10 +558,10 @@ export default function StockDetail() {
 
           {/* Support & Resistance */}
           {supportResistance && (
-            <div className="bg-slate-800 rounded-lg p-4 border border-slate-700">
+            <div className="bg-slate-800 rounded-lg p-3 sm:p-4 border border-slate-700">
               <div className="flex items-center gap-2 mb-3">
-                <Target className="h-5 w-5 text-yellow-500" />
-                <h2 className="text-lg font-semibold">Support & Resistance</h2>
+                <Target className="h-4 w-4 sm:h-5 sm:w-5 text-yellow-500" />
+                <h2 className="text-base sm:text-lg font-semibold">Support & Resistance</h2>
               </div>
               <div className="space-y-3">
                 {supportResistance.nearest_resistance && (
@@ -605,10 +605,10 @@ export default function StockDetail() {
 
           {/* Trend Lines */}
           {trendLines.length > 0 && (
-            <div className="bg-slate-800 rounded-lg p-4 border border-slate-700">
+            <div className="bg-slate-800 rounded-lg p-3 sm:p-4 border border-slate-700">
               <div className="flex items-center gap-2 mb-3">
-                <GitBranch className="h-5 w-5 text-cyan-500" />
-                <h2 className="text-lg font-semibold">Trend Lines</h2>
+                <GitBranch className="h-4 w-4 sm:h-5 sm:w-5 text-cyan-500" />
+                <h2 className="text-base sm:text-lg font-semibold">Trend Lines</h2>
               </div>
               <div className="space-y-2">
                 {trendLines.map((line, i) => (

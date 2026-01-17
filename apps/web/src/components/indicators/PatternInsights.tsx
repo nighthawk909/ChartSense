@@ -218,10 +218,10 @@ export default function PatternInsights({ symbol, interval = 'daily', compact = 
 
   if (loading) {
     return (
-      <div className="bg-slate-800 rounded-lg border border-slate-700 p-4">
+      <div className="bg-slate-800 rounded-lg border border-slate-700 p-3 sm:p-4">
         <div className="flex items-center gap-2 animate-pulse">
-          <Activity className="h-5 w-5 text-purple-400" />
-          <span className="text-slate-400">Scanning patterns for {symbol}...</span>
+          <Activity className="h-4 w-4 sm:h-5 sm:w-5 text-purple-400" />
+          <span className="text-sm sm:text-base text-slate-400">Scanning patterns for {symbol}...</span>
         </div>
       </div>
     );
@@ -229,13 +229,13 @@ export default function PatternInsights({ symbol, interval = 'daily', compact = 
 
   if (error) {
     return (
-      <div className="bg-slate-800 rounded-lg border border-slate-700 p-4">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2 text-red-400">
-            <AlertTriangle className="h-5 w-5" />
-            <span>{error}</span>
+      <div className="bg-slate-800 rounded-lg border border-slate-700 p-3 sm:p-4">
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2 text-red-400 min-w-0">
+            <AlertTriangle className="h-4 w-4 sm:h-5 sm:w-5 shrink-0" />
+            <span className="text-sm truncate">{error}</span>
           </div>
-          <button onClick={fetchPatterns} className="p-1 hover:bg-slate-700 rounded">
+          <button onClick={fetchPatterns} className="p-1 hover:bg-slate-700 rounded shrink-0">
             <RefreshCw className="h-4 w-4" />
           </button>
         </div>
@@ -248,27 +248,27 @@ export default function PatternInsights({ symbol, interval = 'daily', compact = 
   return (
     <div className="bg-slate-800 rounded-lg border border-slate-700 overflow-hidden">
       {/* Header with Signal */}
-      <div className="p-4 border-b border-slate-700">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className={`p-2 rounded-lg ${data.pattern_bias === 'bullish' ? 'bg-green-900/50' : data.pattern_bias === 'bearish' ? 'bg-red-900/50' : 'bg-slate-700'}`}>
+      <div className="p-3 sm:p-4 border-b border-slate-700">
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2 sm:gap-3 min-w-0">
+            <div className={`p-1.5 sm:p-2 rounded-lg shrink-0 ${data.pattern_bias === 'bullish' ? 'bg-green-900/50' : data.pattern_bias === 'bearish' ? 'bg-red-900/50' : 'bg-slate-700'}`}>
               {data.pattern_bias === 'bullish' ? (
-                <TrendingUp className="h-5 w-5 text-green-400" />
+                <TrendingUp className="h-4 w-4 sm:h-5 sm:w-5 text-green-400" />
               ) : data.pattern_bias === 'bearish' ? (
-                <TrendingDown className="h-5 w-5 text-red-400" />
+                <TrendingDown className="h-4 w-4 sm:h-5 sm:w-5 text-red-400" />
               ) : (
-                <Activity className="h-5 w-5 text-yellow-400" />
+                <Activity className="h-4 w-4 sm:h-5 sm:w-5 text-yellow-400" />
               )}
             </div>
-            <div>
-              <h3 className="font-semibold text-white">Pattern Analysis</h3>
-              <p className="text-xs text-slate-400">{data.patterns_detected} patterns detected</p>
+            <div className="min-w-0">
+              <h3 className="font-semibold text-white text-sm sm:text-base">Pattern Analysis</h3>
+              <p className="text-[10px] sm:text-xs text-slate-400">{data.patterns_detected} patterns detected</p>
             </div>
           </div>
 
           {/* Trade Signal Badge */}
-          <div className="flex items-center gap-2">
-            <span className={`px-3 py-1 rounded-full text-sm font-bold text-white ${getSignalBg(data.trade_signal)}`}>
+          <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
+            <span className={`px-2 sm:px-3 py-1 rounded-full text-xs sm:text-sm font-bold text-white ${getSignalBg(data.trade_signal)}`}>
               {data.trade_signal}
             </span>
             <button
@@ -281,12 +281,12 @@ export default function PatternInsights({ symbol, interval = 'daily', compact = 
         </div>
 
         {/* Interval Selector */}
-        <div className="flex items-center gap-1 mt-3">
+        <div className="flex items-center gap-1 mt-2 sm:mt-3 overflow-x-auto pb-1">
           {['5min', '15min', '1hour', 'daily'].map((int) => (
             <button
               key={int}
               onClick={() => setSelectedInterval(int)}
-              className={`px-2 py-1 text-xs rounded transition-colors ${
+              className={`px-2 py-1 text-xs rounded transition-colors whitespace-nowrap ${
                 selectedInterval === int
                   ? 'bg-blue-600 text-white'
                   : 'bg-slate-700 text-slate-400 hover:bg-slate-600'
@@ -297,7 +297,7 @@ export default function PatternInsights({ symbol, interval = 'daily', compact = 
           ))}
           <button
             onClick={fetchPatterns}
-            className="ml-auto p-1 hover:bg-slate-700 rounded"
+            className="ml-auto p-1 hover:bg-slate-700 rounded shrink-0"
             title="Refresh patterns"
           >
             <RefreshCw className={`h-3.5 w-3.5 text-slate-400 ${loading ? 'animate-spin' : ''}`} />
@@ -307,16 +307,16 @@ export default function PatternInsights({ symbol, interval = 'daily', compact = 
 
       {/* Active Breakout Alert */}
       {data.active_breakout && (
-        <div className={`px-4 py-3 ${data.active_breakout.direction === 'bullish' ? 'bg-green-900/30 border-green-500/30' : 'bg-red-900/30 border-red-500/30'} border-b`}>
+        <div className={`px-3 sm:px-4 py-2 sm:py-3 ${data.active_breakout.direction === 'bullish' ? 'bg-green-900/30 border-green-500/30' : 'bg-red-900/30 border-red-500/30'} border-b`}>
           <div className="flex items-center gap-2">
-            <Zap className={`h-5 w-5 ${data.active_breakout.direction === 'bullish' ? 'text-green-400' : 'text-red-400'}`} />
-            <div>
-              <p className={`font-semibold ${data.active_breakout.direction === 'bullish' ? 'text-green-400' : 'text-red-400'}`}>
+            <Zap className={`h-4 w-4 sm:h-5 sm:w-5 shrink-0 ${data.active_breakout.direction === 'bullish' ? 'text-green-400' : 'text-red-400'}`} />
+            <div className="min-w-0 flex-1">
+              <p className={`font-semibold text-sm sm:text-base ${data.active_breakout.direction === 'bullish' ? 'text-green-400' : 'text-red-400'}`}>
                 {data.active_breakout.type}!
               </p>
-              <p className="text-xs text-slate-300">{data.active_breakout.description}</p>
+              <p className="text-[10px] sm:text-xs text-slate-300 truncate">{data.active_breakout.description}</p>
             </div>
-            <span className="ml-auto text-xs bg-slate-800 px-2 py-1 rounded">
+            <span className="text-[10px] sm:text-xs bg-slate-800 px-1.5 sm:px-2 py-1 rounded shrink-0">
               {data.active_breakout.confidence}% conf
             </span>
           </div>
@@ -327,13 +327,13 @@ export default function PatternInsights({ symbol, interval = 'daily', compact = 
         <>
           {/* Actionable Patterns */}
           {data.actionable_patterns.length > 0 && (
-            <div className="p-4 border-b border-slate-700">
-              <h4 className="text-sm font-medium text-slate-400 mb-3">Actionable Patterns</h4>
+            <div className="p-3 sm:p-4 border-b border-slate-700">
+              <h4 className="text-xs sm:text-sm font-medium text-slate-400 mb-2 sm:mb-3">Actionable Patterns</h4>
               <div className="space-y-2">
                 {data.actionable_patterns.map((pattern, idx) => (
                   <div
                     key={idx}
-                    className={`p-3 rounded-lg ${
+                    className={`p-2 sm:p-3 rounded-lg ${
                       pattern.direction === 'bullish'
                         ? 'bg-green-900/20 border border-green-500/30'
                         : pattern.direction === 'bearish'
@@ -341,15 +341,15 @@ export default function PatternInsights({ symbol, interval = 'daily', compact = 
                         : 'bg-slate-700/50 border border-slate-600'
                     }`}
                   >
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-1.5 sm:gap-2 min-w-0 flex-wrap">
                         {getPatternIcon(pattern.pattern)}
-                        <span className={`font-medium ${getDirectionColor(pattern.direction)}`}>
+                        <span className={`font-medium text-sm ${getDirectionColor(pattern.direction)}`}>
                           {pattern.pattern}
                         </span>
                         {/* Timeframe Relevance Badge */}
                         {pattern.relevance_label && (
-                          <span className={`text-[10px] px-1.5 py-0.5 rounded ${
+                          <span className={`text-[10px] px-1 sm:px-1.5 py-0.5 rounded ${
                             pattern.relevance_label === 'High' ? 'bg-green-900/50 text-green-400' :
                             pattern.relevance_label === 'Low' ? 'bg-red-900/50 text-red-400' :
                             'bg-slate-700 text-slate-400'
@@ -358,11 +358,11 @@ export default function PatternInsights({ symbol, interval = 'daily', compact = 
                           </span>
                         )}
                       </div>
-                      <span className="text-xs bg-slate-800 px-2 py-1 rounded">
+                      <span className="text-[10px] sm:text-xs bg-slate-800 px-1.5 sm:px-2 py-1 rounded shrink-0">
                         {pattern.confidence.toFixed(0)}%
                       </span>
                     </div>
-                    <p className="text-xs text-slate-300 mt-1">{pattern.description}</p>
+                    <p className="text-[10px] sm:text-xs text-slate-300 mt-1">{pattern.description}</p>
 
                     {/* Entry Zone - Buy/Sell Range */}
                     {pattern.entry_zone && (
@@ -406,9 +406,9 @@ export default function PatternInsights({ symbol, interval = 'daily', compact = 
           )}
 
           {/* Support & Resistance */}
-          <div className="p-4 border-b border-slate-700">
-            <h4 className="text-sm font-medium text-slate-400 mb-3">Key Levels</h4>
-            <div className="grid grid-cols-2 gap-4">
+          <div className="p-3 sm:p-4 border-b border-slate-700">
+            <h4 className="text-xs sm:text-sm font-medium text-slate-400 mb-2 sm:mb-3">Key Levels</h4>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
               {/* Resistance */}
               <div>
                 <p className="text-xs text-red-400 mb-2">Resistance</p>
@@ -463,8 +463,8 @@ export default function PatternInsights({ symbol, interval = 'daily', compact = 
 
           {/* Trend Lines */}
           {data.trend_lines.length > 0 && (
-            <div className="p-4 border-b border-slate-700">
-              <h4 className="text-sm font-medium text-slate-400 mb-3">Trend Lines</h4>
+            <div className="p-3 sm:p-4 border-b border-slate-700">
+              <h4 className="text-xs sm:text-sm font-medium text-slate-400 mb-2 sm:mb-3">Trend Lines</h4>
               <div className="space-y-2">
                 {data.trend_lines.map((tl, idx) => (
                   <div key={idx} className="flex items-center justify-between text-sm">
@@ -488,8 +488,8 @@ export default function PatternInsights({ symbol, interval = 'daily', compact = 
 
           {/* All Patterns List */}
           {data.patterns.length > 0 && (
-            <div className="p-4">
-              <h4 className="text-sm font-medium text-slate-400 mb-3">All Detected Patterns</h4>
+            <div className="p-3 sm:p-4">
+              <h4 className="text-xs sm:text-sm font-medium text-slate-400 mb-2 sm:mb-3">All Detected Patterns</h4>
               <div className="space-y-1">
                 {data.patterns.map((pattern, idx) => (
                   <div key={idx} className="flex items-center justify-between py-1.5 border-b border-slate-700/50 last:border-0">
@@ -510,7 +510,7 @@ export default function PatternInsights({ symbol, interval = 'daily', compact = 
           )}
 
           {/* Overall Sentiment Summary */}
-          <div className="px-4 pb-4">
+          <div className="px-3 sm:px-4 pb-3 sm:pb-4">
             {/* Net Sentiment Explanation */}
             {(() => {
               const bullish = data.bullish_score ?? 0;
@@ -593,7 +593,7 @@ export default function PatternInsights({ symbol, interval = 'daily', compact = 
           </div>
 
           {/* Timestamp */}
-          <div className="px-4 pb-3 text-xs text-slate-500 text-right">
+          <div className="px-3 sm:px-4 pb-2 sm:pb-3 text-[10px] sm:text-xs text-slate-500 text-right">
             Updated: {new Date(data.timestamp).toLocaleTimeString()}
           </div>
         </>
