@@ -38,7 +38,10 @@ async def multi_timeframe_analysis(symbol: str):
 # ==================== Pattern Recognition ====================
 
 @router.get("/patterns/{symbol}")
-async def detect_patterns(symbol: str):
+async def detect_patterns(
+    symbol: str,
+    interval: str = Query("daily", description="Timeframe: 5min, 15min, 1hour, daily")
+):
     """
     Detect chart patterns for a stock.
 
@@ -51,9 +54,30 @@ async def detect_patterns(symbol: str):
     alpaca = get_alpaca_service()
     pattern_service = get_pattern_service()
 
+    # Map frontend interval to Alpaca timeframe
+    interval_map = {
+        "5min": "5Min",
+        "15min": "15Min",
+        "1hour": "1Hour",
+        "1h": "1Hour",
+        "daily": "1Day",
+        "1d": "1Day",
+        "1D": "1Day",
+    }
+    timeframe = interval_map.get(interval, "1Day")
+
+    # Adjust limit based on timeframe (more bars for intraday)
+    limit_map = {
+        "5Min": 500,   # ~2 days of 5min data
+        "15Min": 400,  # ~5 days of 15min data
+        "1Hour": 300,  # ~2 weeks of hourly data
+        "1Day": 200,   # ~200 trading days
+    }
+    limit = limit_map.get(timeframe, 200)
+
     try:
-        # Get historical data from Alpaca (no rate limit issues)
-        bars = await alpaca.get_bars(symbol.upper(), timeframe="1day", limit=200)
+        # Get historical data from Alpaca
+        bars = await alpaca.get_bars(symbol.upper(), timeframe=timeframe, limit=limit)
 
         if not bars or len(bars) < 50:
             raise HTTPException(status_code=404, detail=f"Insufficient data for {symbol} ({len(bars) if bars else 0} bars)")
@@ -64,9 +88,13 @@ async def detect_patterns(symbol: str):
         lows = [b["low"] for b in bars]
         closes = [b["close"] for b in bars]
 
-        # Analyze patterns
-        result = pattern_service.analyze(opens, highs, lows, closes)
+        # Analyze patterns with timeframe-appropriate weighting
+        result = pattern_service.analyze(opens, highs, lows, closes, timeframe=interval)
         result["symbol"] = symbol.upper()
+        result["interval"] = interval
+        result["timeframe"] = timeframe
+        result["bars_analyzed"] = len(bars)
+        result["current_price"] = closes[-1] if closes else None
 
         return result
     except HTTPException:

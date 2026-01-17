@@ -61,6 +61,9 @@ class PatternResult:
     price_target: Optional[float] = None
     stop_loss: Optional[float] = None
     description: str = ""
+    timeframe_relevance: float = 1.0  # Multiplier for timeframe appropriateness
+    entry_zone_low: Optional[float] = None  # Buy/Sell zone lower bound
+    entry_zone_high: Optional[float] = None  # Buy/Sell zone upper bound
 
 
 @dataclass
@@ -692,8 +695,21 @@ class PatternRecognitionService:
     ) -> List[PatternResult]:
         """
         Detect single and multi-candle patterns.
+        Consolidates duplicate patterns (e.g., multiple dojis become one with count).
         """
         patterns = []
+
+        # Track counts for consolidation
+        pattern_counts = {
+            "doji": 0,
+            "hammer": 0,
+            "inverted_hammer": 0,
+        }
+        pattern_indices = {
+            "doji": [],
+            "hammer": [],
+            "inverted_hammer": [],
+        }
 
         if len(closes) < 3:
             return patterns
@@ -711,36 +727,62 @@ class PatternRecognitionService:
 
             # Doji - small body, long wicks
             if body / total_range < 0.1:
-                patterns.append(PatternResult(
-                    pattern_type=PatternType.DOJI,
-                    confidence=80,
-                    direction="neutral",
-                    start_index=i,
-                    end_index=i,
-                    description="Doji - indecision candle"
-                ))
+                pattern_counts["doji"] += 1
+                pattern_indices["doji"].append(i)
 
             # Hammer - small body at top, long lower wick (bullish)
             elif lower_wick > body * 2 and upper_wick < body * 0.5 and c > o:
-                patterns.append(PatternResult(
-                    pattern_type=PatternType.HAMMER,
-                    confidence=75,
-                    direction="bullish",
-                    start_index=i,
-                    end_index=i,
-                    description="Hammer - potential bullish reversal"
-                ))
+                pattern_counts["hammer"] += 1
+                pattern_indices["hammer"].append(i)
 
             # Inverted Hammer - small body at bottom, long upper wick
             elif upper_wick > body * 2 and lower_wick < body * 0.5 and c < o:
-                patterns.append(PatternResult(
-                    pattern_type=PatternType.INVERTED_HAMMER,
-                    confidence=70,
-                    direction="bullish",
-                    start_index=i,
-                    end_index=i,
-                    description="Inverted Hammer - potential bullish reversal"
-                ))
+                pattern_counts["inverted_hammer"] += 1
+                pattern_indices["inverted_hammer"].append(i)
+
+        # Add consolidated patterns (one entry per pattern type)
+        if pattern_counts["doji"] > 0:
+            count = pattern_counts["doji"]
+            indices = pattern_indices["doji"]
+            # Multiple dojis increase confidence (indecision cluster)
+            confidence = min(80 + (count - 1) * 5, 90)
+            desc = "Doji - indecision candle" if count == 1 else f"Doji cluster ({count} candles) - strong indecision"
+            patterns.append(PatternResult(
+                pattern_type=PatternType.DOJI,
+                confidence=confidence,
+                direction="neutral",
+                start_index=indices[0],
+                end_index=indices[-1],
+                description=desc
+            ))
+
+        if pattern_counts["hammer"] > 0:
+            count = pattern_counts["hammer"]
+            indices = pattern_indices["hammer"]
+            confidence = min(75 + (count - 1) * 5, 85)
+            desc = "Hammer - potential bullish reversal" if count == 1 else f"Hammer pattern ({count}x) - strong bullish reversal"
+            patterns.append(PatternResult(
+                pattern_type=PatternType.HAMMER,
+                confidence=confidence,
+                direction="bullish",
+                start_index=indices[0],
+                end_index=indices[-1],
+                description=desc
+            ))
+
+        if pattern_counts["inverted_hammer"] > 0:
+            count = pattern_counts["inverted_hammer"]
+            indices = pattern_indices["inverted_hammer"]
+            confidence = min(70 + (count - 1) * 5, 80)
+            desc = "Inverted Hammer - potential bullish reversal" if count == 1 else f"Inverted Hammer ({count}x) - potential reversal"
+            patterns.append(PatternResult(
+                pattern_type=PatternType.INVERTED_HAMMER,
+                confidence=confidence,
+                direction="bullish",
+                start_index=indices[0],
+                end_index=indices[-1],
+                description=desc
+            ))
 
         # Multi-candle patterns
         if len(closes) >= 2:
@@ -1084,14 +1126,94 @@ class PatternRecognitionService:
         highs: List[float],
         lows: List[float],
         closes: List[float],
-        volumes: Optional[List[float]] = None
+        volumes: Optional[List[float]] = None,
+        timeframe: str = "daily"
     ) -> Dict[str, Any]:
         """
         Run full pattern analysis on price data.
 
-        Returns all detected patterns sorted by confidence.
+        Returns all detected patterns sorted by confidence, with timeframe-appropriate weighting.
+
+        Timeframe relevance:
+        - 5min/15min (Scalp): Candlestick patterns, breakouts, flags work best
+        - 1hour (Intraday): Triangles, flags, breakouts work best
+        - daily+ (Swing): H&S, Double Top/Bottom, Elliott Wave work best
         """
         patterns = []
+
+        # Define pattern relevance by timeframe
+        # Higher relevance = pattern is more reliable on this timeframe
+        PATTERN_RELEVANCE = {
+            "5min": {
+                PatternType.DOJI: 1.2,           # Very relevant for scalping
+                PatternType.HAMMER: 1.2,
+                PatternType.INVERTED_HAMMER: 1.1,
+                PatternType.ENGULFING_BULLISH: 1.15,
+                PatternType.ENGULFING_BEARISH: 1.15,
+                PatternType.BULL_FLAG: 1.0,
+                PatternType.BEAR_FLAG: 1.0,
+                PatternType.HEAD_AND_SHOULDERS: 0.6,    # Less reliable on short timeframes
+                PatternType.DOUBLE_TOP: 0.7,
+                PatternType.DOUBLE_BOTTOM: 0.7,
+                PatternType.SYMMETRICAL_TRIANGLE: 0.8,
+            },
+            "15min": {
+                PatternType.DOJI: 1.1,
+                PatternType.HAMMER: 1.1,
+                PatternType.INVERTED_HAMMER: 1.0,
+                PatternType.ENGULFING_BULLISH: 1.1,
+                PatternType.ENGULFING_BEARISH: 1.1,
+                PatternType.BULL_FLAG: 1.1,
+                PatternType.BEAR_FLAG: 1.1,
+                PatternType.HEAD_AND_SHOULDERS: 0.7,
+                PatternType.DOUBLE_TOP: 0.8,
+                PatternType.DOUBLE_BOTTOM: 0.8,
+                PatternType.SYMMETRICAL_TRIANGLE: 0.9,
+            },
+            "1hour": {
+                PatternType.DOJI: 0.9,
+                PatternType.HAMMER: 1.0,
+                PatternType.INVERTED_HAMMER: 0.9,
+                PatternType.ENGULFING_BULLISH: 1.0,
+                PatternType.ENGULFING_BEARISH: 1.0,
+                PatternType.BULL_FLAG: 1.15,
+                PatternType.BEAR_FLAG: 1.15,
+                PatternType.HEAD_AND_SHOULDERS: 0.85,
+                PatternType.DOUBLE_TOP: 0.9,
+                PatternType.DOUBLE_BOTTOM: 0.9,
+                PatternType.SYMMETRICAL_TRIANGLE: 1.1,
+                PatternType.ASCENDING_TRIANGLE: 1.1,
+                PatternType.DESCENDING_TRIANGLE: 1.1,
+            },
+            "daily": {
+                PatternType.DOJI: 0.8,           # Less relevant for swing trading
+                PatternType.HAMMER: 0.9,
+                PatternType.INVERTED_HAMMER: 0.8,
+                PatternType.ENGULFING_BULLISH: 1.0,
+                PatternType.ENGULFING_BEARISH: 1.0,
+                PatternType.BULL_FLAG: 1.1,
+                PatternType.BEAR_FLAG: 1.1,
+                PatternType.HEAD_AND_SHOULDERS: 1.2,   # Most reliable on daily
+                PatternType.DOUBLE_TOP: 1.15,
+                PatternType.DOUBLE_BOTTOM: 1.15,
+                PatternType.SYMMETRICAL_TRIANGLE: 1.1,
+                PatternType.ASCENDING_TRIANGLE: 1.1,
+                PatternType.DESCENDING_TRIANGLE: 1.1,
+            },
+        }
+
+        # Normalize timeframe name
+        tf_key = timeframe.lower().replace("min", "min").replace("hour", "hour")
+        if "5" in tf_key:
+            tf_key = "5min"
+        elif "15" in tf_key:
+            tf_key = "15min"
+        elif "1h" in tf_key or "hour" in tf_key:
+            tf_key = "1hour"
+        else:
+            tf_key = "daily"
+
+        relevance_map = PATTERN_RELEVANCE.get(tf_key, PATTERN_RELEVANCE["daily"])
 
         # Detect chart patterns
         h_and_s = self.detect_head_and_shoulders(highs, lows, closes)
@@ -1128,7 +1250,15 @@ class PatternRecognitionService:
         candle_patterns = self.detect_candlestick_patterns(opens, highs, lows, closes)
         patterns.extend(candle_patterns)
 
-        # Sort by confidence
+        # Apply timeframe relevance weighting and add relevance info
+        for pattern in patterns:
+            relevance = relevance_map.get(pattern.pattern_type, 1.0)
+            # Adjust confidence based on timeframe relevance
+            pattern.confidence = min(pattern.confidence * relevance, 99)
+            # Store original vs adjusted for transparency
+            pattern.timeframe_relevance = relevance
+
+        # Sort by adjusted confidence
         patterns.sort(key=lambda p: p.confidence, reverse=True)
 
         # Determine overall bias
@@ -1151,15 +1281,35 @@ class PatternRecognitionService:
         # Detect Elliott Wave
         elliott = self.detect_elliott_wave(highs, lows, closes)
 
+        # Calculate entry zones based on support/resistance and current price
+        current_price = closes[-1] if closes else 0
+        for pattern in patterns:
+            if pattern.direction == "bullish":
+                # Buy zone: between nearest support and current price
+                nearest_support = min((sr.price for sr in sr_levels if sr.level_type == "support" and sr.price < current_price), default=current_price * 0.98)
+                pattern.entry_zone_low = round(nearest_support, 2)
+                pattern.entry_zone_high = round(current_price * 1.005, 2)  # Slight buffer above current
+            elif pattern.direction == "bearish":
+                # Sell zone: between current price and nearest resistance
+                nearest_resistance = min((sr.price for sr in sr_levels if sr.level_type == "resistance" and sr.price > current_price), default=current_price * 1.02)
+                pattern.entry_zone_low = round(current_price * 0.995, 2)  # Slight buffer below current
+                pattern.entry_zone_high = round(nearest_resistance, 2)
+
         return {
             "patterns": [
                 {
                     "type": p.pattern_type.value,
-                    "confidence": p.confidence,
+                    "confidence": round(p.confidence, 1),
                     "direction": p.direction,
                     "description": p.description,
                     "price_target": p.price_target,
                     "stop_loss": p.stop_loss,
+                    "timeframe_relevance": p.timeframe_relevance,
+                    "relevance_label": "High" if p.timeframe_relevance >= 1.1 else "Medium" if p.timeframe_relevance >= 0.9 else "Low",
+                    "entry_zone": {
+                        "low": p.entry_zone_low,
+                        "high": p.entry_zone_high,
+                    } if p.entry_zone_low and p.entry_zone_high else None,
                 }
                 for p in patterns
             ],

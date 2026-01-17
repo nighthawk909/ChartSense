@@ -7,6 +7,7 @@ from typing import Optional, List
 from pydantic import BaseModel
 
 from services.crypto_service import get_crypto_service, SUPPORTED_CRYPTOS, DEFAULT_CRYPTO_WATCHLIST
+from services.pattern_recognition import get_pattern_service
 
 router = APIRouter()
 
@@ -134,6 +135,72 @@ async def analyze_crypto(symbol: str):
         raise HTTPException(status_code=400, detail=analysis["error"])
 
     return analysis
+
+
+@router.get("/patterns/{symbol}")
+async def get_crypto_patterns(
+    symbol: str,
+    interval: str = Query("1hour", description="Timeframe: 5min, 15min, 1hour, daily")
+):
+    """
+    Get pattern analysis for a cryptocurrency.
+
+    Same pattern recognition as stocks: H&S, Double Top/Bottom, Flags, etc.
+    Includes timeframe-appropriate weighting and entry zones.
+    """
+    crypto_service = get_crypto_service()
+    pattern_service = get_pattern_service()
+
+    # Map frontend interval to Alpaca timeframe
+    interval_map = {
+        "5min": "5Min",
+        "15min": "15Min",
+        "1hour": "1Hour",
+        "1h": "1Hour",
+        "daily": "1Day",
+        "1d": "1Day",
+        "1D": "1Day",
+    }
+    timeframe = interval_map.get(interval, "1Hour")
+
+    # Adjust limit based on timeframe
+    limit_map = {
+        "5Min": 500,
+        "15Min": 400,
+        "1Hour": 300,
+        "1Day": 200,
+    }
+    limit = limit_map.get(timeframe, 300)
+
+    try:
+        bars = await crypto_service.get_crypto_bars(symbol, timeframe, limit)
+
+        if not bars or len(bars) < 50:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Insufficient data for {symbol} ({len(bars) if bars else 0} bars)"
+            )
+
+        # Extract OHLC data
+        opens = [b["open"] for b in bars]
+        highs = [b["high"] for b in bars]
+        lows = [b["low"] for b in bars]
+        closes = [b["close"] for b in bars]
+
+        # Analyze patterns with timeframe weighting
+        result = pattern_service.analyze(opens, highs, lows, closes, timeframe=interval)
+        result["symbol"] = symbol.upper()
+        result["interval"] = interval
+        result["timeframe"] = timeframe
+        result["bars_analyzed"] = len(bars)
+        result["current_price"] = closes[-1] if closes else None
+        result["asset_type"] = "crypto"
+
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.get("/market-status")

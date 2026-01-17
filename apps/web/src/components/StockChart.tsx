@@ -5,8 +5,25 @@ import { useRealTimeData, BarData } from '../hooks/useRealTimeData'
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
 
-// Threshold for stale data - if chart is more than this many seconds behind, trigger hardReset
+// Threshold for stale data detection
+// We only trigger hardReset during market hours - after hours, stale data is expected
 const STALE_THRESHOLD_SECONDS = 65
+
+// Check if it's during market hours (9:30 AM - 4:00 PM ET, Mon-Fri)
+const isMarketHours = (): boolean => {
+  const now = new Date()
+  const day = now.getDay() // 0 = Sunday, 6 = Saturday
+  if (day === 0 || day === 6) return false // Weekend
+
+  // Convert to ET (approximate - doesn't account for DST perfectly)
+  const utcHours = now.getUTCHours()
+  const etHours = (utcHours - 5 + 24) % 24 // EST is UTC-5
+  const etMinutes = now.getUTCMinutes()
+  const etTime = etHours * 60 + etMinutes
+
+  // Market hours: 9:30 AM (570 min) to 4:00 PM (960 min) ET
+  return etTime >= 570 && etTime <= 960
+}
 
 type TimeInterval = '1min' | '5min' | '15min' | '30min' | '60min' | 'daily' | 'weekly' | 'monthly'
 
@@ -109,7 +126,7 @@ export default function StockChart({
   }
 
   // Hard reset - completely destroy and recreate chart with fresh data
-  const hardReset = useCallback(async () => {
+  const hardReset = useCallback(() => {
     console.log('[StockChart] Triggering hardReset for stale data')
     hardResetTriggeredRef.current = true
 
@@ -122,7 +139,7 @@ export default function StockChart({
       volumeSeriesRef.current = null
     }
 
-    // Clear state
+    // Clear state to trigger re-fetch
     setChartData(null)
     setLoading(true)
     setIsStale(false)
@@ -132,9 +149,10 @@ export default function StockChart({
       wsForceRefresh()
     }
 
-    // Fetch fresh data
-    await fetchData(true)
-    hardResetTriggeredRef.current = false
+    // Reset the flag after a delay to allow re-fetch
+    setTimeout(() => {
+      hardResetTriggeredRef.current = false
+    }, 1000)
   }, [shouldUseRealTime, wsForceRefresh])
 
   // Fetch data function - can be called manually for force refresh
@@ -152,7 +170,7 @@ export default function StockChart({
       setRefreshing(true)
     } else {
       // Only show loading state if we don't have data OR we're switching intervals
-      if (!chartData || currentIntervalRef.current !== targetInterval) {
+      if (currentIntervalRef.current !== targetInterval) {
         setLoading(true)
         setPendingInterval(targetInterval) // Show which interval we're loading
       }
@@ -272,8 +290,9 @@ export default function StockChart({
       // User can always click refresh to get latest data
       setIsStale(false)
 
-      // Auto-trigger hardReset if data is critically stale (>65 seconds for intraday)
-      if (isIntraday && ageSeconds > STALE_THRESHOLD_SECONDS && !hardResetTriggeredRef.current) {
+      // Auto-trigger hardReset if data is critically stale (>65 seconds for intraday) - ONLY during market hours
+      // After market hours, stale data is expected and normal
+      if (isIntraday && ageSeconds > STALE_THRESHOLD_SECONDS && !hardResetTriggeredRef.current && isMarketHours()) {
         console.warn(`[StockChart] Data is ${ageSeconds}s old (>${STALE_THRESHOLD_SECONDS}s threshold), triggering hardReset`)
         // Don't await here to avoid blocking
         setTimeout(() => hardReset(), 100)
@@ -303,7 +322,8 @@ export default function StockChart({
         setPendingInterval(null)
       }
     }
-  }, [symbol, period, interval, isIntraday, hardReset, chartData])
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [symbol, period, interval, isIntraday])
 
   // Force refresh handler
   const handleForceRefresh = useCallback(() => {
@@ -313,17 +333,21 @@ export default function StockChart({
     fetchData(true)
   }, [fetchData, shouldUseRealTime, wsForceRefresh])
 
-  // Effect 1: Fetch data on mount and when dependencies change
+  // Effect 1: Fetch data on mount and when symbol/interval/period change
   useEffect(() => {
-    fetchData(false)
+    // Use a small debounce to prevent rapid re-fetches when switching intervals
+    const timeoutId = setTimeout(() => {
+      fetchData(false)
+    }, 50)
 
     // Cleanup: abort any in-flight request when interval/symbol changes
     return () => {
+      clearTimeout(timeoutId)
       if (abortControllerRef.current) {
         abortControllerRef.current.abort()
       }
     }
-  }, [fetchData])
+  }, [symbol, period, interval])
 
   // Effect for auto-refresh
   useEffect(() => {
@@ -334,7 +358,8 @@ export default function StockChart({
     }, autoRefreshSeconds * 1000)
 
     return () => clearInterval(intervalId)
-  }, [autoRefreshSeconds, fetchData])
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoRefreshSeconds])
 
   // Effect: Update chart with real-time WebSocket data
   useEffect(() => {
@@ -380,11 +405,14 @@ export default function StockChart({
     setDataAge('Live')
   }, [latestBar, chartType, shouldUseRealTime])
 
-  // Effect: Monitor for stale data and trigger hardReset
+  // Effect: Monitor for stale data and trigger hardReset - ONLY during market hours
   useEffect(() => {
     if (!shouldUseRealTime || !lastDataTimestamp) return
 
     const checkStale = () => {
+      // Only check for stale data during market hours
+      if (!isMarketHours()) return
+
       const now = Date.now()
       const ageSeconds = Math.floor((now - lastDataTimestamp) / 1000)
 

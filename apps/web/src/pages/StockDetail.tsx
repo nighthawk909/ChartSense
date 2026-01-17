@@ -601,45 +601,7 @@ export default function StockDetail() {
             </div>
           )}
 
-          {/* Elliott Wave */}
-          {elliottWave && (
-            <div className="bg-slate-800 rounded-lg p-4 border border-slate-700">
-              <div className="flex items-center gap-2 mb-3">
-                <Activity className="h-5 w-5 text-purple-500" />
-                <h2 className="text-lg font-semibold">Elliott Wave</h2>
-              </div>
-              <div className="space-y-2">
-                <div className="flex items-center justify-between">
-                  <span className="text-sm text-slate-400">Wave Type</span>
-                  <span className={`text-sm font-medium capitalize ${elliottWave.direction === 'bullish' ? 'text-green-500' : 'text-red-500'}`}>
-                    {elliottWave.wave_type} ({elliottWave.direction})
-                  </span>
-                </div>
-                <div className="flex items-center justify-between">
-                  <span className="text-sm text-slate-400">Position</span>
-                  <span className="text-sm font-medium">{elliottWave.current_position}</span>
-                </div>
-                <div className="flex items-center justify-between">
-                  <span className="text-sm text-slate-400">Confidence</span>
-                  <div className="flex items-center gap-2">
-                    <div className="w-16 h-2 bg-slate-700 rounded-full overflow-hidden">
-                      <div
-                        className={`h-full ${elliottWave.confidence >= 70 ? 'bg-green-500' : elliottWave.confidence >= 50 ? 'bg-yellow-500' : 'bg-red-500'}`}
-                        style={{ width: `${elliottWave.confidence}%` }}
-                      />
-                    </div>
-                    <span className="text-xs">{elliottWave.confidence}%</span>
-                  </div>
-                </div>
-                {elliottWave.next_target && (
-                  <div className="flex items-center justify-between pt-2 border-t border-slate-700">
-                    <span className="text-sm text-slate-400">Target</span>
-                    <span className="text-sm font-medium text-blue-400">${elliottWave.next_target}</span>
-                  </div>
-                )}
-              </div>
-            </div>
-          )}
+          {/* NOTE: Elliott Wave is now part of MultiTimeframeInsight component above with tabbed 15min/1hour/daily views */}
 
           {/* Trend Lines */}
           {trendLines.length > 0 && (

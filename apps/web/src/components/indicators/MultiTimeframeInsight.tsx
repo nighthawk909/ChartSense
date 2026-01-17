@@ -43,10 +43,20 @@ interface ElliottWaveTimeframe {
   description?: string;
   next_target?: number;
   swings_detected?: number;
+  trading_action?: string;
+  action_reason?: string;
+  buy_zone?: { low: number; high: number };
+  sell_zone?: { low: number; high: number };
   fib_targets?: {
     extension_1618?: number;
     retracement_382?: number;
     retracement_618?: number;
+  };
+  key_levels?: {
+    recent_high?: number;
+    recent_low?: number;
+    sma_20?: number;
+    sma_50?: number;
   };
 }
 
@@ -465,10 +475,62 @@ export default function MultiTimeframeInsight({ symbol, compact = false }: Multi
                       </div>
                     )}
 
+                    {/* Trading Action - AI Recommendation */}
+                    {selectedWave.trading_action && (
+                      <div className={`rounded-lg p-3 border ${
+                        selectedWave.trading_action === 'STRONG_BUY' ? 'bg-green-900/30 border-green-500/50' :
+                        selectedWave.trading_action === 'BUY_ZONE' ? 'bg-green-900/20 border-green-500/30' :
+                        selectedWave.trading_action === 'STRONG_SELL' ? 'bg-red-900/30 border-red-500/50' :
+                        selectedWave.trading_action === 'SELL_ZONE' ? 'bg-red-900/20 border-red-500/30' :
+                        selectedWave.trading_action === 'TAKE_PROFIT' ? 'bg-yellow-900/30 border-yellow-500/50' :
+                        'bg-slate-800/50 border-slate-600'
+                      }`}>
+                        <div className="flex items-center justify-between mb-2">
+                          <span className="text-xs text-slate-400">Bot Action</span>
+                          <span className={`text-sm font-bold px-2 py-0.5 rounded ${
+                            selectedWave.trading_action === 'STRONG_BUY' ? 'bg-green-600 text-white' :
+                            selectedWave.trading_action === 'BUY_ZONE' ? 'bg-green-700/80 text-green-100' :
+                            selectedWave.trading_action === 'STRONG_SELL' ? 'bg-red-600 text-white' :
+                            selectedWave.trading_action === 'SELL_ZONE' ? 'bg-red-700/80 text-red-100' :
+                            selectedWave.trading_action === 'TAKE_PROFIT' ? 'bg-yellow-600 text-black' :
+                            selectedWave.trading_action === 'HOLD' ? 'bg-blue-600 text-white' :
+                            'bg-slate-600 text-white'
+                          }`}>
+                            {selectedWave.trading_action.replace('_', ' ')}
+                          </span>
+                        </div>
+                        {selectedWave.action_reason && (
+                          <p className="text-xs text-slate-300">{selectedWave.action_reason}</p>
+                        )}
+                      </div>
+                    )}
+
+                    {/* Buy/Sell Zones */}
+                    {(selectedWave.buy_zone || selectedWave.sell_zone) && (
+                      <div className="grid grid-cols-2 gap-2">
+                        {selectedWave.buy_zone && (
+                          <div className="bg-green-900/20 rounded-lg p-2 border border-green-500/30">
+                            <p className="text-xs text-green-400 mb-1">Buy Zone</p>
+                            <p className="text-sm font-medium text-green-300">
+                              ${selectedWave.buy_zone.low.toFixed(2)} - ${selectedWave.buy_zone.high.toFixed(2)}
+                            </p>
+                          </div>
+                        )}
+                        {selectedWave.sell_zone && (
+                          <div className="bg-red-900/20 rounded-lg p-2 border border-red-500/30">
+                            <p className="text-xs text-red-400 mb-1">Sell Zone</p>
+                            <p className="text-sm font-medium text-red-300">
+                              ${selectedWave.sell_zone.low.toFixed(2)} - ${selectedWave.sell_zone.high.toFixed(2)}
+                            </p>
+                          </div>
+                        )}
+                      </div>
+                    )}
+
                     {/* Analysis Description */}
                     {selectedWave.description && (
                       <div className="bg-slate-800/50 rounded-lg p-3">
-                        <p className="text-xs text-slate-400 mb-1">Analysis</p>
+                        <p className="text-xs text-slate-400 mb-1">AI Insight</p>
                         <p className="text-sm text-slate-300">{selectedWave.description}</p>
                       </div>
                     )}

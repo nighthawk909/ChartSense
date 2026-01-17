@@ -1503,6 +1503,13 @@ def _estimate_elliott_wave(closes: list, highs: list, lows: list) -> dict:
     """
     Estimate Elliott Wave position based on price action.
     This is a simplified estimation - real Elliott Wave analysis is complex.
+
+    Wave characteristics:
+    - Wave 1: Start of new trend (often overlooked)
+    - Wave 2: Retracement (usually 50-61.8% of Wave 1)
+    - Wave 3: Strongest and longest (never the shortest, often 1.618x Wave 1)
+    - Wave 4: Shallow correction (usually 38.2% of Wave 3)
+    - Wave 5: Final push (often equals Wave 1 or 0.618x Wave 1)
     """
     if len(closes) < 50:
         return {
@@ -1512,7 +1519,9 @@ def _estimate_elliott_wave(closes: list, highs: list, lows: list) -> dict:
             "current_position": "Insufficient data",
             "confidence": 0,
             "next_target": None,
-            "description": "Need more price history for Elliott Wave analysis"
+            "description": "Need more price history for Elliott Wave analysis",
+            "trading_action": "WAIT",
+            "action_reason": "Insufficient data for analysis"
         }
 
     # Find significant swing points
@@ -1523,6 +1532,7 @@ def _estimate_elliott_wave(closes: list, highs: list, lows: list) -> dict:
 
     # Calculate trend
     sma_50 = sum(closes[-50:]) / 50
+    sma_20 = sum(closes[-20:]) / 20 if len(closes) >= 20 else sma_50
     current = closes[-1]
 
     # Find local highs and lows for wave counting
@@ -1546,48 +1556,126 @@ def _estimate_elliott_wave(closes: list, highs: list, lows: list) -> dict:
     # Estimate wave count based on recent swings
     total_swings = len(swing_highs) + len(swing_lows)
 
-    if total_swings < 3:
-        wave_count = 1
-        current_position = "Wave 1 developing"
-        confidence = 30
-    elif total_swings < 5:
-        wave_count = 2
-        current_position = "Wave 2-3 territory"
-        confidence = 45
-    elif total_swings < 8:
-        wave_count = 3
-        current_position = "Possible Wave 3 (strongest)"
-        confidence = 55
-    elif total_swings < 12:
-        wave_count = 4
-        current_position = "Wave 4-5 territory"
-        confidence = 50
-    else:
-        wave_count = 5
-        current_position = "Wave 5 or correction starting"
-        confidence = 40
-
-    # Estimate next target
+    # Calculate key price levels
     recent_high = max(recent_highs[-20:])
     recent_low = min(recent_lows[-20:])
     range_size = recent_high - recent_low
+    all_time_high = max(highs)
+    all_time_low = min(lows)
 
-    if direction == "bullish":
-        next_target = round(current + (range_size * 0.618), 2)  # Fibonacci extension
-        description = f"Bullish {wave_type} wave in progress. Price above 50 SMA suggests continuation. Watch for resistance near ${next_target}."
+    # Fibonacci levels
+    fib_382 = recent_low + (range_size * 0.382)
+    fib_500 = recent_low + (range_size * 0.500)
+    fib_618 = recent_low + (range_size * 0.618)
+    fib_ext_1618 = recent_high + (range_size * 0.618)
+
+    # Enhanced wave analysis with trading recommendations
+    if total_swings < 3:
+        wave_count = 1
+        current_position = "Wave 1 developing"
+        current_wave = "1"
+        confidence = 30
+        trading_action = "WATCH"
+        action_reason = "Wave 1 starting - early trend detection, wait for Wave 2 pullback for safer entry"
+        buy_zone = None
+        sell_zone = None
+    elif total_swings < 5:
+        wave_count = 2
+        current_position = "Wave 2 pullback"
+        current_wave = "2"
+        confidence = 45
+        trading_action = "BUY_ZONE" if direction == "bullish" else "SELL_ZONE"
+        action_reason = "Wave 2 retracement offers ideal entry. Look for 50-61.8% retracement of Wave 1. This sets up the powerful Wave 3."
+        buy_zone = {"low": round(fib_500, 2), "high": round(fib_618, 2)} if direction == "bullish" else None
+        sell_zone = {"low": round(fib_382, 2), "high": round(fib_500, 2)} if direction == "bearish" else None
+    elif total_swings < 8:
+        wave_count = 3
+        current_position = "Wave 3 (strongest momentum)"
+        current_wave = "3"
+        confidence = 55
+        trading_action = "STRONG_BUY" if direction == "bullish" else "STRONG_SELL"
+        action_reason = "Wave 3 is typically the longest and most powerful wave. Momentum traders should be positioned. Target: 1.618x extension of Wave 1."
+        buy_zone = {"low": round(current * 0.99, 2), "high": round(current * 1.01, 2)} if direction == "bullish" else None
+        sell_zone = {"low": round(current * 0.99, 2), "high": round(current * 1.01, 2)} if direction == "bearish" else None
+    elif total_swings < 12:
+        wave_count = 4
+        current_position = "Wave 4 correction"
+        current_wave = "4"
+        confidence = 50
+        trading_action = "HOLD" if direction == "bullish" else "COVER"
+        action_reason = "Wave 4 is a shallow correction (usually 38.2% of Wave 3). Don't panic sell. Prepare for final Wave 5 push."
+        if direction == "bullish":
+            buy_zone = {"low": round(recent_high - range_size * 0.382, 2), "high": round(recent_high - range_size * 0.236, 2)}
+            sell_zone = None
+        else:
+            # Bearish Wave 4 bounce - look for short entries
+            buy_zone = None
+            sell_zone = {"low": round(recent_low + range_size * 0.236, 2), "high": round(recent_low + range_size * 0.382, 2)}
     else:
-        next_target = round(current - (range_size * 0.382), 2)  # Fibonacci retracement
-        description = f"Bearish {wave_type} wave in progress. Price below 50 SMA suggests weakness. Support expected near ${next_target}."
+        wave_count = 5
+        current_position = "Wave 5 (final push)"
+        current_wave = "5"
+        confidence = 40
+        trading_action = "TAKE_PROFIT" if direction == "bullish" else "COVER_SHORT"
+        action_reason = "Wave 5 is the final impulse wave. Consider taking profits. A major correction (A-B-C) typically follows."
+        # For bullish Wave 5: sell zone to take profits near highs
+        # For bearish Wave 5: buy zone for potential reversal, sell zone for shorts to cover
+        if direction == "bullish":
+            buy_zone = None
+            sell_zone = {"low": round(fib_618, 2), "high": round(recent_high, 2)}
+        else:
+            # Bearish Wave 5 ending - prepare for bullish reversal
+            buy_zone = {"low": round(recent_low, 2), "high": round(recent_low + range_size * 0.236, 2)}
+            sell_zone = {"low": round(current * 0.98, 2), "high": round(current * 1.02, 2)}
+
+    # Calculate Fibonacci targets
+    fib_targets = {
+        "extension_1618": round(fib_ext_1618, 2),
+        "retracement_382": round(fib_382, 2),
+        "retracement_618": round(fib_618, 2),
+    }
+
+    # Enhanced description with AI insights
+    if direction == "bullish":
+        next_target = round(current + (range_size * 0.618), 2)
+        if wave_count == 3:
+            description = f"🚀 WAVE 3 UNDERWAY - This is typically the strongest wave. Momentum is high. The bot WILL look for entries here. Target: ${fib_ext_1618:.2f} (1.618 extension). Key: Wave 3 cannot be the shortest wave."
+        elif wave_count == 2:
+            description = f"📉 WAVE 2 PULLBACK - Ideal buying opportunity forming. Look for support at ${fib_500:.2f}-${fib_618:.2f} (50-61.8% retracement). The bot watches for entries in this zone."
+        elif wave_count == 5:
+            description = f"⚠️ WAVE 5 FINAL PUSH - Take profits soon. Major A-B-C correction expected after. Current resistance: ${recent_high:.2f}."
+        else:
+            description = f"Bullish {wave_type} wave {wave_count}. Price above 50 SMA. Target: ${next_target}."
+    else:
+        next_target = round(current - (range_size * 0.382), 2)
+        if wave_count == 3:
+            description = f"📉 BEARISH WAVE 3 - Strong downward momentum. The bot may look for short entries. Support target: ${next_target:.2f}."
+        elif wave_count == 2:
+            description = f"📈 WAVE 2 BOUNCE - Dead cat bounce possible. Watch for rejection at ${fib_382:.2f}-${fib_618:.2f}."
+        else:
+            description = f"Bearish {wave_type} wave. Price below 50 SMA. Support near ${next_target}."
 
     return {
         "wave_count": wave_count,
         "wave_type": wave_type,
+        "current_wave": current_wave,
         "direction": direction,
         "current_position": current_position,
         "confidence": confidence,
         "next_target": next_target,
         "description": description,
         "swings_detected": total_swings,
+        "trading_action": trading_action,
+        "action_reason": action_reason,
+        "buy_zone": buy_zone,
+        "sell_zone": sell_zone,
+        "fib_targets": fib_targets,
+        "key_levels": {
+            "recent_high": round(recent_high, 2),
+            "recent_low": round(recent_low, 2),
+            "sma_20": round(sma_20, 2),
+            "sma_50": round(sma_50, 2),
+        }
     }
 
 

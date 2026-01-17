@@ -39,6 +39,12 @@ interface Pattern {
   target_pct?: number;
   stop_loss?: number;
   risk_pct?: number;
+  timeframe_relevance?: number;
+  relevance_label?: 'High' | 'Medium' | 'Low';
+  entry_zone?: {
+    low: number;
+    high: number;
+  };
 }
 
 interface SupportResistance {
@@ -131,12 +137,73 @@ export default function PatternInsights({ symbol, interval = 'daily', compact = 
     setLoading(true);
     setError(null);
     try {
-      const response = await fetch(`${API_URL}/api/analysis/patterns/${symbol}?interval=${selectedInterval}`);
+      const response = await fetch(`${API_URL}/api/advanced/patterns/${symbol}?interval=${selectedInterval}`);
       if (!response.ok) {
         throw new Error(`Failed to fetch patterns: ${response.statusText}`);
       }
       const result = await response.json();
-      setData(result);
+
+      // Transform API response to match component interface
+      const supportLevels = (result.support_resistance || [])
+        .filter((sr: any) => sr.type === 'support')
+        .map((sr: any) => ({ price: sr.price, strength: sr.strength }));
+      const resistanceLevels = (result.support_resistance || [])
+        .filter((sr: any) => sr.type === 'resistance')
+        .map((sr: any) => ({ price: sr.price, strength: sr.strength }));
+
+      // Transform patterns to expected format
+      const transformedPatterns = (result.patterns || []).map((p: any) => ({
+        pattern: p.type.replace(/_/g, ' ').replace(/\b\w/g, (c: string) => c.toUpperCase()),
+        confidence: p.confidence,
+        direction: p.direction,
+        description: p.description,
+        price_target: p.price_target,
+        stop_loss: p.stop_loss,
+      }));
+
+      // Determine trade signal based on bias and confidence
+      const highConfPatterns = transformedPatterns.filter((p: any) => p.confidence >= 70);
+      let tradeSignal = 'NEUTRAL';
+      if (result.bias === 'bullish' && highConfPatterns.some((p: any) => p.direction === 'bullish')) {
+        tradeSignal = 'BUY';
+      } else if (result.bias === 'bearish' && highConfPatterns.some((p: any) => p.direction === 'bearish')) {
+        tradeSignal = 'SELL';
+      } else if (highConfPatterns.length > 0) {
+        tradeSignal = 'WATCH';
+      }
+
+      const transformedData: PatternData = {
+        symbol: result.symbol,
+        current_price: 0, // Not provided by this endpoint
+        interval: selectedInterval,
+        timestamp: new Date().toISOString(),
+        trade_signal: tradeSignal,
+        signal_color: tradeSignal === 'BUY' ? 'green' : tradeSignal === 'SELL' ? 'red' : 'yellow',
+        pattern_bias: result.bias || 'neutral',
+        bullish_score: result.bullish_score || 0,
+        bearish_score: result.bearish_score || 0,
+        active_breakout: null,
+        patterns_detected: result.pattern_count || transformedPatterns.length,
+        patterns: transformedPatterns,
+        actionable_patterns: transformedPatterns.filter((p: any) => p.confidence >= 65),
+        support_levels: supportLevels,
+        resistance_levels: resistanceLevels,
+        nearest_support: supportLevels.length > 0 ? supportLevels[0].price : null,
+        nearest_resistance: resistanceLevels.length > 0 ? resistanceLevels[0].price : null,
+        trend_lines: result.trend_lines || [],
+        elliott_wave: result.elliott_wave || null,
+        summary: {
+          signal: tradeSignal,
+          reason: result.bias === 'bullish' ? 'Bullish patterns detected' :
+                  result.bias === 'bearish' ? 'Bearish patterns detected' : 'Mixed signals',
+          confidence: Math.max(...transformedPatterns.map((p: any) => p.confidence), 0),
+          entry: null,
+          target: transformedPatterns[0]?.price_target || null,
+          stop: transformedPatterns[0]?.stop_loss || null,
+        },
+      };
+
+      setData(transformedData);
     } catch (err) {
       console.error('Pattern fetch error:', err);
       setError(err instanceof Error ? err.message : 'Failed to load patterns');
@@ -280,12 +347,37 @@ export default function PatternInsights({ symbol, interval = 'daily', compact = 
                         <span className={`font-medium ${getDirectionColor(pattern.direction)}`}>
                           {pattern.pattern}
                         </span>
+                        {/* Timeframe Relevance Badge */}
+                        {pattern.relevance_label && (
+                          <span className={`text-[10px] px-1.5 py-0.5 rounded ${
+                            pattern.relevance_label === 'High' ? 'bg-green-900/50 text-green-400' :
+                            pattern.relevance_label === 'Low' ? 'bg-red-900/50 text-red-400' :
+                            'bg-slate-700 text-slate-400'
+                          }`}>
+                            {pattern.relevance_label === 'High' ? '★' : pattern.relevance_label === 'Low' ? '○' : '◐'} {pattern.relevance_label}
+                          </span>
+                        )}
                       </div>
                       <span className="text-xs bg-slate-800 px-2 py-1 rounded">
-                        {pattern.confidence}%
+                        {pattern.confidence.toFixed(0)}%
                       </span>
                     </div>
                     <p className="text-xs text-slate-300 mt-1">{pattern.description}</p>
+
+                    {/* Entry Zone - Buy/Sell Range */}
+                    {pattern.entry_zone && (
+                      <div className="mt-2 p-2 bg-slate-800/50 rounded text-xs">
+                        <div className="flex items-center justify-between">
+                          <span className="text-slate-400">
+                            {pattern.direction === 'bullish' ? '🟢 Buy Zone:' : '🔴 Sell Zone:'}
+                          </span>
+                          <span className={pattern.direction === 'bullish' ? 'text-green-400 font-medium' : 'text-red-400 font-medium'}>
+                            ${pattern.entry_zone.low.toFixed(2)} - ${pattern.entry_zone.high.toFixed(2)}
+                          </span>
+                        </div>
+                      </div>
+                    )}
+
                     {(pattern.price_target || pattern.stop_loss) && (
                       <div className="flex items-center gap-4 mt-2 text-xs">
                         {pattern.price_target && (
@@ -324,15 +416,15 @@ export default function PatternInsights({ symbol, interval = 'daily', compact = 
                   <div className="space-y-1">
                     {data.resistance_levels.map((level, idx) => (
                       <div key={idx} className="flex items-center justify-between">
-                        <span className="text-sm font-medium">${level.price.toFixed(2)}</span>
+                        <span className="text-sm font-medium">${(level.price ?? 0).toFixed(2)}</span>
                         <div className="flex items-center gap-1">
                           <div className="w-12 h-1.5 bg-slate-700 rounded-full overflow-hidden">
                             <div
                               className="h-full bg-red-500"
-                              style={{ width: `${level.strength}%` }}
+                              style={{ width: `${level.strength ?? 0}%` }}
                             />
                           </div>
-                          <span className="text-xs text-slate-500">{level.strength.toFixed(0)}%</span>
+                          <span className="text-xs text-slate-500">{(level.strength ?? 0).toFixed(0)}%</span>
                         </div>
                       </div>
                     ))}
@@ -349,15 +441,15 @@ export default function PatternInsights({ symbol, interval = 'daily', compact = 
                   <div className="space-y-1">
                     {data.support_levels.map((level, idx) => (
                       <div key={idx} className="flex items-center justify-between">
-                        <span className="text-sm font-medium">${level.price.toFixed(2)}</span>
+                        <span className="text-sm font-medium">${(level.price ?? 0).toFixed(2)}</span>
                         <div className="flex items-center gap-1">
                           <div className="w-12 h-1.5 bg-slate-700 rounded-full overflow-hidden">
                             <div
                               className="h-full bg-green-500"
-                              style={{ width: `${level.strength}%` }}
+                              style={{ width: `${level.strength ?? 0}%` }}
                             />
                           </div>
-                          <span className="text-xs text-slate-500">{level.strength.toFixed(0)}%</span>
+                          <span className="text-xs text-slate-500">{(level.strength ?? 0).toFixed(0)}%</span>
                         </div>
                       </div>
                     ))}
@@ -385,8 +477,8 @@ export default function PatternInsights({ symbol, interval = 'daily', compact = 
                       <span className="text-slate-400 capitalize">{tl.direction}</span>
                     </div>
                     <div className="flex items-center gap-2">
-                      <span className="font-medium">${tl.current_value.toFixed(2)}</span>
-                      <span className="text-xs text-slate-500">({tl.touches} touches)</span>
+                      <span className="font-medium">${(tl.current_value ?? 0).toFixed(2)}</span>
+                      <span className="text-xs text-slate-500">({tl.touches ?? 0} touches)</span>
                     </div>
                   </div>
                 ))}
@@ -417,20 +509,88 @@ export default function PatternInsights({ symbol, interval = 'daily', compact = 
             </div>
           )}
 
-          {/* Bias Score */}
+          {/* Overall Sentiment Summary */}
           <div className="px-4 pb-4">
-            <div className="flex items-center justify-between text-xs text-slate-500">
-              <span>Bullish: {data.bullish_score.toFixed(0)}</span>
-              <span>Bearish: {data.bearish_score.toFixed(0)}</span>
+            {/* Net Sentiment Explanation */}
+            {(() => {
+              const bullish = data.bullish_score ?? 0;
+              const bearish = data.bearish_score ?? 0;
+              const total = bullish + bearish;
+              const netSentiment = bullish - bearish;
+              const bullishPct = total > 0 ? Math.round((bullish / total) * 100) : 50;
+              const bearishPct = total > 0 ? Math.round((bearish / total) * 100) : 50;
+
+              // Find strongest pattern
+              const strongestPattern = data.patterns.length > 0
+                ? data.patterns.reduce((a, b) => a.confidence > b.confidence ? a : b)
+                : null;
+
+              // Determine overall verdict
+              let verdict = 'NEUTRAL';
+              let verdictColor = 'text-yellow-400';
+              let verdictBg = 'bg-yellow-900/30';
+
+              if (netSentiment > 50) {
+                verdict = 'STRONGLY BULLISH';
+                verdictColor = 'text-green-400';
+                verdictBg = 'bg-green-900/30';
+              } else if (netSentiment > 20) {
+                verdict = 'BULLISH';
+                verdictColor = 'text-green-400';
+                verdictBg = 'bg-green-900/30';
+              } else if (netSentiment < -50) {
+                verdict = 'STRONGLY BEARISH';
+                verdictColor = 'text-red-400';
+                verdictBg = 'bg-red-900/30';
+              } else if (netSentiment < -20) {
+                verdict = 'BEARISH';
+                verdictColor = 'text-red-400';
+                verdictBg = 'bg-red-900/30';
+              } else {
+                verdict = 'MIXED SIGNALS';
+                verdictColor = 'text-yellow-400';
+                verdictBg = 'bg-yellow-900/30';
+              }
+
+              return (
+                <div className={`rounded-lg p-3 mb-3 ${verdictBg} border border-slate-700`}>
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-xs text-slate-400">Overall Sentiment</span>
+                    <span className={`text-sm font-bold ${verdictColor}`}>{verdict}</span>
+                  </div>
+
+                  {strongestPattern && (
+                    <p className="text-xs text-slate-300 mb-2">
+                      <span className="text-slate-500">Dominant signal: </span>
+                      <span className={strongestPattern.direction === 'bullish' ? 'text-green-400' : 'text-red-400'}>
+                        {strongestPattern.pattern}
+                      </span>
+                      <span className="text-slate-500"> ({strongestPattern.confidence}% confidence)</span>
+                    </p>
+                  )}
+
+                  {data.patterns.length > 1 && Math.abs(netSentiment) < 30 && (
+                    <p className="text-xs text-yellow-400/80 italic">
+                      Conflicting patterns detected - consider waiting for clearer signals
+                    </p>
+                  )}
+                </div>
+              );
+            })()}
+
+            {/* Bias Score Bar */}
+            <div className="flex items-center justify-between text-xs text-slate-500 mb-1">
+              <span className="text-green-400">Bullish: {(data.bullish_score ?? 0).toFixed(0)}</span>
+              <span className="text-red-400">Bearish: {(data.bearish_score ?? 0).toFixed(0)}</span>
             </div>
-            <div className="mt-1 h-2 bg-slate-700 rounded-full overflow-hidden flex">
+            <div className="h-2 bg-slate-700 rounded-full overflow-hidden flex">
               <div
                 className="bg-green-500"
-                style={{ width: `${(data.bullish_score / (data.bullish_score + data.bearish_score + 1)) * 100}%` }}
+                style={{ width: `${((data.bullish_score ?? 0) / ((data.bullish_score ?? 0) + (data.bearish_score ?? 0) + 1)) * 100}%` }}
               />
               <div
                 className="bg-red-500"
-                style={{ width: `${(data.bearish_score / (data.bullish_score + data.bearish_score + 1)) * 100}%` }}
+                style={{ width: `${((data.bearish_score ?? 0) / ((data.bullish_score ?? 0) + (data.bearish_score ?? 0) + 1)) * 100}%` }}
               />
             </div>
           </div>
