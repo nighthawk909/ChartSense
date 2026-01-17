@@ -7,8 +7,8 @@
 - **GitHub**: https://github.com/nighthawk909/ChartSense
 
 ## Latest Commit
-- **Hash**: dd19463
-- **Message**: feat: Complete trading dashboard roadmap - tactical controls, priority scanning, AI insights
+- **Hash**: 94809ef
+- **Message**: feat: AI watchlist signals, market scanner, unlimited stock search
 
 ## Features in This Release
 
