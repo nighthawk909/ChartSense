@@ -815,8 +815,47 @@ async def get_multi_timeframe_ai_insight(symbol: str):
 
         longterm_rec = _get_recommendation(longterm_score)
 
-        # ============= ELLIOTT WAVE ESTIMATE =============
-        elliott_wave = _estimate_elliott_wave(daily_closes, daily_highs, daily_lows)
+        # ============= MULTI-TIMEFRAME ELLIOTT WAVE =============
+        # Calculate Elliott Wave for each timeframe
+        elliott_wave_daily = _estimate_elliott_wave(daily_closes, daily_highs, daily_lows)
+
+        # Hourly Elliott Wave
+        elliott_wave_hourly = None
+        if hourly_bars and len(hourly_bars) >= 50:
+            hourly_closes = [b["close"] for b in hourly_bars]
+            hourly_highs_list = [b["high"] for b in hourly_bars]
+            hourly_lows_list = [b["low"] for b in hourly_bars]
+            elliott_wave_hourly = _estimate_elliott_wave(hourly_closes, hourly_highs_list, hourly_lows_list)
+
+        # 15-minute Elliott Wave
+        elliott_wave_15m = None
+        if min_15_bars and len(min_15_bars) >= 50:
+            min15_closes_all = [b["close"] for b in min_15_bars]
+            min15_highs_list = [b["high"] for b in min_15_bars]
+            min15_lows_list = [b["low"] for b in min_15_bars]
+            elliott_wave_15m = _estimate_elliott_wave(min15_closes_all, min15_highs_list, min15_lows_list)
+
+        # Combined Elliott Wave object with all timeframes
+        elliott_wave = {
+            # Default to daily for backward compatibility
+            **elliott_wave_daily,
+            # Multi-timeframe Elliott Wave data
+            "timeframes": {
+                "15min": elliott_wave_15m if elliott_wave_15m else {
+                    "wave_count": 0,
+                    "current_position": "Insufficient data",
+                    "direction": "neutral",
+                    "confidence": 0,
+                },
+                "hourly": elliott_wave_hourly if elliott_wave_hourly else {
+                    "wave_count": 0,
+                    "current_position": "Insufficient data",
+                    "direction": "neutral",
+                    "confidence": 0,
+                },
+                "daily": elliott_wave_daily,
+            }
+        }
 
         return {
             "symbol": symbol.upper(),

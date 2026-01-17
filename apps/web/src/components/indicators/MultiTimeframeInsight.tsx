@@ -33,20 +33,29 @@ interface TimeframeAnalysis {
   };
 }
 
-interface ElliottWaveAnalysis {
+interface ElliottWaveTimeframe {
   wave_count: number;
-  wave_type: string;
+  wave_type?: string;
   current_wave?: string;
-  current_position?: string;  // API returns this instead of current_wave
+  current_position?: string;
   direction: string;
   confidence: number;
-  description: string;
+  description?: string;
   next_target?: number;
   swings_detected?: number;
   fib_targets?: {
     extension_1618?: number;
     retracement_382?: number;
     retracement_618?: number;
+  };
+}
+
+interface ElliottWaveAnalysis extends ElliottWaveTimeframe {
+  // Multi-timeframe Elliott Wave data
+  timeframes?: {
+    '15min'?: ElliottWaveTimeframe;
+    'hourly'?: ElliottWaveTimeframe;
+    'daily'?: ElliottWaveTimeframe;
   };
 }
 
@@ -115,6 +124,7 @@ export default function MultiTimeframeInsight({ symbol, compact = false }: Multi
   const [error, setError] = useState<string | null>(null);
   const [expandedTimeframe, setExpandedTimeframe] = useState<string | null>(null);
   const [showElliottWave, setShowElliottWave] = useState(false);
+  const [elliottWaveTab, setElliottWaveTab] = useState<'15min' | 'hourly' | 'daily'>('daily');
 
   const fetchData = async () => {
     setLoading(true);
@@ -339,7 +349,7 @@ export default function MultiTimeframeInsight({ symbol, compact = false }: Multi
         })}
       </div>
 
-      {/* Elliott Wave Section */}
+      {/* Elliott Wave Section - Multi-Timeframe Tabbed */}
       {data.elliott_wave && (
         <div className="border-t border-slate-700/50">
           <button
@@ -364,76 +374,164 @@ export default function MultiTimeframeInsight({ symbol, compact = false }: Multi
 
           {showElliottWave && (
             <div className="px-4 pb-4 space-y-3">
-              <div className="grid grid-cols-2 gap-3">
-                <div className="bg-slate-800/50 rounded-lg p-3">
-                  <p className="text-xs text-slate-400 mb-1">Current Position</p>
-                  <p className="text-lg font-semibold text-purple-400">{data.elliott_wave.current_wave || data.elliott_wave.current_position}</p>
-                </div>
-                <div className="bg-slate-800/50 rounded-lg p-3">
-                  <p className="text-xs text-slate-400 mb-1">Wave Count</p>
-                  <p className="text-lg font-semibold">{data.elliott_wave.wave_count}</p>
-                </div>
-              </div>
-
-              {/* Next Target */}
-              {data.elliott_wave.next_target && (
-                <div className="bg-slate-800/50 rounded-lg p-3">
-                  <p className="text-xs text-slate-400 mb-1">Next Target</p>
-                  <p className="text-lg font-semibold text-blue-400">${data.elliott_wave.next_target.toFixed(2)}</p>
-                </div>
-              )}
-
-              <div className="bg-slate-800/50 rounded-lg p-3">
-                <p className="text-xs text-slate-400 mb-1">Analysis</p>
-                <p className="text-sm text-slate-300">{data.elliott_wave.description}</p>
-              </div>
-
-              {/* Fibonacci Targets - only show if fib_targets exists and has values */}
-              {data.elliott_wave.fib_targets && Object.keys(data.elliott_wave.fib_targets).length > 0 && (
-                <div>
-                  <p className="text-xs text-slate-400 mb-2">Fibonacci Targets</p>
-                  <div className="grid grid-cols-3 gap-2">
-                    {data.elliott_wave.fib_targets.extension_1618 && (
-                      <div className="bg-purple-900/30 rounded p-2 text-center">
-                        <span className="text-xs text-slate-500 block">1.618 Ext</span>
-                        <span className="text-purple-400 text-sm font-medium">
-                          ${data.elliott_wave.fib_targets.extension_1618.toFixed(2)}
-                        </span>
-                      </div>
-                    )}
-                    {data.elliott_wave.fib_targets.retracement_382 && (
-                      <div className="bg-blue-900/30 rounded p-2 text-center">
-                        <span className="text-xs text-slate-500 block">38.2% Ret</span>
-                        <span className="text-blue-400 text-sm font-medium">
-                          ${data.elliott_wave.fib_targets.retracement_382.toFixed(2)}
-                        </span>
-                      </div>
-                    )}
-                    {data.elliott_wave.fib_targets.retracement_618 && (
-                      <div className="bg-cyan-900/30 rounded p-2 text-center">
-                        <span className="text-xs text-slate-500 block">61.8% Ret</span>
-                        <span className="text-cyan-400 text-sm font-medium">
-                          ${data.elliott_wave.fib_targets.retracement_618.toFixed(2)}
-                        </span>
-                      </div>
-                    )}
-                  </div>
+              {/* Timeframe Tabs */}
+              {data.elliott_wave.timeframes && (
+                <div className="flex items-center gap-1 bg-slate-800 rounded-lg p-1">
+                  {[
+                    { key: '15min', label: '15 Min', color: 'red' },
+                    { key: 'hourly', label: '1 Hour', color: 'orange' },
+                    { key: 'daily', label: 'Daily', color: 'blue' },
+                  ].map(({ key, label, color }) => {
+                    const tf = data.elliott_wave?.timeframes?.[key as keyof typeof data.elliott_wave.timeframes];
+                    const isActive = elliottWaveTab === key;
+                    const direction = tf?.direction || 'neutral';
+                    return (
+                      <button
+                        key={key}
+                        onClick={() => setElliottWaveTab(key as '15min' | 'hourly' | 'daily')}
+                        className={`flex-1 px-3 py-1.5 rounded-md text-xs font-medium transition-all ${
+                          isActive
+                            ? `bg-${color}-600 text-white`
+                            : 'text-slate-400 hover:text-white hover:bg-slate-700'
+                        }`}
+                      >
+                        <span>{label}</span>
+                        {tf && tf.wave_count > 0 && (
+                          <span className={`ml-1 ${
+                            direction === 'bullish' ? 'text-green-400' :
+                            direction === 'bearish' ? 'text-red-400' : 'text-slate-400'
+                          }`}>
+                            {direction === 'bullish' ? '▲' : direction === 'bearish' ? '▼' : '•'}
+                          </span>
+                        )}
+                      </button>
+                    );
+                  })}
                 </div>
               )}
 
-              {/* Confidence */}
-              <div>
-                <div className="flex items-center justify-between text-xs mb-1">
-                  <span className="text-slate-400">Pattern Confidence</span>
-                  <span className="text-purple-400">{data.elliott_wave.confidence}%</span>
-                </div>
-                <div className="w-full h-1.5 bg-slate-700 rounded-full overflow-hidden">
-                  <div
-                    className="h-full bg-purple-500"
-                    style={{ width: `${data.elliott_wave.confidence}%` }}
-                  />
-                </div>
-              </div>
+              {/* Selected Timeframe Data */}
+              {(() => {
+                // Get the selected timeframe data, fallback to root elliott_wave
+                const selectedWave = data.elliott_wave?.timeframes?.[elliottWaveTab] || data.elliott_wave;
+                if (!selectedWave || selectedWave.wave_count === 0) {
+                  return (
+                    <div className="bg-slate-800/50 rounded-lg p-4 text-center">
+                      <p className="text-slate-400 text-sm">Insufficient data for {elliottWaveTab} Elliott Wave analysis</p>
+                      <p className="text-slate-500 text-xs mt-1">Try a longer timeframe</p>
+                    </div>
+                  );
+                }
+
+                return (
+                  <>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div className="bg-slate-800/50 rounded-lg p-3">
+                        <p className="text-xs text-slate-400 mb-1">Current Position</p>
+                        <p className="text-lg font-semibold text-purple-400">
+                          {selectedWave.current_wave || selectedWave.current_position || 'N/A'}
+                        </p>
+                      </div>
+                      <div className="bg-slate-800/50 rounded-lg p-3">
+                        <p className="text-xs text-slate-400 mb-1">Wave Count</p>
+                        <p className="text-lg font-semibold">{selectedWave.wave_count}</p>
+                      </div>
+                    </div>
+
+                    {/* Direction Badge */}
+                    <div className="flex items-center gap-2">
+                      <span className={`text-xs px-2 py-1 rounded-full ${
+                        selectedWave.direction === 'bullish'
+                          ? 'bg-green-900/50 text-green-400 border border-green-500/30'
+                          : selectedWave.direction === 'bearish'
+                            ? 'bg-red-900/50 text-red-400 border border-red-500/30'
+                            : 'bg-slate-700 text-slate-400'
+                      }`}>
+                        {selectedWave.direction === 'bullish' ? '↗ Bullish' :
+                         selectedWave.direction === 'bearish' ? '↘ Bearish' : '→ Neutral'}
+                        {selectedWave.wave_type ? ` ${selectedWave.wave_type}` : ''}
+                      </span>
+                      <span className="text-xs text-slate-500">
+                        {elliottWaveTab === '15min' ? 'Short-term / Scalp' :
+                         elliottWaveTab === 'hourly' ? 'Intraday / Day Trade' : 'Swing / Position'}
+                      </span>
+                    </div>
+
+                    {/* Next Target */}
+                    {selectedWave.next_target && (
+                      <div className="bg-slate-800/50 rounded-lg p-3">
+                        <p className="text-xs text-slate-400 mb-1">Next Target</p>
+                        <p className="text-lg font-semibold text-blue-400">${selectedWave.next_target.toFixed(2)}</p>
+                      </div>
+                    )}
+
+                    {/* Analysis Description */}
+                    {selectedWave.description && (
+                      <div className="bg-slate-800/50 rounded-lg p-3">
+                        <p className="text-xs text-slate-400 mb-1">Analysis</p>
+                        <p className="text-sm text-slate-300">{selectedWave.description}</p>
+                      </div>
+                    )}
+
+                    {/* Fibonacci Targets */}
+                    {selectedWave.fib_targets && Object.keys(selectedWave.fib_targets).length > 0 && (
+                      <div>
+                        <p className="text-xs text-slate-400 mb-2">Fibonacci Targets</p>
+                        <div className="grid grid-cols-3 gap-2">
+                          {selectedWave.fib_targets.extension_1618 && (
+                            <div className="bg-purple-900/30 rounded p-2 text-center">
+                              <span className="text-xs text-slate-500 block">1.618 Ext</span>
+                              <span className="text-purple-400 text-sm font-medium">
+                                ${selectedWave.fib_targets.extension_1618.toFixed(2)}
+                              </span>
+                            </div>
+                          )}
+                          {selectedWave.fib_targets.retracement_382 && (
+                            <div className="bg-blue-900/30 rounded p-2 text-center">
+                              <span className="text-xs text-slate-500 block">38.2% Ret</span>
+                              <span className="text-blue-400 text-sm font-medium">
+                                ${selectedWave.fib_targets.retracement_382.toFixed(2)}
+                              </span>
+                            </div>
+                          )}
+                          {selectedWave.fib_targets.retracement_618 && (
+                            <div className="bg-cyan-900/30 rounded p-2 text-center">
+                              <span className="text-xs text-slate-500 block">61.8% Ret</span>
+                              <span className="text-cyan-400 text-sm font-medium">
+                                ${selectedWave.fib_targets.retracement_618.toFixed(2)}
+                              </span>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Confidence */}
+                    <div>
+                      <div className="flex items-center justify-between text-xs mb-1">
+                        <span className="text-slate-400">Pattern Confidence</span>
+                        <span className="text-purple-400">{selectedWave.confidence}%</span>
+                      </div>
+                      <div className="w-full h-1.5 bg-slate-700 rounded-full overflow-hidden">
+                        <div
+                          className={`h-full ${
+                            selectedWave.confidence >= 60 ? 'bg-green-500' :
+                            selectedWave.confidence >= 40 ? 'bg-yellow-500' : 'bg-red-500'
+                          }`}
+                          style={{ width: `${selectedWave.confidence}%` }}
+                        />
+                      </div>
+                    </div>
+
+                    {/* Swings Detected */}
+                    {selectedWave.swings_detected !== undefined && (
+                      <div className="text-xs text-slate-500 text-center">
+                        {selectedWave.swings_detected} swing points detected
+                      </div>
+                    )}
+                  </>
+                );
+              })()}
             </div>
           )}
         </div>
