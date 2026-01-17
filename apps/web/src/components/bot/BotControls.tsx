@@ -183,8 +183,8 @@ export default function BotControls({
         </div>
       )}
 
-      {/* Stats Row - Compact 4-column grid */}
-      <div className="grid grid-cols-4 gap-1.5 mb-2">
+      {/* Stats Row - Responsive grid */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5 mb-2">
         <button onClick={() => handleCountClick('all')}
           className={`rounded p-1.5 text-center transition-colors ${decisionFilter === 'all' ? 'bg-blue-500/30 ring-1 ring-blue-500/50' : 'bg-slate-700/50 hover:bg-slate-700'}`}>
           <div className="text-sm font-bold text-white">{totalScansToday}</div>

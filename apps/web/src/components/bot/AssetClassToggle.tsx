@@ -43,15 +43,15 @@ export default function AssetClassToggle({
   ];
 
   return (
-    <div className="flex items-center gap-4">
+    <div className="flex items-center gap-2 sm:gap-4 flex-wrap sm:flex-nowrap">
       {/* Asset Class Buttons */}
-      <div className="flex bg-slate-700/50 rounded-lg p-1">
+      <div className="flex bg-slate-700/50 rounded-lg p-0.5 sm:p-1">
         {options.map((option) => (
           <button
             key={option.value}
             onClick={() => onChange(option.value)}
             disabled={disabled}
-            className={`flex items-center gap-2 px-3 py-2 rounded-md transition-all text-sm font-medium
+            className={`flex items-center gap-1 sm:gap-2 px-2 sm:px-3 py-1.5 sm:py-2 rounded-md transition-all text-xs sm:text-sm font-medium
                      disabled:opacity-50 disabled:cursor-not-allowed
                      ${mode === option.value
                        ? 'bg-slate-600 text-white shadow-md'
@@ -59,32 +59,33 @@ export default function AssetClassToggle({
                      }`}
             title={option.description}
           >
-            <option.icon className={`w-4 h-4 ${
+            <option.icon className={`w-3.5 h-3.5 sm:w-4 sm:h-4 ${
               mode === option.value
                 ? option.value === 'crypto' ? 'text-orange-400'
                 : option.value === 'stocks' ? 'text-green-400'
                 : 'text-purple-400'
                 : ''
             }`} />
-            <span className="hidden sm:inline">{option.label}</span>
+            <span className="hidden xs:inline sm:inline">{option.label}</span>
           </button>
         ))}
       </div>
 
       {/* Status Indicators */}
-      <div className="flex items-center gap-3 text-xs">
+      <div className="flex items-center gap-2 sm:gap-3 text-[10px] sm:text-xs">
         {/* Bot Active Indicator */}
         {isActive && (
-          <div className="flex items-center gap-1.5 px-2 py-1 bg-green-500/20 text-green-400 rounded">
-            <span className="w-2 h-2 bg-green-500 rounded-full animate-pulse" />
-            <span>Bot Active</span>
+          <div className="flex items-center gap-1 sm:gap-1.5 px-1.5 sm:px-2 py-0.5 sm:py-1 bg-green-500/20 text-green-400 rounded">
+            <span className="w-1.5 h-1.5 sm:w-2 sm:h-2 bg-green-500 rounded-full animate-pulse" />
+            <span className="hidden xs:inline">Active</span>
           </div>
         )}
 
         {/* Scan Count */}
         {scanCount > 0 && (
-          <div className="flex items-center gap-1.5 px-2 py-1 bg-blue-500/20 text-blue-400 rounded">
-            <span>Scans: {scanCount.toLocaleString()}</span>
+          <div className="flex items-center gap-1 sm:gap-1.5 px-1.5 sm:px-2 py-0.5 sm:py-1 bg-blue-500/20 text-blue-400 rounded">
+            <span>{scanCount.toLocaleString()}</span>
+            <span className="hidden xs:inline">scans</span>
           </div>
         )}
       </div>

@@ -51,11 +51,11 @@ export default function AIIntelligenceSidebar({
 
   return (
     <>
-      {/* Toggle Button (shown when collapsed) */}
+      {/* Toggle Button (shown when collapsed) - hidden on mobile since there's already a toggle in header */}
       {!isOpen && (
         <button
           onClick={onToggle}
-          className="fixed right-0 top-1/2 -translate-y-1/2 z-40 p-3 bg-purple-600 hover:bg-purple-700
+          className="hidden sm:block fixed right-0 top-1/2 -translate-y-1/2 z-40 p-3 bg-purple-600 hover:bg-purple-700
                    text-white rounded-l-lg shadow-lg transition-colors"
           title="Open AI Intelligence Panel"
         >
@@ -64,12 +64,12 @@ export default function AIIntelligenceSidebar({
         </button>
       )}
 
-      {/* Sidebar Panel */}
+      {/* Sidebar Panel - full screen on mobile */}
       <div
         className={`fixed right-0 top-0 h-full bg-slate-900 border-l border-slate-700 shadow-xl z-50
                   transition-transform duration-300 ease-in-out
                   ${isOpen ? 'translate-x-0' : 'translate-x-full'}
-                  w-80 lg:w-96`}
+                  w-full sm:w-80 lg:w-96`}
       >
         {/* Header */}
         <div className="flex items-center justify-between p-4 border-b border-slate-700">

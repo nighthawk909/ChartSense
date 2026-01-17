@@ -54,6 +54,19 @@ export default function TradingBot() {
   const [newEntriesPaused, setNewEntriesPaused] = useState(false);
   const [currentStrategy, setCurrentStrategy] = useState<StrategyOverride>('moderate');
   const [scanCount, setScanCount] = useState(0);
+  const [cardsPerView, setCardsPerView] = useState(4);
+
+  // Responsive cards per view
+  useEffect(() => {
+    const updateCardsPerView = () => {
+      if (window.innerWidth < 640) setCardsPerView(1);
+      else if (window.innerWidth < 1024) setCardsPerView(2);
+      else setCardsPerView(4);
+    };
+    updateCardsPerView();
+    window.addEventListener('resize', updateCardsPerView);
+    return () => window.removeEventListener('resize', updateCardsPerView);
+  }, []);
 
   // Loading states
   const [statusLoading, setStatusLoading] = useState(true);
@@ -407,40 +420,44 @@ export default function TradingBot() {
   return (
     <div className="space-y-6">
       {/* Header with Asset Toggle and Stats */}
-      <div className="flex flex-col lg:flex-row items-start lg:items-center justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-bold text-white">Trading Bot</h1>
-          <p className="text-slate-400">Automated trading powered by AI</p>
+      <div className="flex flex-col gap-4">
+        <div className="flex items-center justify-between">
+          <div>
+            <h1 className="text-xl sm:text-2xl font-bold text-white">Trading Bot</h1>
+            <p className="text-sm text-slate-400 hidden sm:block">Automated trading powered by AI</p>
+          </div>
+          <div className="flex items-center gap-2">
+            {/* AI Sidebar Toggle */}
+            <button
+              onClick={() => setShowAISidebar(!showAISidebar)}
+              className={`flex items-center gap-1 sm:gap-2 px-2 sm:px-3 py-2 rounded-lg transition-colors ${
+                showAISidebar
+                  ? 'bg-purple-600 text-white'
+                  : 'bg-slate-700 text-slate-400 hover:text-white hover:bg-slate-600'
+              }`}
+            >
+              <Brain className="w-4 h-4" />
+              <span className="hidden sm:inline">AI Panel</span>
+            </button>
+            {/* Refresh */}
+            <button
+              onClick={refreshAll}
+              className="flex items-center gap-1 sm:gap-2 px-2 sm:px-4 py-2 text-slate-400 hover:text-white
+                       hover:bg-slate-700 rounded-lg transition-colors"
+            >
+              <RefreshCw className="w-4 h-4" />
+              <span className="hidden sm:inline">Refresh</span>
+            </button>
+          </div>
         </div>
-        <div className="flex items-center gap-4">
-          {/* Asset Class Toggle */}
+        {/* Asset Class Toggle - on its own row for mobile */}
+        <div className="overflow-x-auto pb-1">
           <AssetClassToggle
             mode={assetMode}
             onChange={handleAssetModeChange}
             scanCount={scanCount}
             isActive={status?.state === 'RUNNING'}
           />
-          {/* AI Sidebar Toggle */}
-          <button
-            onClick={() => setShowAISidebar(!showAISidebar)}
-            className={`flex items-center gap-2 px-3 py-2 rounded-lg transition-colors ${
-              showAISidebar
-                ? 'bg-purple-600 text-white'
-                : 'bg-slate-700 text-slate-400 hover:text-white hover:bg-slate-600'
-            }`}
-          >
-            <Brain className="w-4 h-4" />
-            <span className="hidden sm:inline">AI Panel</span>
-          </button>
-          {/* Refresh */}
-          <button
-            onClick={refreshAll}
-            className="flex items-center gap-2 px-4 py-2 text-slate-400 hover:text-white
-                     hover:bg-slate-700 rounded-lg transition-colors"
-          >
-            <RefreshCw className="w-4 h-4" />
-            Refresh
-          </button>
         </div>
       </div>
 
@@ -449,7 +466,7 @@ export default function TradingBot() {
         items={carouselItems}
         currentIndex={carouselIndex}
         onIndexChange={setCarouselIndex}
-        cardsPerView={4}
+        cardsPerView={cardsPerView}
       />
 
       {/* Top Row - Status, Controls, Account */}
