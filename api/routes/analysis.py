@@ -1818,3 +1818,93 @@ async def get_adaptive_config():
             },
         },
     }
+
+
+@router.get("/top-movers")
+async def get_top_movers(
+    period: str = Query(default="today", pattern="^(today|1W|1M)$"),
+    limit: int = Query(default=10, ge=1, le=50)
+):
+    """
+    Get top gainers and losers for a specific time period.
+
+    Args:
+        period: 'today', '1W' (1 week), or '1M' (1 month)
+        limit: Maximum number of movers per category
+
+    Returns:
+        gainers: List of top gaining stocks
+        losers: List of top losing stocks
+    """
+    alpaca = get_alpaca_service()
+
+    # Map period to days
+    days_map = {"today": 1, "1W": 7, "1M": 30}
+    days = days_map.get(period, 1)
+
+    # Scan popular stocks
+    scan_symbols = [
+        "AAPL", "MSFT", "GOOGL", "AMZN", "NVDA", "META", "TSLA", "AMD", "NFLX", "INTC",
+        "SPY", "QQQ", "DIA", "IWM", "JPM", "BAC", "WFC", "GS", "V", "MA",
+        "UNH", "JNJ", "PFE", "HD", "WMT", "COST", "DIS", "BA", "CAT",
+        "CRM", "ADBE", "NOW", "PLTR", "COIN", "SQ", "SHOP", "SNAP", "UBER", "LYFT",
+    ]
+
+    movers = []
+
+    for symbol in scan_symbols:
+        try:
+            # Get historical data
+            start = datetime.now() - timedelta(days=days + 5)
+            bars = await alpaca.get_bars(symbol, timeframe="1day", limit=days + 5, start=start)
+
+            if not bars or len(bars) < 2:
+                continue
+
+            closes = [b["close"] for b in bars]
+            volumes = [b["volume"] for b in bars]
+
+            current_price = closes[-1]
+
+            # Calculate change based on period
+            if period == "today" and len(closes) >= 2:
+                prev_close = closes[-2]
+                change_pct = ((current_price - prev_close) / prev_close) * 100
+            elif len(closes) > days:
+                prev_close = closes[-(days + 1)]
+                change_pct = ((current_price - prev_close) / prev_close) * 100
+            else:
+                continue
+
+            # Get AI confidence (quick RSI-based score)
+            rsi = indicator_service.calculate_rsi(closes, 14)
+            rsi_value = rsi[-1] if rsi and len(rsi) > 0 else 50
+
+            # AI confidence: oversold is bullish opportunity, overbought is bearish
+            if change_pct > 0:
+                ai_confidence = min(90, 50 + int((100 - rsi_value) / 2))
+            else:
+                ai_confidence = min(90, 50 + int(rsi_value / 2))
+
+            movers.append({
+                "symbol": symbol,
+                "name": symbol,
+                "price": round(current_price, 2),
+                "change": round(change_pct * current_price / 100, 2),
+                "changePct": round(change_pct, 2),
+                "volume": int(volumes[-1]) if volumes else 0,
+                "aiConfidence": ai_confidence,
+                "period": period,
+            })
+        except Exception as e:
+            logger.warning(f"Failed to get data for {symbol}: {e}")
+            continue
+
+    # Sort by change percentage
+    movers.sort(key=lambda x: x["changePct"], reverse=True)
+
+    return {
+        "period": period,
+        "gainers": [m for m in movers if m["changePct"] > 0][:limit],
+        "losers": sorted([m for m in movers if m["changePct"] < 0], key=lambda x: x["changePct"])[:limit],
+    }

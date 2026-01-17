@@ -33,6 +33,7 @@ interface TopMover {
   changePct: number;
   volume: number;
   aiConfidence?: number;
+  period?: string;  // 'today', '1W', '1M'
 }
 
 interface RecommendedStock {
@@ -50,7 +51,7 @@ interface RecommendedStock {
 }
 
 export default function Markets() {
-  useNavigate(); // Keep router context active
+  const navigate = useNavigate();
   const [assetMode, setAssetMode] = useState<AssetClassMode>('both');
   const [selectedSymbol, setSelectedSymbol] = useState<string | null>(null);
   const [marketOverview, setMarketOverview] = useState<MarketOverview | null>(null);
@@ -58,6 +59,8 @@ export default function Markets() {
   const [topLosers, setTopLosers] = useState<TopMover[]>([]);
   const [buyOpportunities, setBuyOpportunities] = useState<RecommendedStock[]>([]);
   const [scanningMarket, setScanningMarket] = useState(false);
+  const [executingTrade, setExecutingTrade] = useState<string | null>(null);
+  const [moversPeriod, setMoversPeriod] = useState<'today' | '1W' | '1M'>('today');
   const [_searchQuery, _setSearchQuery] = useState(''); // Reserved for search feature
   const [loading, setLoading] = useState(true);
   const [botStatus, setBotStatus] = useState<any>(null);
@@ -90,23 +93,24 @@ export default function Markets() {
         });
       }
 
-      // Mock top movers for now (would come from real API)
-      setTopGainers([
-        { symbol: 'NVDA', name: 'NVIDIA', price: 145.50, change: 12.30, changePct: 9.23, volume: 45000000, aiConfidence: 82 },
-        { symbol: 'BTC/USD', name: 'Bitcoin', price: 67500, change: 2100, changePct: 3.21, volume: 28000000000, aiConfidence: 75 },
-        { symbol: 'AAPL', name: 'Apple', price: 185.20, change: 4.50, changePct: 2.49, volume: 32000000, aiConfidence: 68 },
-      ]);
-      setTopLosers([
-        { symbol: 'TSLA', name: 'Tesla', price: 245.80, change: -8.20, changePct: -3.23, volume: 38000000, aiConfidence: 45 },
-        { symbol: 'ETH/USD', name: 'Ethereum', price: 3200, change: -85, changePct: -2.59, volume: 15000000000, aiConfidence: 52 },
-      ]);
+      // Fetch real top movers from API
+      try {
+        const moversRes = await fetch(`${API_URL}/api/analysis/top-movers?period=${moversPeriod}`);
+        if (moversRes.ok) {
+          const moversData = await moversRes.json();
+          setTopGainers(moversData.gainers || []);
+          setTopLosers(moversData.losers || []);
+        }
+      } catch (err) {
+        console.error('Failed to fetch top movers:', err);
+      }
 
     } catch (err) {
       console.error('Failed to fetch market data:', err);
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [moversPeriod]);
 
   useEffect(() => {
     fetchMarketData();
@@ -181,6 +185,92 @@ export default function Markets() {
       }
     } catch (err) {
       console.error('Failed to scan for opportunities:', err);
+    } finally {
+      setScanningMarket(false);
+    }
+  };
+
+  // Execute a trade on a BUY opportunity
+  const executeTrade = async (stock: RecommendedStock) => {
+    setExecutingTrade(stock.symbol);
+    try {
+      // Call the bot to execute a trade on this symbol
+      // Use query params as the endpoint expects
+      const params = new URLSearchParams({
+        symbol: stock.symbol,
+        signal: 'BUY',
+        confidence: stock.score.toString(),
+        position_size_pct: '5',
+      });
+
+      const response = await fetch(`${API_URL}/api/bot/execute-opportunity?${params}`, {
+        method: 'POST',
+      });
+
+      if (response.ok) {
+        const result = await response.json();
+        if (result.success) {
+          alert(`✅ Trade executed!\n${result.message}\nQty: ${result.order?.quantity} @ $${result.order?.price?.toFixed(2)}`);
+          // Navigate to trading bot to see the position
+          navigate('/trading-bot');
+        } else {
+          alert(`⚠️ Trade not executed: ${result.error || result.message}`);
+        }
+      } else {
+        const error = await response.json();
+        alert(`❌ Failed: ${error.detail || error.error || 'Unknown error'}`);
+      }
+    } catch (err) {
+      console.error('Failed to execute trade:', err);
+      alert('❌ Failed to connect to trading bot. Is the API server running?');
+    } finally {
+      setExecutingTrade(null);
+    }
+  };
+
+  // Auto-execute best opportunities when bot is running
+  const autoExecuteOpportunities = async () => {
+    if (!botStatus?.state || botStatus.state !== 'RUNNING') {
+      alert('⚠️ Start the Trading Bot first to auto-execute trades');
+      navigate('/trading-bot');
+      return;
+    }
+
+    if (!botStatus?.auto_trade_mode) {
+      alert('⚠️ Enable Auto Trade Mode first!\n\nGo to Trading Bot page and click the "Auto Trade" toggle.');
+      navigate('/trading-bot');
+      return;
+    }
+
+    setScanningMarket(true);
+    try {
+      // Tell the bot to scan and execute on best opportunities
+      const params = new URLSearchParams({
+        max_trades: '3',
+        min_confidence: '70',
+        position_size_pct: '5',
+      });
+
+      const response = await fetch(`${API_URL}/api/bot/auto-trade-opportunities?${params}`, {
+        method: 'POST',
+      });
+
+      if (response.ok) {
+        const result = await response.json();
+        if (result.success) {
+          const executedList = result.executed?.map((t: any) => `${t.symbol}: ${t.quantity} @ $${t.price?.toFixed(2)}`).join('\n') || '';
+          alert(`🚀 ${result.trades_executed || 0} trades executed!\n\n${executedList || result.message}`);
+        } else {
+          alert(`⚠️ ${result.error || result.message}`);
+        }
+        fetchMarketData(); // Refresh data
+      } else {
+        const error = await response.json();
+        alert(`❌ Failed: ${error.detail || error.error || 'Unknown error'}`);
+      }
+    } catch (err) {
+      console.error('Failed to auto-execute:', err);
+      alert('❌ Failed to connect to trading bot');
     } finally {
       setScanningMarket(false);
     }
@@ -343,27 +433,50 @@ export default function Markets() {
             </div>
           )}
 
-          {/* Top Gainers */}
+          {/* Top Gainers/Losers with Time Period Selector */}
           <div className="bg-slate-800 rounded-xl p-4">
-            <div className="flex items-center gap-2 mb-3">
-              <TrendingUp className="w-4 h-4 text-green-400" />
-              <h3 className="font-semibold text-white">Top Gainers</h3>
+            {/* Time Period Toggle */}
+            <div className="flex items-center justify-between mb-3">
+              <div className="flex items-center gap-2">
+                <TrendingUp className="w-4 h-4 text-green-400" />
+                <h3 className="font-semibold text-white">Top Gainers</h3>
+              </div>
+              <div className="flex items-center gap-1 bg-slate-700 rounded-lg p-0.5">
+                {(['today', '1W', '1M'] as const).map((period) => (
+                  <button
+                    key={period}
+                    onClick={() => setMoversPeriod(period)}
+                    className={`px-2 py-1 text-xs rounded transition-all ${
+                      moversPeriod === period
+                        ? 'bg-blue-600 text-white'
+                        : 'text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    {period === 'today' ? 'Today' : period}
+                  </button>
+                ))}
+              </div>
             </div>
             <div className="space-y-2">
-              {topGainers
-                .filter(item => {
-                  if (assetMode === 'stocks') return !item.symbol.includes('/');
-                  if (assetMode === 'crypto') return item.symbol.includes('/');
-                  return true;
-                })
-                .slice(0, 5)
-                .map((item) => (
-                  <MoverRow
-                    key={item.symbol}
-                    item={item}
-                    onClick={() => handleSymbolSelect(item.symbol)}
-                  />
-                ))}
+              {topGainers.length === 0 ? (
+                <p className="text-xs text-slate-500 text-center py-4">Click Discover to scan for gainers</p>
+              ) : (
+                topGainers
+                  .filter(item => {
+                    if (assetMode === 'stocks') return !item.symbol.includes('/');
+                    if (assetMode === 'crypto') return item.symbol.includes('/');
+                    return true;
+                  })
+                  .slice(0, 5)
+                  .map((item) => (
+                    <MoverRow
+                      key={item.symbol}
+                      item={item}
+                      period={moversPeriod}
+                      onClick={() => handleSymbolSelect(item.symbol)}
+                    />
+                  ))
+              )}
             </div>
           </div>
 
@@ -372,43 +485,63 @@ export default function Markets() {
             <div className="flex items-center gap-2 mb-3">
               <TrendingDown className="w-4 h-4 text-red-400" />
               <h3 className="font-semibold text-white">Top Losers</h3>
+              <span className="text-xs text-slate-500">({moversPeriod === 'today' ? 'Today' : moversPeriod})</span>
             </div>
             <div className="space-y-2">
-              {topLosers
-                .filter(item => {
-                  if (assetMode === 'stocks') return !item.symbol.includes('/');
-                  if (assetMode === 'crypto') return item.symbol.includes('/');
-                  return true;
-                })
-                .slice(0, 5)
-                .map((item) => (
-                  <MoverRow
-                    key={item.symbol}
-                    item={item}
-                    onClick={() => handleSymbolSelect(item.symbol)}
-                  />
-                ))}
+              {topLosers.length === 0 ? (
+                <p className="text-xs text-slate-500 text-center py-4">Click Discover to scan for losers</p>
+              ) : (
+                topLosers
+                  .filter(item => {
+                    if (assetMode === 'stocks') return !item.symbol.includes('/');
+                    if (assetMode === 'crypto') return item.symbol.includes('/');
+                    return true;
+                  })
+                  .slice(0, 5)
+                  .map((item) => (
+                    <MoverRow
+                      key={item.symbol}
+                      item={item}
+                      period={moversPeriod}
+                      onClick={() => handleSymbolSelect(item.symbol)}
+                    />
+                  ))
+              )}
             </div>
           </div>
 
           {/* BUY Opportunities - Discovered Stocks */}
           {buyOpportunities.length > 0 && (
             <div className="bg-gradient-to-br from-green-900/30 to-emerald-900/30 rounded-xl p-4 border border-green-500/20">
-              <div className="flex items-center gap-2 mb-3">
-                <Sparkles className="w-4 h-4 text-green-400" />
-                <h3 className="font-semibold text-white">BUY Opportunities</h3>
-                <span className="text-xs px-2 py-0.5 bg-green-500/20 text-green-400 rounded-full">
-                  {buyOpportunities.length} found
-                </span>
+              <div className="flex items-center justify-between mb-3">
+                <div className="flex items-center gap-2">
+                  <Sparkles className="w-4 h-4 text-green-400" />
+                  <h3 className="font-semibold text-white">BUY Opportunities</h3>
+                  <span className="text-xs px-2 py-0.5 bg-green-500/20 text-green-400 rounded-full">
+                    {buyOpportunities.length} found
+                  </span>
+                </div>
+                {/* Auto-Execute Button */}
+                <button
+                  onClick={autoExecuteOpportunities}
+                  disabled={scanningMarket}
+                  className="px-3 py-1 text-xs bg-green-600 hover:bg-green-500 text-white rounded-lg font-medium transition-all flex items-center gap-1"
+                  title="Execute trades on top opportunities"
+                >
+                  <Zap className="w-3 h-3" />
+                  Auto Trade
+                </button>
               </div>
               <div className="space-y-2 max-h-64 overflow-y-auto">
                 {buyOpportunities.map((stock) => (
                   <div
                     key={stock.symbol}
-                    onClick={() => handleSymbolSelect(stock.symbol)}
-                    className="flex items-center justify-between p-3 bg-slate-800/50 rounded-lg hover:bg-slate-700/50 cursor-pointer transition-colors"
+                    className="flex items-center justify-between p-3 bg-slate-800/50 rounded-lg hover:bg-slate-700/50 transition-colors"
                   >
-                    <div>
+                    <div
+                      onClick={() => handleSymbolSelect(stock.symbol)}
+                      className="cursor-pointer flex-1"
+                    >
                       <div className="flex items-center gap-2">
                         <span className="font-semibold text-white">{stock.symbol}</span>
                         <span className="px-1.5 py-0.5 text-xs bg-green-500/20 text-green-400 rounded">
@@ -419,16 +552,34 @@ export default function Markets() {
                         {stock.signals.slice(0, 2).join(' • ')}
                       </div>
                     </div>
-                    <div className="text-right">
-                      <div className="text-white font-medium">${stock.price.toFixed(2)}</div>
-                      <div className="flex items-center gap-2">
-                        <span className={`text-xs ${stock.week_change_pct >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                          {stock.week_change_pct >= 0 ? '+' : ''}{stock.week_change_pct.toFixed(1)}%
-                        </span>
-                        <span className="text-xs px-1.5 py-0.5 bg-purple-500/20 text-purple-400 rounded">
-                          {stock.score}%
-                        </span>
+                    <div className="flex items-center gap-3">
+                      <div className="text-right">
+                        <div className="text-white font-medium">${stock.price.toFixed(2)}</div>
+                        <div className="flex items-center gap-2">
+                          <span className={`text-xs ${stock.week_change_pct >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                            {stock.week_change_pct >= 0 ? '+' : ''}{stock.week_change_pct.toFixed(1)}%
+                          </span>
+                          <span className="text-xs px-1.5 py-0.5 bg-purple-500/20 text-purple-400 rounded">
+                            {stock.score}%
+                          </span>
+                        </div>
                       </div>
+                      {/* Execute Trade Button */}
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          executeTrade(stock);
+                        }}
+                        disabled={executingTrade === stock.symbol}
+                        className={`px-3 py-2 rounded-lg text-xs font-medium transition-all ${
+                          executingTrade === stock.symbol
+                            ? 'bg-yellow-600/50 text-yellow-200 cursor-wait'
+                            : 'bg-green-600 hover:bg-green-500 text-white'
+                        }`}
+                        title={`Execute BUY on ${stock.symbol}`}
+                      >
+                        {executingTrade === stock.symbol ? '...' : 'BUY'}
+                      </button>
                     </div>
                   </div>
                 ))}
@@ -538,12 +689,15 @@ function OverviewCard({
 // Mover Row
 function MoverRow({
   item,
+  period,
   onClick
 }: {
   item: TopMover;
+  period?: string;
   onClick: () => void;
 }) {
   const isPositive = item.changePct >= 0;
+  const periodLabel = period === 'today' ? 'today' : period === '1W' ? 'this week' : 'this month';
 
   return (
     <div
@@ -566,6 +720,7 @@ function MoverRow({
         <div className="text-sm text-white">${item.price.toLocaleString()}</div>
         <div className={`text-xs ${isPositive ? 'text-green-400' : 'text-red-400'}`}>
           {isPositive ? '+' : ''}{item.changePct.toFixed(2)}%
+          {period && <span className="text-slate-500 ml-1">({periodLabel})</span>}
         </div>
       </div>
     </div>

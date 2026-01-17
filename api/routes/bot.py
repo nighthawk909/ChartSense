@@ -1105,3 +1105,459 @@ async def get_daily_goal_progress():
         "worst_trade_pct": goal.worst_trade_pct,
         "horizons_used": goal.horizons_used,
     }
+
+
+# ===== OPPORTUNITY EXECUTION ENDPOINTS =====
+
+@router.post("/execute-opportunity")
+async def execute_opportunity(
+    symbol: str = Query(..., description="Stock/crypto symbol to trade"),
+    signal: str = Query(default="BUY", description="Trade signal: BUY or SELL"),
+    confidence: float = Query(default=70.0, ge=0, le=100, description="Signal confidence score"),
+    position_size_pct: float = Query(default=5.0, ge=1, le=25, description="Position size as % of buying power"),
+):
+    """
+    Execute a trade on a specific opportunity.
+
+    This endpoint allows manual execution of trades when the UI shows
+    BUY opportunities. It respects the bot's safety limits.
+
+    Args:
+        symbol: The stock/crypto symbol (e.g., 'AAPL', 'BTCUSD')
+        signal: Trade direction - 'BUY' or 'SELL'
+        confidence: Signal confidence 0-100
+        position_size_pct: How much of buying power to use (1-25%)
+
+    Endpoint: POST /api/bot/execute-opportunity?symbol=AMD&signal=BUY&confidence=85
+    """
+    bot = get_trading_bot()
+
+    # Check if bot is running
+    if bot.state.value != "RUNNING":
+        return {
+            "success": False,
+            "error": "Bot must be running to execute trades. Start the bot first.",
+            "bot_state": bot.state.value,
+        }
+
+    # Check if entries are paused
+    if bot.new_entries_paused:
+        return {
+            "success": False,
+            "error": "New entries are paused. Resume entries first.",
+        }
+
+    # Determine if this is crypto or stock
+    is_crypto = symbol.upper().endswith(('USD', 'USDT', 'USDC')) or '/' in symbol
+
+    try:
+        # Get account info
+        account = await bot.alpaca.get_account()
+        buying_power = float(account.get("buying_power", 0))
+
+        if buying_power < 100:
+            return {
+                "success": False,
+                "error": f"Insufficient buying power: ${buying_power:.2f}",
+            }
+
+        # Calculate position size
+        position_value = buying_power * (position_size_pct / 100)
+
+        # Get current price
+        if is_crypto:
+            # Use crypto service for crypto symbols
+            from services.crypto_service import get_crypto_service
+            crypto = get_crypto_service()
+            price_data = await crypto.get_current_price(symbol)
+            current_price = price_data.get("price", 0)
+        else:
+            # Use alpaca for stocks
+            quote = await bot.alpaca.get_quote(symbol)
+            current_price = quote.get("price", 0)
+
+        if current_price <= 0:
+            return {
+                "success": False,
+                "error": f"Could not get price for {symbol}",
+            }
+
+        # Calculate quantity
+        if is_crypto:
+            # Crypto allows fractional
+            quantity = position_value / current_price
+            quantity = round(quantity, 6)  # 6 decimal places for crypto
+        else:
+            # Stocks - use fractional shares if small position
+            quantity = position_value / current_price
+            if quantity < 1:
+                quantity = round(quantity, 4)  # Fractional shares
+            else:
+                quantity = int(quantity)  # Whole shares for larger positions
+
+        if quantity <= 0:
+            return {
+                "success": False,
+                "error": f"Position size too small. Need at least ${current_price:.2f}",
+            }
+
+        # Execute the trade
+        if signal.upper() == "BUY":
+            if is_crypto:
+                from services.crypto_service import get_crypto_service
+                crypto = get_crypto_service()
+                result = await crypto.place_order(
+                    symbol=symbol,
+                    side="buy",
+                    qty=quantity,
+                    order_type="market",
+                )
+            else:
+                result = await bot.alpaca.place_order(
+                    symbol=symbol,
+                    qty=quantity,
+                    side="buy",
+                    order_type="market",
+                    time_in_force="day",
+                )
+
+            # Log the execution
+            bot._log_execution_event(
+                symbol=symbol,
+                event_type="OPPORTUNITY_EXECUTED",
+                executed=True,
+                reason=f"Manual execution from UI - Confidence: {confidence}%",
+                details={
+                    "quantity": quantity,
+                    "price": current_price,
+                    "position_value": position_value,
+                    "signal": signal,
+                    "order_id": result.get("id"),
+                }
+            )
+
+            return {
+                "success": True,
+                "message": f"Executed {signal} order for {symbol}",
+                "order": {
+                    "symbol": symbol,
+                    "side": signal,
+                    "quantity": quantity,
+                    "price": current_price,
+                    "position_value": round(position_value, 2),
+                    "order_id": result.get("id"),
+                },
+            }
+        else:
+            return {
+                "success": False,
+                "error": "SELL orders should be executed through position management",
+            }
+
+    except Exception as e:
+        # Log the failure
+        bot._log_execution_event(
+            symbol=symbol,
+            event_type="OPPORTUNITY_FAILED",
+            executed=False,
+            reason=str(e),
+            details={"signal": signal, "confidence": confidence}
+        )
+
+        return {
+            "success": False,
+            "error": str(e),
+        }
+
+
+@router.post("/auto-trade-opportunities")
+async def auto_trade_opportunities(
+    max_trades: int = Query(default=3, ge=1, le=10, description="Maximum number of trades to execute"),
+    min_confidence: float = Query(default=75.0, ge=50, le=100, description="Minimum confidence threshold"),
+    position_size_pct: float = Query(default=5.0, ge=1, le=20, description="Position size per trade as % of buying power"),
+):
+    """
+    Automatically execute trades on the best current opportunities.
+
+    This endpoint:
+    1. Scans current opportunities (from scanner and AI insights)
+    2. Filters by minimum confidence
+    3. Executes up to max_trades on the best opportunities
+    4. Respects position limits and buying power
+
+    Use this when you see multiple BUY opportunities and want to act on them.
+
+    Args:
+        max_trades: Maximum trades to execute (1-10)
+        min_confidence: Minimum confidence score (50-100)
+        position_size_pct: Position size per trade (1-20%)
+
+    Endpoint: POST /api/bot/auto-trade-opportunities?max_trades=3&min_confidence=80
+    """
+    bot = get_trading_bot()
+
+    # Check if bot is running
+    if bot.state.value != "RUNNING":
+        return {
+            "success": False,
+            "error": "Bot must be running to execute trades. Start the bot first.",
+            "bot_state": bot.state.value,
+        }
+
+    # Check if auto-trade is enabled
+    if not bot.auto_trade_mode:
+        return {
+            "success": False,
+            "error": "Auto-trade mode is disabled. Enable it first or use execute-opportunity for manual trades.",
+        }
+
+    # Collect all opportunities from various sources
+    opportunities = []
+
+    # 1. From stock analysis results
+    for symbol, result in bot._stock_analysis_results.items():
+        if result.get("signal") == "BUY" and result.get("confidence", 0) >= min_confidence:
+            opportunities.append({
+                "symbol": symbol,
+                "confidence": result.get("confidence", 0),
+                "signal": "BUY",
+                "source": "stock_scanner",
+                "reason": result.get("reason", "Technical analysis"),
+            })
+
+    # 2. From crypto analysis results
+    for symbol, result in bot._crypto_analysis_results.items():
+        if result.get("signal") == "BUY" and result.get("confidence", 0) >= min_confidence:
+            opportunities.append({
+                "symbol": symbol,
+                "confidence": result.get("confidence", 0),
+                "signal": "BUY",
+                "source": "crypto_scanner",
+                "reason": result.get("reason", "Technical analysis"),
+            })
+
+    # 3. From hierarchical opportunities
+    if bot.smart_scanner:
+        for opp in bot.smart_scanner.all_opportunities:
+            if opp.overall_score >= min_confidence and opp.direction == "LONG":
+                opportunities.append({
+                    "symbol": opp.symbol,
+                    "confidence": opp.overall_score,
+                    "signal": "BUY",
+                    "source": f"hierarchical_{opp.horizon.value}",
+                    "reason": f"{opp.quality.value} opportunity - {', '.join(opp.patterns_detected[:2])}",
+                })
+
+    # Sort by confidence (highest first)
+    opportunities.sort(key=lambda x: x["confidence"], reverse=True)
+
+    # Deduplicate by symbol
+    seen_symbols = set()
+    unique_opportunities = []
+    for opp in opportunities:
+        if opp["symbol"] not in seen_symbols:
+            seen_symbols.add(opp["symbol"])
+            unique_opportunities.append(opp)
+
+    # Limit to max_trades
+    to_execute = unique_opportunities[:max_trades]
+
+    if not to_execute:
+        return {
+            "success": True,
+            "message": f"No opportunities found with confidence >= {min_confidence}%",
+            "trades_executed": 0,
+            "opportunities_found": len(opportunities),
+        }
+
+    # Execute trades
+    executed = []
+    failed = []
+
+    for opp in to_execute:
+        try:
+            # Determine if crypto
+            symbol = opp["symbol"]
+            is_crypto = symbol.upper().endswith(('USD', 'USDT', 'USDC')) or '/' in symbol
+
+            # Get account info
+            account = await bot.alpaca.get_account()
+            buying_power = float(account.get("buying_power", 0))
+            position_value = buying_power * (position_size_pct / 100)
+
+            # Get current price
+            if is_crypto:
+                from services.crypto_service import get_crypto_service
+                crypto = get_crypto_service()
+                price_data = await crypto.get_current_price(symbol)
+                current_price = price_data.get("price", 0)
+            else:
+                quote = await bot.alpaca.get_quote(symbol)
+                current_price = quote.get("price", 0)
+
+            if current_price <= 0:
+                failed.append({"symbol": symbol, "error": "Could not get price"})
+                continue
+
+            # Calculate quantity
+            if is_crypto:
+                quantity = round(position_value / current_price, 6)
+            else:
+                quantity = position_value / current_price
+                if quantity >= 1:
+                    quantity = int(quantity)
+                else:
+                    quantity = round(quantity, 4)
+
+            # Execute
+            if is_crypto:
+                from services.crypto_service import get_crypto_service
+                crypto = get_crypto_service()
+                result = await crypto.place_order(
+                    symbol=symbol,
+                    side="buy",
+                    qty=quantity,
+                    order_type="market",
+                )
+            else:
+                result = await bot.alpaca.place_order(
+                    symbol=symbol,
+                    qty=quantity,
+                    side="buy",
+                    order_type="market",
+                    time_in_force="day",
+                )
+
+            executed.append({
+                "symbol": symbol,
+                "quantity": quantity,
+                "price": current_price,
+                "confidence": opp["confidence"],
+                "source": opp["source"],
+                "order_id": result.get("id"),
+            })
+
+            # Log success
+            bot._log_execution_event(
+                symbol=symbol,
+                event_type="AUTO_TRADE_EXECUTED",
+                executed=True,
+                reason=f"Auto-trade: {opp['reason']} (Confidence: {opp['confidence']}%)",
+                details={"quantity": quantity, "price": current_price}
+            )
+
+        except Exception as e:
+            failed.append({"symbol": opp["symbol"], "error": str(e)})
+            bot._log_execution_event(
+                symbol=opp["symbol"],
+                event_type="AUTO_TRADE_FAILED",
+                executed=False,
+                reason=str(e),
+            )
+
+    return {
+        "success": True,
+        "message": f"Executed {len(executed)} of {len(to_execute)} trades",
+        "trades_executed": len(executed),
+        "trades_failed": len(failed),
+        "executed": executed,
+        "failed": failed,
+        "opportunities_found": len(unique_opportunities),
+    }
+
+
+@router.get("/queued-trades")
+async def get_queued_trades():
+    """
+    Get trades queued for market open.
+
+    When market is closed but strong opportunities are detected,
+    trades can be queued for execution at market open.
+
+    Endpoint: GET /api/bot/queued-trades
+    """
+    bot = get_trading_bot()
+    queued = getattr(bot, '_queued_trades', [])
+
+    return {
+        "queued_trades": queued,
+        "count": len(queued),
+        "market_open": await bot.alpaca.is_market_open(),
+    }
+
+
+@router.post("/queue-trade")
+async def queue_trade_for_open(
+    symbol: str = Query(..., description="Symbol to queue"),
+    signal: str = Query(default="BUY", description="Trade signal"),
+    confidence: float = Query(default=70.0, description="Signal confidence"),
+    reason: str = Query(default="", description="Reason for queueing"),
+):
+    """
+    Queue a trade for market open.
+
+    Use this when you see a strong opportunity but the market is closed.
+    The trade will be executed automatically when the market opens.
+
+    Endpoint: POST /api/bot/queue-trade?symbol=AMD&signal=BUY&confidence=85
+    """
+    bot = get_trading_bot()
+
+    # Initialize queue if not exists
+    if not hasattr(bot, '_queued_trades'):
+        bot._queued_trades = []
+
+    # Check if already queued
+    existing = [t for t in bot._queued_trades if t["symbol"] == symbol.upper()]
+    if existing:
+        return {
+            "success": False,
+            "error": f"{symbol} is already queued",
+            "existing": existing[0],
+        }
+
+    # Add to queue
+    trade = {
+        "symbol": symbol.upper(),
+        "signal": signal.upper(),
+        "confidence": confidence,
+        "reason": reason or f"Strong {signal} signal detected",
+        "queued_at": datetime.now().isoformat(),
+        "status": "PENDING",
+    }
+    bot._queued_trades.append(trade)
+
+    return {
+        "success": True,
+        "message": f"Queued {signal} trade for {symbol} at market open",
+        "trade": trade,
+        "queue_length": len(bot._queued_trades),
+    }
+
+
+@router.delete("/queue-trade/{symbol}")
+async def remove_queued_trade(symbol: str):
+    """
+    Remove a trade from the queue.
+
+    Endpoint: DELETE /api/bot/queue-trade/AMD
+    """
+    bot = get_trading_bot()
+
+    if not hasattr(bot, '_queued_trades'):
+        bot._queued_trades = []
+
+    original_len = len(bot._queued_trades)
+    bot._queued_trades = [t for t in bot._queued_trades if t["symbol"] != symbol.upper()]
+
+    if len(bot._queued_trades) == original_len:
+        return {
+            "success": False,
+            "error": f"{symbol} was not in the queue",
+        }
+
+    return {
+        "success": True,
+        "message": f"Removed {symbol} from queue",
+        "queue_length": len(bot._queued_trades),
+    }

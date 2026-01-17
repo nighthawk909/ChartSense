@@ -73,7 +73,12 @@ class TradingBot:
         self.last_trade_time: Optional[datetime] = None
         self.current_cycle: str = "idle"
         self.current_session: str = "unknown"  # pre_market, regular, after_hours, overnight, weekend
+        self.previous_session: str = "unknown"  # Track previous session for transition detection
         self.error_message: Optional[str] = None
+
+        # Queued trades for market open
+        self._queued_trades: List[Dict[str, Any]] = []
+        self.auto_queue_strong_signals = True  # Auto-queue STRONG BUY when market closed
 
         # Configuration
         self.enabled_symbols: List[str] = ["AAPL", "MSFT", "GOOGL", "AMZN", "NVDA"]
@@ -509,9 +514,19 @@ class TradingBot:
 
                 # Get detailed market session info
                 market_info = await self.alpaca.get_market_hours_info()
-                self.current_session = market_info.get("session", "unknown")
+                new_session = market_info.get("session", "unknown")
                 can_trade = market_info.get("can_trade", False)
                 is_extended = market_info.get("can_trade_extended", False)
+
+                # Detect session transition to regular market hours
+                if new_session == "regular" and self.previous_session != "regular":
+                    logger.info(f"🔔 Market session changed: {self.previous_session} → regular")
+                    # Execute any queued trades from overnight/weekend
+                    if self._queued_trades and self.auto_trade_mode:
+                        await self._execute_queued_trades()
+
+                self.previous_session = self.current_session
+                self.current_session = new_session
 
                 logger.debug(f"Session: {self.current_session}, Can trade: {can_trade}, Extended: {is_extended}")
 
@@ -652,7 +667,7 @@ class TradingBot:
         await self._run_crypto_cycle()
 
     async def _run_off_hours_cycle(self):
-        """Run analysis during off-hours (overnight/weekend) - no trading"""
+        """Run analysis during off-hours (overnight/weekend) - no trading but queue strong signals"""
         logger.debug("Running off-hours analysis cycle...")
 
         try:
@@ -672,11 +687,24 @@ class TradingBot:
                             if symbol not in self._ready_stocks:
                                 self._ready_stocks.append(symbol)
                                 logger.info(f"Stock {symbol} is ready for entry (score: {signal.score:.1f})")
+
+                            # AUTO-QUEUE strong signals for market open
+                            if self.auto_queue_strong_signals and signal.score >= 75:
+                                self.queue_trade(
+                                    symbol=symbol,
+                                    signal="BUY",
+                                    confidence=signal.score,
+                                    reason=f"Off-hours analysis: Strong BUY signal (score: {signal.score:.1f})"
+                                )
                 except Exception as e:
                     logger.debug(f"Error analyzing {symbol} during off-hours: {e}")
 
             # Update repository with scores
             await self._update_repository_scores()
+
+            # Log queue status
+            if self._queued_trades:
+                logger.info(f"📋 {len(self._queued_trades)} trade(s) queued for market open")
 
             self.current_cycle = "off_hours_idle"
 
@@ -1668,6 +1696,123 @@ class TradingBot:
             logger.error(f"Failed to execute partial exit for {symbol}: {e}")
             raise
 
+    async def _execute_queued_trades(self):
+        """
+        Execute trades that were queued while market was closed.
+        Called when market session transitions to 'regular'.
+        """
+        if not self._queued_trades:
+            return
+
+        logger.info(f"🚀 Market opened! Executing {len(self._queued_trades)} queued trades...")
+
+        executed = []
+        failed = []
+
+        for trade in self._queued_trades[:]:  # Copy list since we're modifying it
+            symbol = trade["symbol"]
+            signal = trade["signal"]
+            confidence = trade["confidence"]
+
+            try:
+                # Get current price
+                quote = await self.alpaca.get_quote(symbol)
+                current_price = quote.get("price", 0)
+
+                if current_price <= 0:
+                    failed.append({"symbol": symbol, "error": "Could not get price"})
+                    continue
+
+                # Get account info for position sizing
+                account = await self.alpaca.get_account()
+                buying_power = float(account.get("buying_power", 0))
+
+                # Use 5% of buying power per queued trade
+                position_value = buying_power * 0.05
+                quantity = int(position_value / current_price)
+
+                if quantity < 1:
+                    # Try fractional
+                    quantity = round(position_value / current_price, 4)
+
+                if quantity <= 0 or position_value < 10:
+                    failed.append({"symbol": symbol, "error": "Position size too small"})
+                    continue
+
+                if signal.upper() == "BUY":
+                    order = await self.alpaca.place_order(
+                        symbol=symbol,
+                        qty=quantity,
+                        side="buy",
+                        order_type="market",
+                        time_in_force="day",
+                    )
+
+                    executed.append({
+                        "symbol": symbol,
+                        "quantity": quantity,
+                        "price": current_price,
+                        "order_id": order.get("id"),
+                    })
+
+                    self._log_execution_event(
+                        symbol=symbol,
+                        event_type="QUEUED_TRADE_EXECUTED",
+                        executed=True,
+                        reason=f"Queued trade executed at market open (Confidence: {confidence}%)",
+                        details={
+                            "quantity": quantity,
+                            "price": current_price,
+                            "queued_reason": trade.get("reason", ""),
+                        }
+                    )
+
+                    logger.info(f"✅ Executed queued trade: {symbol} {quantity} shares @ ${current_price:.2f}")
+
+                # Mark as executed
+                trade["status"] = "EXECUTED"
+
+            except Exception as e:
+                failed.append({"symbol": symbol, "error": str(e)})
+                trade["status"] = "FAILED"
+                trade["error"] = str(e)
+                logger.error(f"❌ Failed to execute queued trade for {symbol}: {e}")
+
+        # Remove executed/failed trades from queue
+        self._queued_trades = [t for t in self._queued_trades if t.get("status") == "PENDING"]
+
+        logger.info(f"Queued trades complete: {len(executed)} executed, {len(failed)} failed")
+        return {"executed": executed, "failed": failed}
+
+    def queue_trade(self, symbol: str, signal: str, confidence: float, reason: str = ""):
+        """
+        Add a trade to the queue for market open.
+
+        Args:
+            symbol: Stock symbol to trade
+            signal: Trade signal (BUY/SELL)
+            confidence: Signal confidence score
+            reason: Reason for queueing
+        """
+        # Check if already queued
+        existing = [t for t in self._queued_trades if t["symbol"] == symbol.upper()]
+        if existing:
+            logger.debug(f"{symbol} already queued")
+            return False
+
+        trade = {
+            "symbol": symbol.upper(),
+            "signal": signal.upper(),
+            "confidence": confidence,
+            "reason": reason or f"Strong {signal} signal detected while market closed",
+            "queued_at": datetime.now().isoformat(),
+            "status": "PENDING",
+        }
+        self._queued_trades.append(trade)
+
+        logger.info(f"📋 Queued {signal} trade for {symbol} at market open (Confidence: {confidence}%)")
+        return True
+
     async def _execute_exit(self, symbol: str, quantity: float, reason: str):
         """Execute exit trade"""
         try:
@@ -1805,6 +1950,10 @@ class TradingBot:
             "total_scans_today": self._total_scans_today,
             # Priority Tier Summary
             "priority_tier_summary": self.priority_scanner.get_tier_summary(),
+            # Queued trades for market open
+            "queued_trades": self._queued_trades,
+            "queued_trades_count": len(self._queued_trades),
+            "auto_queue_strong_signals": self.auto_queue_strong_signals,
         }
 
     def _get_analysis_reason(self, signal: str, confidence: float, threshold: float) -> str:
