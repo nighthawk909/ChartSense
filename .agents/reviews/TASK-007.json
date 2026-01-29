@@ -1,0 +1,67 @@
+{
+  "task_id": "TASK-007",
+  "reviewer": "reviewer_bot",
+  "timestamp": "2026-01-28T12:35:00Z",
+  "verdict": "changes_requested",
+  "files_reviewed": [
+    "apps/web/src/pages/Dashboard.tsx",
+    "apps/web/package.json"
+  ],
+  "feedback": [
+    {
+      "file": "apps/web/src/pages/Dashboard.tsx",
+      "line": 90,
+      "severity": "praise",
+      "category": "logic",
+      "comment": "fetchQuotes correctly wrapped in useCallback with [fetchPositions, selectedStock] dependencies"
+    },
+    {
+      "file": "apps/web/src/pages/Dashboard.tsx",
+      "line": 204,
+      "severity": "praise",
+      "category": "logic",
+      "comment": "fetchIndicators correctly wrapped in useCallback with empty deps (only uses parameter)"
+    },
+    {
+      "file": "apps/web/src/pages/Dashboard.tsx",
+      "line": 220,
+      "severity": "praise",
+      "category": "logic",
+      "comment": "useEffect properly includes fetchQuotes in dependency array and cleans up interval"
+    },
+    {
+      "file": "apps/web/src/pages/Dashboard.tsx",
+      "line": 228,
+      "severity": "praise",
+      "category": "logic",
+      "comment": "fetchIndicators useEffect has correct dependencies: [selectedStock, fetchIndicators]"
+    },
+    {
+      "file": "apps/web/src/pages/Dashboard.tsx",
+      "line": 167,
+      "severity": "suggestion",
+      "category": "logic",
+      "comment": "The auto-select logic (if positions exist and current selectedStock isn't a position, select first position) might override user's manual stock selection after 30 seconds. Consider adding a 'userSelectedStock' flag to preserve intentional selections."
+    },
+    {
+      "file": "apps/web/package.json",
+      "line": 28,
+      "severity": "required",
+      "category": "style",
+      "comment": "eslint-plugin-react-hooks is installed but NO ESLint config file exists in the project to enable the exhaustive-deps rule. The task requirement states: 'Add ESLint exhaustive-deps warnings to catch future issues'. This is NOT implemented.",
+      "suggestion": "Create apps/web/eslint.config.js with react-hooks/exhaustive-deps rule enabled. For ESLint 9.x flat config: import reactHooks from 'eslint-plugin-react-hooks'; then add { plugins: { 'react-hooks': reactHooks }, rules: { 'react-hooks/rules-of-hooks': 'error', 'react-hooks/exhaustive-deps': 'warn' } }"
+    }
+  ],
+  "overall_comments": "TASK-007 partially complete. The useEffect dependency issues in Dashboard.tsx have been correctly fixed - fetchQuotes and fetchIndicators are properly wrapped in useCallback with appropriate dependencies, and the main useEffect correctly includes fetchQuotes in its dependency array with proper interval cleanup. However, the task requirement to 'Add ESLint exhaustive-deps warnings to catch future issues' has NOT been implemented. No ESLint configuration file exists in apps/web/ to enable this rule, so future dependency issues won't be caught automatically. This is a REQUIRED fix before approval.",
+  "tests_passed": "not_run",
+  "test_output": "Frontend tests not executed. Recommend running 'npm run lint' after ESLint config is added.",
+  "acceptance_criteria_review": {
+    "no_eslint_warnings_for_missing_deps": "BLOCKED - Cannot verify without ESLint config",
+    "dashboard_updates_when_selectedStock_changes": "PASS - fetchIndicators effect triggers on selectedStock change",
+    "no_memory_leaks_from_uncleaned_intervals": "PASS - clearInterval called in useEffect cleanup",
+    "data_refresh_at_30_second_intervals": "PASS - setInterval(fetchQuotes, 30000) with proper cleanup"
+  },
+  "blocking_issues": [
+    "Missing ESLint configuration file with react-hooks/exhaustive-deps rule"
+  ]
+}

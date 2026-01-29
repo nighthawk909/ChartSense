@@ -383,6 +383,9 @@ function StockAnalysisItem({ symbol, result }: { symbol: string; result: StockAn
 }
 
 function CryptoAnalysisItem({ symbol, result }: { symbol: string; result: CryptoAnalysisResult }) {
+  const [expanded, setExpanded] = useState(false);
+  const [showModal, setShowModal] = useState(false);
+
   const getSignalIcon = () => {
     if (result.signal === 'BUY') return <TrendingUp className="w-3 h-3 text-green-500" />;
     if (result.signal === 'SELL') return <TrendingDown className="w-3 h-3 text-red-500" />;
@@ -396,30 +399,116 @@ function CryptoAnalysisItem({ symbol, result }: { symbol: string; result: Crypto
     return 'text-slate-400';
   };
 
+  // Check if there's expandable content
+  const hasExpandableContent = result.ai_decision?.reasoning ||
+    (result.ai_decision?.concerns && result.ai_decision.concerns.length > 0) ||
+    result.ai_decision?.wait_for;
+
   return (
-    <div className="bg-slate-700/30 rounded p-2">
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          {getSignalIcon()}
-          <span className="text-sm font-medium text-white">{symbol.replace('/', '')}</span>
+    <>
+      <div
+        className={`bg-slate-700/30 rounded p-2 transition-colors ${hasExpandableContent ? 'cursor-pointer hover:bg-slate-700/50' : ''}`}
+        onClick={() => hasExpandableContent && setExpanded(!expanded)}
+      >
+        {/* Header Row */}
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            {getSignalIcon()}
+            <span className="text-sm font-medium text-white">{symbol.replace('/', '')}</span>
+          </div>
+          {/* Signal strength indicator - SIMPLIFIED */}
+          <div className="flex items-center gap-2">
+            {/* Show single tech score with threshold context */}
+            <span
+              className={`text-xs font-medium ${getSignalColor()}`}
+              title={`Technical Score: ${result.confidence.toFixed(0)}% (needs ${result.threshold.toFixed(0)}%+ to buy)`}
+            >
+              Tech: {result.confidence.toFixed(0)}%
+              {result.confidence >= result.threshold && (
+                <span className="text-green-400 ml-1">✓</span>
+              )}
+            </span>
+            {hasExpandableContent && (
+              <span className="text-slate-500 text-xs">{expanded ? '▲' : '▼'}</span>
+            )}
+          </div>
         </div>
-        <span className={`text-xs font-medium ${getSignalColor()}`}>
-          {result.confidence.toFixed(0)}% / {result.threshold.toFixed(0)}%
-        </span>
+
+        {/* Technical reason - show first line always */}
+        <p className={`text-xs text-slate-400 mt-1 ${!expanded ? 'line-clamp-1' : ''}`}>
+          {result.reason}
+        </p>
+
+        {/* AI Decision Section - EXPANDABLE */}
+        {result.ai_decision && (
+          <div className={`mt-2 pt-2 border-t border-slate-600/50 ${
+            result.ai_decision.decision === 'APPROVE' ? 'text-green-400' :
+            result.ai_decision.decision === 'WAIT' ? 'text-yellow-400' :
+            'text-red-400'
+          }`}>
+            {/* AI Decision Header */}
+            <div className="flex items-center gap-1.5 text-xs">
+              <Brain className="w-3 h-3" />
+              <span className="font-medium">{result.ai_decision.decision}</span>
+              {/* AI Confidence - clickable to show modal */}
+              {result.ai_decision.confidence > 0 && (
+                <button
+                  onClick={(e) => { e.stopPropagation(); setShowModal(true); }}
+                  className="ml-auto px-1.5 py-0.5 text-[10px] bg-purple-500/20 text-purple-400 rounded hover:bg-purple-500/30 transition-colors"
+                  title="View confidence breakdown"
+                >
+                  AI: {result.ai_decision.confidence}%
+                </button>
+              )}
+            </div>
+
+            {/* AI Reasoning - show full when expanded */}
+            {result.ai_decision.reasoning && (
+              <p className={`text-[11px] text-slate-300 mt-1.5 leading-relaxed ${!expanded ? 'line-clamp-2' : ''}`}>
+                {result.ai_decision.reasoning}
+              </p>
+            )}
+
+            {/* Expanded Content */}
+            {expanded && (
+              <div className="mt-2 space-y-2">
+                {/* Concerns */}
+                {result.ai_decision.concerns && result.ai_decision.concerns.length > 0 && (
+                  <div className="pt-2 border-t border-slate-600/30">
+                    <span className="text-[10px] text-slate-500 uppercase block mb-1">Concerns:</span>
+                    <ul className="text-[11px] text-yellow-400/80 space-y-0.5">
+                      {result.ai_decision.concerns.map((concern, i) => (
+                        <li key={i} className="flex items-start gap-1">
+                          <span className="text-yellow-500">•</span>
+                          <span>{concern}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+
+                {/* Wait for */}
+                {result.ai_decision.wait_for && (
+                  <div className="text-[11px] pt-2 border-t border-slate-600/30">
+                    <span className="text-slate-500">Wait for: </span>
+                    <span className="text-yellow-400">{result.ai_decision.wait_for}</span>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
       </div>
-      <p className="text-xs text-slate-400 mt-1">{result.reason}</p>
-      {/* Show AI decision if available */}
-      {result.ai_decision && (
-        <div className={`mt-1 flex items-center gap-1 text-xs ${
-          result.ai_decision.decision === 'APPROVE' ? 'text-green-400' :
-          result.ai_decision.decision === 'WAIT' ? 'text-yellow-400' :
-          'text-red-400'
-        }`}>
-          <Brain className="w-3 h-3" />
-          AI: {result.ai_decision.decision}
-        </div>
+
+      {/* Confidence Modal */}
+      {showModal && result.ai_decision && (
+        <ConfidenceReasoningModal
+          decision={result.ai_decision}
+          isOpen={showModal}
+          onClose={() => setShowModal(false)}
+        />
       )}
-    </div>
+    </>
   );
 }
 

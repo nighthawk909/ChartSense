@@ -1,0 +1,61 @@
+{
+  "task_id": "TASK-011",
+  "title": "Add fallback handling for incomplete indicator data",
+  "tester": "qa_bot",
+  "timestamp": "2026-01-28T14:28:00Z",
+  "verdict": "passed",
+  "test_results": {
+    "backend": {
+      "ran": true,
+      "passed": 189,
+      "failed": 0,
+      "notes": "All tests pass with new fallback handling"
+    },
+    "code_review": {
+      "hierarchical_strategy.py": {
+        "location": "evaluate_opportunity() starting at line 350",
+        "critical_indicators_defined": ["current_price"],
+        "important_indicators_defined": ["atr", "rsi_14", "macd_histogram"],
+        "null_check_present": true,
+        "missing_critical_handling": "Returns None with warning log",
+        "missing_important_handling": "Logs warning, applies fallbacks, continues scoring",
+        "fallback_values": {
+          "atr": "current_price * 0.02 (2% volatility)",
+          "rsi_14": "50 (neutral)",
+          "macd_histogram": "0 (neutral)",
+          "macd_line": "0 (neutral)",
+          "sma_20/50/200": "current_price",
+          "volume_ratio": "1.0 (neutral)",
+          "stoch_k/d": "50 (neutral)",
+          "adx": "20 (low trend)",
+          "roc": "0 (neutral)",
+          "vwap": "current_price"
+        }
+      }
+    }
+  },
+  "acceptance_criteria": [
+    {
+      "criterion": "No crashes when indicators are incomplete",
+      "status": "passed",
+      "evidence": "Null check at line 355, fallbacks applied for all non-critical indicators"
+    },
+    {
+      "criterion": "Warnings logged for missing data",
+      "status": "passed",
+      "evidence": "[INCOMPLETE_DATA] warnings logged at lines 357, 369, 376, 388"
+    },
+    {
+      "criterion": "Opportunities with insufficient data are skipped",
+      "status": "passed",
+      "evidence": "Returns None if indicators dict empty or critical indicators missing"
+    },
+    {
+      "criterion": "Scoring only proceeds with valid data",
+      "status": "passed",
+      "evidence": "Scoring starts at line 448 only after validation and fallback application"
+    }
+  ],
+  "issues_found": [],
+  "recommendations": []
+}

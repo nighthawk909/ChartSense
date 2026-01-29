@@ -26,6 +26,29 @@ import {
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
+// Helper to detect if symbol is crypto
+function isCryptoSymbol(symbol: string): boolean {
+  if (!symbol) return false;
+  const upperSymbol = symbol.toUpperCase();
+  return (
+    upperSymbol.includes('/USD') ||
+    upperSymbol.endsWith('USD') ||
+    upperSymbol.endsWith('USDT') ||
+    ['BTC', 'ETH', 'SOL', 'DOGE', 'ADA', 'XRP', 'AVAX', 'LINK', 'DOT', 'MATIC', 'LTC', 'UNI', 'AAVE', 'SHIB', 'ATOM', 'NEAR', 'FTM', 'ALGO', 'VET', 'ICP'].some(
+      crypto => upperSymbol === crypto || upperSymbol.startsWith(crypto + '/') || upperSymbol === crypto + 'USD' || upperSymbol === crypto + 'USDT'
+    )
+  );
+}
+
+// Normalize crypto symbol for API (remove slash, add USD if needed)
+function normalizeCryptoSymbol(symbol: string): string {
+  const upperSymbol = symbol.toUpperCase().replace('/', '');
+  if (!upperSymbol.endsWith('USD') && !upperSymbol.endsWith('USDT')) {
+    return upperSymbol + 'USD';
+  }
+  return upperSymbol;
+}
+
 interface ScreenData {
   timeframe: string;
   direction?: string;
@@ -93,12 +116,106 @@ export default function TripleScreenPanel({ symbol }: TripleScreenPanelProps) {
     setLoading(true);
     setError(null);
     try {
-      const response = await fetch(`${API_URL}/api/analysis/triple-screen/${symbol}`);
-      if (!response.ok) {
-        throw new Error(`Failed to fetch: ${response.statusText}`);
+      const isCrypto = isCryptoSymbol(symbol);
+
+      if (isCrypto) {
+        // For crypto, build triple screen data from multiple crypto analysis calls
+        const apiSymbol = normalizeCryptoSymbol(symbol);
+        const [dailyRes, hourlyRes, shortRes] = await Promise.all([
+          fetch(`${API_URL}/api/crypto/analyze/${apiSymbol}?interval=daily`),
+          fetch(`${API_URL}/api/crypto/analyze/${apiSymbol}?interval=1hour`),
+          fetch(`${API_URL}/api/crypto/analyze/${apiSymbol}?interval=15min`),
+        ]);
+
+        const dailyData = dailyRes.ok ? await dailyRes.json() : null;
+        const hourlyData = hourlyRes.ok ? await hourlyRes.json() : null;
+        const shortData = shortRes.ok ? await shortRes.json() : null;
+
+        // Determine directions based on analysis
+        const getDirection = (data: any) => {
+          if (!data) return 'NEUTRAL';
+          const rec = data.recommendation?.toUpperCase() || '';
+          if (rec.includes('BUY')) return 'BULLISH';
+          if (rec.includes('SELL') || rec.includes('SHORT')) return 'BEARISH';
+          return 'NEUTRAL';
+        };
+
+        const tideBullish = getDirection(dailyData) === 'BULLISH';
+        const waveBullish = getDirection(hourlyData) === 'BULLISH';
+        const rippleBullish = getDirection(shortData) === 'BULLISH';
+
+        // Calculate alignment
+        const alignment = [tideBullish, waveBullish, rippleBullish].filter(Boolean).length / 3 * 100;
+
+        // Determine trade action
+        let tradeAction = 'WAIT';
+        let rationale = 'Waiting for alignment across all timeframes';
+        if (tideBullish && waveBullish && rippleBullish) {
+          tradeAction = 'STRONG BUY';
+          rationale = 'All three screens aligned bullish - strong entry signal';
+        } else if (!tideBullish && !waveBullish && !rippleBullish) {
+          tradeAction = 'STRONG SHORT';
+          rationale = 'All three screens aligned bearish - consider short position';
+        } else if (tideBullish && waveBullish) {
+          tradeAction = 'BUY';
+          rationale = 'Tide and wave bullish - look for ripple entry';
+        } else if (!tideBullish && !waveBullish) {
+          tradeAction = 'SHORT';
+          rationale = 'Tide and wave bearish - look for short entry';
+        }
+
+        const tripleScreenData: TripleScreenData = {
+          symbol: apiSymbol,
+          current_price: dailyData?.current_price || 0,
+          timestamp: new Date().toISOString(),
+          trade_action: tradeAction,
+          alignment_score: alignment,
+          trade_rationale: rationale,
+          screens: {
+            screen_1_tide: {
+              timeframe: 'Daily (Crypto 24h)',
+              direction: getDirection(dailyData),
+              strength: dailyData?.score || 50,
+              signals: dailyData?.signals?.filter((s: string) => !s.includes('down')).slice(0, 3) || [],
+              concerns: dailyData?.signals?.filter((s: string) => s.includes('down')).slice(0, 2) || [],
+              indicators: dailyData?.indicators || {},
+            },
+            screen_2_wave: {
+              timeframe: 'Hourly',
+              direction: getDirection(hourlyData),
+              strength: hourlyData?.score || 50,
+              entry_ready: hourlyData?.score >= 60,
+              signals: hourlyData?.signals?.filter((s: string) => !s.includes('down')).slice(0, 3) || [],
+              concerns: hourlyData?.signals?.filter((s: string) => s.includes('down')).slice(0, 2) || [],
+              indicators: hourlyData?.indicators || {},
+            },
+            screen_3_ripple: {
+              timeframe: '15 Min',
+              direction: getDirection(shortData),
+              strength: shortData?.score || 50,
+              entry_triggered: shortData?.score >= 65 && tideBullish && waveBullish,
+              signals: shortData?.signals?.filter((s: string) => !s.includes('down')).slice(0, 3) || [],
+              concerns: shortData?.signals?.filter((s: string) => s.includes('down')).slice(0, 2) || [],
+              indicators: shortData?.indicators || {},
+            },
+          },
+          methodology: {
+            name: "Alexander Elder's Triple Screen",
+            description: 'Uses three timeframes to filter trades and time entries',
+            best_for: ['Crypto swing trades', 'Trend following', 'Reducing false signals'],
+          },
+        };
+
+        setData(tripleScreenData);
+      } else {
+        // For stocks, use the existing endpoint
+        const response = await fetch(`${API_URL}/api/analysis/triple-screen/${symbol}`);
+        if (!response.ok) {
+          throw new Error(`Failed to fetch: ${response.statusText}`);
+        }
+        const result = await response.json();
+        setData(result);
       }
-      const result = await response.json();
-      setData(result);
     } catch (err) {
       console.error('Triple screen fetch error:', err);
       setError(err instanceof Error ? err.message : 'Failed to fetch analysis');

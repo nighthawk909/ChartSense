@@ -406,11 +406,11 @@ FUNDAMENTALS:
             Dict with AI decision, reasoning, and trade parameters
         """
         if not self.enabled:
-            return self._fallback_stock_decision(symbol, signal_data)
+            return self._fallback_stock_decision(symbol, signal_data, error_reason="API key not configured")
 
         client = self._get_client()
         if not client:
-            return self._fallback_stock_decision(symbol, signal_data)
+            return self._fallback_stock_decision(symbol, signal_data, error_reason="Failed to initialize OpenAI client")
 
         try:
             # Build comprehensive prompt for AI evaluation
@@ -496,30 +496,67 @@ Respond with JSON:
             return decision
 
         except Exception as e:
-            logger.error(f"AI stock evaluation failed for {symbol}: {e}")
-            return self._fallback_stock_decision(symbol, signal_data)
+            error_msg = str(e)
+            # Check for specific error types and give clear messages
+            error_reason = self._parse_openai_error(error_msg)
+            logger.error(f"AI stock evaluation failed for {symbol}: {error_msg}")
+            return self._fallback_stock_decision(symbol, signal_data, error_reason=error_reason)
 
-    def _fallback_stock_decision(self, symbol: str, signal_data: Dict[str, Any]) -> Dict[str, Any]:
+    def _parse_openai_error(self, error_msg: str) -> str:
+        """Parse OpenAI error messages into user-friendly reasons"""
+        error_lower = error_msg.lower()
+        if "insufficient_quota" in error_lower or "exceeded your current quota" in error_lower:
+            return "QUOTA EXCEEDED - Add billing at platform.openai.com/account/billing"
+        elif "rate_limit" in error_lower or "429" in error_msg:
+            return "Rate limited - too many requests, will retry"
+        elif "invalid_api_key" in error_lower or "401" in error_msg:
+            return "Invalid API key - check OPENAI_API_KEY in .env"
+        elif "connection" in error_lower or "timeout" in error_lower:
+            return "Network error - check internet connection"
+        elif "model" in error_lower and "not found" in error_lower:
+            return "Model not available - check OpenAI subscription"
+        else:
+            return error_msg[:80]
+
+    def _fallback_stock_decision(self, symbol: str, signal_data: Dict[str, Any], error_reason: str = None) -> Dict[str, Any]:
         """Fallback decision when AI is unavailable for stocks - uses signal data only"""
         score = signal_data.get('score', 50)
         signal_type = signal_data.get('signal_type', 'HOLD')
 
+        # Determine why AI is unavailable
+        if not self.enabled:
+            ai_status = "API key not configured"
+        elif error_reason:
+            ai_status = error_reason
+        else:
+            ai_status = "Unknown error"
+
+        logger.warning(f"Using fallback for {symbol}: {ai_status}")
+
         # Without AI, we're more conservative
+        # Only APPROVE if score is very high (75+) since we don't have AI confirmation
         if signal_type == 'BUY' and score >= 75:
             decision = "APPROVE"
             confidence = min(score, 70)  # Cap confidence without AI
+            reasoning = f"Technical score {score}% exceeds high-confidence threshold. AI status: {ai_status}"
+            concerns = [f"AI unavailable ({ai_status}) - approved based on strong technicals only"]
         elif signal_type == 'BUY' and score >= 65:
             decision = "WAIT"
             confidence = 50
+            reasoning = f"Score {score}% meets threshold but AI unavailable ({ai_status}). Waiting for stronger signal."
+            concerns = [f"AI status: {ai_status}", "Waiting for AI availability or stronger signal"]
         else:
-            decision = "REJECT"
-            confidence = 60
+            # Low score - this is NOT an AI rejection, it's a technical skip
+            decision = "WAIT"  # Changed from REJECT - can't reject without AI evaluation
+            confidence = score
+            reasoning = f"Technical score {score}% below threshold (65%). Waiting for better setup."
+            concerns = ["Score below threshold - needs stronger technical signal", "AI unavailable for deeper analysis"]
 
         return {
             "decision": decision,
             "confidence": confidence,
-            "reasoning": f"Based on technical signals only (AI unavailable). Score: {score}, Signal: {signal_type}",
-            "concerns": ["AI evaluation unavailable - using technical signals only"],
+            "reasoning": reasoning,
+            "concerns": concerns,
             "suggested_position_size_pct": 0.02,
             "suggested_stop_loss_pct": 0.05,
             "suggested_take_profit_pct": 0.10,
@@ -551,11 +588,11 @@ Respond with JSON:
             Dict with AI decision, reasoning, and trade parameters
         """
         if not self.enabled:
-            return self._fallback_crypto_decision(symbol, technical_analysis)
+            return self._fallback_crypto_decision(symbol, technical_analysis, error_reason="API key not configured")
 
         client = self._get_client()
         if not client:
-            return self._fallback_crypto_decision(symbol, technical_analysis)
+            return self._fallback_crypto_decision(symbol, technical_analysis, error_reason="Failed to initialize OpenAI client")
 
         try:
             # Build comprehensive prompt for AI evaluation
@@ -623,7 +660,7 @@ Respond with JSON:
                 if json_match:
                     decision = json.loads(json_match.group())
                 else:
-                    return self._fallback_crypto_decision(symbol, technical_analysis)
+                    return self._fallback_crypto_decision(symbol, technical_analysis, error_reason="Failed to parse AI JSON response")
 
             decision["ai_generated"] = True
             decision["model"] = self.model
@@ -634,8 +671,10 @@ Respond with JSON:
             return decision
 
         except Exception as e:
-            logger.error(f"AI crypto evaluation failed for {symbol}: {e}")
-            return self._fallback_crypto_decision(symbol, technical_analysis)
+            error_msg = str(e)
+            error_reason = self._parse_openai_error(error_msg)
+            logger.error(f"AI crypto evaluation failed for {symbol}: {error_msg}")
+            return self._fallback_crypto_decision(symbol, technical_analysis, error_reason=error_reason)
 
     async def get_crypto_market_analysis(self) -> Dict[str, Any]:
         """
@@ -702,27 +741,44 @@ Respond with JSON:
             logger.error(f"Crypto market analysis failed: {e}")
             return {"sentiment": "neutral", "confidence": 50, "ai_generated": False}
 
-    def _fallback_crypto_decision(self, symbol: str, technical_analysis: Dict[str, Any]) -> Dict[str, Any]:
+    def _fallback_crypto_decision(self, symbol: str, technical_analysis: Dict[str, Any], error_reason: str = None) -> Dict[str, Any]:
         """Fallback decision when AI is unavailable - uses technical analysis only"""
         score = technical_analysis.get('score', 50)
         recommendation = technical_analysis.get('recommendation', 'HOLD')
+
+        # Determine why AI is unavailable
+        if not self.enabled:
+            ai_status = "API key not configured"
+        elif error_reason:
+            ai_status = error_reason
+        else:
+            ai_status = "Unknown error"
+
+        logger.warning(f"Using crypto fallback for {symbol}: {ai_status}")
 
         # Without AI, we're more conservative
         if recommendation in ['BUY', 'STRONG_BUY'] and score >= 75:
             decision = "APPROVE"
             confidence = min(score, 70)  # Cap confidence without AI
+            reasoning = f"Technical signals strong (Score: {score}%, Signal: {recommendation}). AI status: {ai_status}"
+            concerns = [f"AI status: {ai_status}", "Approved based on strong technicals only"]
         elif recommendation in ['BUY', 'STRONG_BUY'] and score >= 65:
             decision = "WAIT"
             confidence = 50
+            reasoning = f"Technical signals positive but AI unavailable ({ai_status}). Score: {score}%, Signal: {recommendation}."
+            concerns = [f"AI status: {ai_status}", "Score below 75% threshold for auto-approval", "Waiting for better setup"]
         else:
-            decision = "REJECT"
-            confidence = 60
+            # Changed from REJECT to WAIT - we can't reject without AI evaluation
+            decision = "WAIT"
+            confidence = 40
+            reasoning = f"Technical score {score}% below threshold (75%). AI status: {ai_status}. Waiting for better setup."
+            concerns = ["Score below entry threshold", f"AI status: {ai_status}", "Will re-evaluate when conditions improve"]
 
         return {
             "decision": decision,
             "confidence": confidence,
-            "reasoning": f"Based on technical analysis only (AI unavailable). Score: {score}, Signal: {recommendation}",
-            "concerns": ["AI evaluation unavailable - using technical signals only"],
+            "reasoning": reasoning,
+            "concerns": concerns,
             "suggested_position_size_pct": 0.02,
             "suggested_stop_loss_pct": 0.05,
             "suggested_take_profit_pct": 0.10,

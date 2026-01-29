@@ -1,0 +1,58 @@
+{
+  "task_id": "TASK-009",
+  "title": "Add symbol format validation in trading bot",
+  "tester": "qa_bot",
+  "timestamp": "2026-01-28T14:24:00Z",
+  "verdict": "passed",
+  "test_results": {
+    "backend": {
+      "ran": true,
+      "passed": 189,
+      "failed": 0,
+      "notes": "All tests pass with new validation logic"
+    },
+    "code_review": {
+      "trading_bot.py": {
+        "method_created": "_normalize_and_validate_symbol() at line 410",
+        "filter_method": "_validate_and_filter_symbols() at line 505",
+        "entry_points_validated": [
+          "_apply_config() line 300",
+          "_load_db_config() lines 550, 608, 619",
+          "_refresh_symbols_from_watchlist() line 1515",
+          "add_symbol() line 1601",
+          "remove_symbol() line 1760",
+          "analyze_symbol_now() line 1929",
+          "scan_symbol() line 2104",
+          "evaluate_symbol() line 2132",
+          "get_symbol_analysis() line 2955"
+        ],
+        "validation_logic": "Non-empty string, 1-10 chars, uppercase, strip whitespace",
+        "crypto_handling": "BTC/USD and BTCUSD both normalized correctly"
+      }
+    }
+  },
+  "acceptance_criteria": [
+    {
+      "criterion": "Invalid symbols rejected with clear error message",
+      "status": "passed",
+      "evidence": "_normalize_and_validate_symbol returns (normalized, is_valid, error_msg) tuple"
+    },
+    {
+      "criterion": "Symbols normalized consistently (AAPL not aapl)",
+      "status": "passed",
+      "evidence": "Line 460: symbol = symbol.upper() after strip()"
+    },
+    {
+      "criterion": "Crypto symbols handled correctly (BTC/USD, BTCUSD both work)",
+      "status": "passed",
+      "evidence": "Lines 467-484: detect crypto format, normalize slashes"
+    },
+    {
+      "criterion": "No silent failures from symbol format issues",
+      "status": "passed",
+      "evidence": "Invalid symbols logged at warning level and filtered out at all entry points"
+    }
+  ],
+  "issues_found": [],
+  "recommendations": []
+}

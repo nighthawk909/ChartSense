@@ -1,0 +1,115 @@
+{
+  "last_updated": "2026-01-28T12:30:00Z",
+  "summary": {
+    "total_tasks": 12,
+    "completed": 2,
+    "in_progress": 1,
+    "in_review": 6,
+    "in_qa": 0,
+    "blocked": 0,
+    "velocity_7d": 2
+  },
+  "current_sprint": {
+    "name": "Code Quality & Test Coverage Sprint",
+    "start": "2026-01-28",
+    "end": null,
+    "goals": [
+      "Establish test infrastructure with mocks and fixtures",
+      "Achieve 25% test coverage on critical services (indicators, risk manager)",
+      "Implement custom exception hierarchy for better error handling",
+      "Fix memory leaks and useEffect issues in Dashboard.tsx",
+      "Add input validation for symbols and API keys"
+    ],
+    "progress_pct": 17
+  },
+  "task_breakdown": {
+    "by_priority": {
+      "critical": 3,
+      "high": 5,
+      "medium": 4,
+      "low": 0
+    },
+    "by_status": {
+      "done": 2,
+      "review_pending": 6,
+      "in_progress": 1,
+      "new": 3
+    }
+  },
+  "recent_activity": [
+    {
+      "timestamp": "2026-01-28T12:30:00Z",
+      "action": "TASK-001 DONE",
+      "details": "Test infrastructure: conftest.py, mock services, fixtures - QA PASSED",
+      "actor": "qa"
+    },
+    {
+      "timestamp": "2026-01-28T12:28:00Z",
+      "action": "TASK-004 DONE",
+      "details": "Custom exception hierarchy: 20+ exception classes - QA PASSED",
+      "actor": "qa"
+    },
+    {
+      "timestamp": "2026-01-28T12:25:00Z",
+      "action": "TASK-002 coding complete",
+      "details": "Indicator tests written - ready for review",
+      "actor": "coder"
+    },
+    {
+      "timestamp": "2026-01-28T12:25:00Z",
+      "action": "TASK-003 coding complete",
+      "details": "Risk manager tests written - ready for review",
+      "actor": "coder"
+    },
+    {
+      "timestamp": "2026-01-28T12:20:00Z",
+      "action": "TASK-010 coding complete",
+      "details": "Logger utility created - ready for review",
+      "actor": "coder"
+    },
+    {
+      "timestamp": "2026-01-28T12:20:00Z",
+      "action": "TASK-011 coding complete",
+      "details": "Indicator fallbacks implemented - ready for review",
+      "actor": "coder"
+    },
+    {
+      "timestamp": "2026-01-28T12:00:00Z",
+      "action": "Sprint created",
+      "details": "Created 12 tasks across testing, backend hardening, and frontend refactoring",
+      "actor": "pm"
+    }
+  ],
+  "blockers": [],
+  "notifications": [
+    {
+      "type": "success",
+      "message": "2 TASKS COMPLETED: TASK-001, TASK-004",
+      "timestamp": "2026-01-28T12:30:00Z"
+    },
+    {
+      "type": "info",
+      "message": "6 tasks ready for review: TASK-002, TASK-003, TASK-005, TASK-007, TASK-010, TASK-011",
+      "timestamp": "2026-01-28T12:30:00Z"
+    },
+    {
+      "type": "info",
+      "message": "1 task still in progress: TASK-009",
+      "timestamp": "2026-01-28T12:30:00Z"
+    }
+  ],
+  "dependency_graph": {
+    "TASK-001": [],
+    "TASK-002": ["TASK-001"],
+    "TASK-003": ["TASK-001"],
+    "TASK-004": [],
+    "TASK-005": [],
+    "TASK-006": [],
+    "TASK-007": [],
+    "TASK-008": ["TASK-007"],
+    "TASK-009": [],
+    "TASK-010": [],
+    "TASK-011": [],
+    "TASK-012": []
+  }
+}

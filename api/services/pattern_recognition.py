@@ -33,6 +33,8 @@ class PatternType(str, Enum):
     BEAR_PENNANT = "bear_pennant"
     WEDGE_UP = "wedge_up"
     WEDGE_DOWN = "wedge_down"
+    CUP_AND_HANDLE = "cup_and_handle"
+    INVERSE_CUP_AND_HANDLE = "inverse_cup_and_handle"
 
     # Elliott Wave
     ELLIOTT_IMPULSE = "elliott_impulse"
@@ -64,6 +66,10 @@ class PatternResult:
     timeframe_relevance: float = 1.0  # Multiplier for timeframe appropriateness
     entry_zone_low: Optional[float] = None  # Buy/Sell zone lower bound
     entry_zone_high: Optional[float] = None  # Buy/Sell zone upper bound
+    # Key points for visual overlay - each point is {index, price, label}
+    key_points: Optional[List[Dict[str, Any]]] = None
+    # Lines to draw - each line is {start_index, start_price, end_index, end_price, label, style}
+    pattern_lines: Optional[List[Dict[str, Any]]] = None
 
 
 @dataclass
@@ -197,6 +203,28 @@ class PatternRecognitionService:
             # Price target: neckline - (head - neckline)
             price_target = neckline - (head - neckline)
 
+            # Build key points for visual overlay
+            key_points = [
+                {"index": left_shoulder_idx, "price": left_shoulder, "label": "Left Shoulder"},
+                {"index": head_idx, "price": head, "label": "Head"},
+                {"index": right_shoulder_idx, "price": right_shoulder, "label": "Right Shoulder"},
+                {"index": trough_indices[0], "price": lows[trough_indices[0]], "label": "Neckline L"},
+                {"index": trough_indices[-1], "price": lows[trough_indices[-1]], "label": "Neckline R"},
+            ]
+
+            # Build pattern lines for drawing
+            pattern_lines = [
+                # Left shoulder to head
+                {"start_index": left_shoulder_idx, "start_price": left_shoulder,
+                 "end_index": head_idx, "end_price": head, "label": "LS-Head", "style": "solid"},
+                # Head to right shoulder
+                {"start_index": head_idx, "start_price": head,
+                 "end_index": right_shoulder_idx, "end_price": right_shoulder, "label": "Head-RS", "style": "solid"},
+                # Neckline
+                {"start_index": trough_indices[0], "start_price": lows[trough_indices[0]],
+                 "end_index": trough_indices[-1], "end_price": lows[trough_indices[-1]], "label": "Neckline", "style": "dashed"},
+            ]
+
             return PatternResult(
                 pattern_type=PatternType.HEAD_AND_SHOULDERS,
                 confidence=min(confidence, 95),
@@ -205,7 +233,9 @@ class PatternRecognitionService:
                 end_index=right_shoulder_idx,
                 price_target=price_target,
                 stop_loss=head * 1.02,
-                description=f"H&S pattern detected. Neckline at {neckline:.2f}, target {price_target:.2f}"
+                description=f"H&S pattern detected. Neckline at {neckline:.2f}, target {price_target:.2f}",
+                key_points=key_points,
+                pattern_lines=pattern_lines
             )
 
         return None
@@ -252,6 +282,29 @@ class PatternRecognitionService:
             confidence = (1 - top_diff) * 100
             price_target = trough - (first_top - trough)
 
+            # Find trough index for key points
+            trough_idx = trough_indices[0] if trough_indices else (first_top_idx + second_top_idx) // 2
+
+            # Build key points for visual overlay
+            key_points = [
+                {"index": first_top_idx, "price": first_top, "label": "First Top"},
+                {"index": trough_idx, "price": trough, "label": "Trough"},
+                {"index": second_top_idx, "price": second_top, "label": "Second Top"},
+            ]
+
+            # Build pattern lines for drawing
+            pattern_lines = [
+                # First top to trough
+                {"start_index": first_top_idx, "start_price": first_top,
+                 "end_index": trough_idx, "end_price": trough, "label": "Down", "style": "solid"},
+                # Trough to second top
+                {"start_index": trough_idx, "start_price": trough,
+                 "end_index": second_top_idx, "end_price": second_top, "label": "Up", "style": "solid"},
+                # Horizontal neckline at trough
+                {"start_index": first_top_idx, "start_price": trough,
+                 "end_index": second_top_idx, "end_price": trough, "label": "Neckline", "style": "dashed"},
+            ]
+
             return PatternResult(
                 pattern_type=PatternType.DOUBLE_TOP,
                 confidence=min(confidence, 90),
@@ -260,7 +313,9 @@ class PatternRecognitionService:
                 end_index=second_top_idx,
                 price_target=price_target,
                 stop_loss=max(first_top, second_top) * 1.01,
-                description=f"Double Top at {first_top:.2f}, target {price_target:.2f}"
+                description=f"Double Top at {first_top:.2f}, target {price_target:.2f}",
+                key_points=key_points,
+                pattern_lines=pattern_lines
             )
 
         return None
@@ -325,7 +380,8 @@ class PatternRecognitionService:
         highs: List[float],
         lows: List[float],
         closes: List[float],
-        volumes: Optional[List[float]] = None
+        volumes: Optional[List[float]] = None,
+        timeframe: str = "daily"
     ) -> Optional[PatternResult]:
         """
         Detect Bull Flag pattern.
@@ -336,11 +392,15 @@ class PatternRecognitionService:
         - Volume typically decreases during flag formation
         - Bullish continuation pattern
         """
-        if len(closes) < 20:
+        if len(closes) < 15:
             return None
 
-        # Look for flagpole - strong upward move in recent data
-        lookback = min(30, len(closes))
+        # Adjust sensitivity based on timeframe
+        # Short timeframes (5min, 15min) need lower thresholds
+        is_intraday = timeframe.lower() in ['5min', '15min', '30min', '1hour', '1h', '5m', '15m', '30m']
+        min_pole_move = 0.015 if is_intraday else 0.05  # 1.5% for intraday, 5% for daily
+        lookback = min(20 if is_intraday else 30, len(closes))
+
         recent_closes = closes[-lookback:]
         recent_highs = highs[-lookback:]
         recent_lows = lows[-lookback:]
@@ -348,23 +408,22 @@ class PatternRecognitionService:
         # Find the highest point (potential end of flagpole)
         max_idx = recent_highs.index(max(recent_highs))
 
-        # Flagpole should be in the first 60% of the lookback
-        if max_idx < 5 or max_idx > lookback * 0.6:
+        # Flagpole should be in the first 70% of the lookback (more flexible)
+        if max_idx < 3 or max_idx > lookback * 0.7:
             return None
 
         # Calculate flagpole move
-        pole_start_idx = 0
         pole_start_price = min(recent_lows[:max_idx+1])
         pole_end_price = recent_highs[max_idx]
         pole_move = (pole_end_price - pole_start_price) / pole_start_price
 
-        # Flagpole should be at least 5% move
-        if pole_move < 0.05:
+        # Check minimum pole move
+        if pole_move < min_pole_move:
             return None
 
         # Check for flag consolidation after flagpole
         flag_data = recent_closes[max_idx:]
-        if len(flag_data) < 3:
+        if len(flag_data) < 2:  # Reduced from 3 to 2 for intraday
             return None
 
         # Flag should drift slightly down or sideways
@@ -372,24 +431,25 @@ class PatternRecognitionService:
         flag_end = flag_data[-1]
         flag_drift = (flag_end - flag_start) / flag_start
 
-        # Flag should not retrace more than 50% of the pole
+        # Flag should not retrace more than 50% of the pole (60% for intraday)
         flag_low = min(recent_lows[max_idx:])
         retracement = (pole_end_price - flag_low) / (pole_end_price - pole_start_price)
+        max_retracement = 0.60 if is_intraday else 0.50
 
-        if retracement > 0.5 or flag_drift > 0.02:  # Flag drifting up too much
+        if retracement > max_retracement or flag_drift > 0.03:  # Flag drifting up too much
             return None
 
         # Calculate confidence
-        confidence = 60
+        confidence = 55 if is_intraday else 60
         if retracement < 0.38:  # Shallow retracement is better
             confidence += 15
         if -0.05 < flag_drift < 0:  # Slight downward drift
             confidence += 10
         if volumes and len(volumes) >= lookback:
             # Volume should decrease during flag
-            pole_volume = sum(volumes[-lookback:-lookback+max_idx])
+            pole_volume = sum(volumes[-lookback:-lookback+max_idx]) if max_idx > 0 else 1
             flag_volume = sum(volumes[-lookback+max_idx:])
-            if flag_volume < pole_volume * 0.7:
+            if pole_volume > 0 and flag_volume < pole_volume * 0.8:
                 confidence += 15
 
         # Price target: flagpole height projected from flag breakout
@@ -482,6 +542,123 @@ class PatternRecognitionService:
             price_target=price_target,
             stop_loss=flag_high * 1.02,
             description=f"Bear Flag forming. Target: ${price_target:.2f}. Pole: -{pole_move*100:.1f}%"
+        )
+
+    def detect_cup_and_handle(
+        self,
+        highs: List[float],
+        lows: List[float],
+        closes: List[float],
+        volumes: Optional[List[float]] = None,
+        timeframe: str = "daily"
+    ) -> Optional[PatternResult]:
+        """
+        Detect Cup and Handle pattern.
+
+        Characteristics:
+        - Rounded bottom (the "cup") - U-shaped recovery
+        - Small pullback/consolidation (the "handle")
+        - Bullish continuation pattern
+        - Volume typically higher on breakout
+        """
+        # Adjust lookback based on timeframe
+        is_intraday = timeframe.lower() in ['5min', '15min', '30min', '1hour', '1h', '5m', '15m', '30m']
+        min_bars = 15 if is_intraday else 30
+
+        if len(closes) < min_bars:
+            return None
+
+        lookback = min(50 if not is_intraday else 30, len(closes))
+        recent_closes = closes[-lookback:]
+        recent_highs = highs[-lookback:]
+        recent_lows = lows[-lookback:]
+
+        # Find the left lip (starting high before cup)
+        first_third = lookback // 3
+        left_lip_idx = recent_highs[:first_third].index(max(recent_highs[:first_third]))
+        left_lip_price = recent_highs[left_lip_idx]
+
+        # Find the cup bottom (lowest point in middle section)
+        middle_start = first_third
+        middle_end = lookback - (lookback // 4)
+        middle_lows = recent_lows[middle_start:middle_end]
+        if not middle_lows:
+            return None
+        cup_bottom_rel_idx = middle_lows.index(min(middle_lows))
+        cup_bottom_idx = middle_start + cup_bottom_rel_idx
+        cup_bottom_price = recent_lows[cup_bottom_idx]
+
+        # Cup depth should be significant
+        cup_depth = (left_lip_price - cup_bottom_price) / left_lip_price
+        min_cup_depth = 0.02 if is_intraday else 0.05  # 2% for intraday, 5% for daily
+        if cup_depth < min_cup_depth:
+            return None
+
+        # Find the right lip (high point after cup, before handle)
+        right_section = recent_highs[cup_bottom_idx:]
+        if len(right_section) < 3:
+            return None
+        right_lip_rel_idx = right_section.index(max(right_section[:-3] if len(right_section) > 3 else right_section))
+        right_lip_idx = cup_bottom_idx + right_lip_rel_idx
+        right_lip_price = recent_highs[right_lip_idx]
+
+        # Right lip should be close to left lip (within 5% for intraday, 10% for daily)
+        lip_tolerance = 0.05 if is_intraday else 0.10
+        lip_diff = abs(right_lip_price - left_lip_price) / left_lip_price
+        if lip_diff > lip_tolerance:
+            return None
+
+        # Check for handle (small pullback after right lip)
+        handle_data = recent_closes[right_lip_idx:]
+        if len(handle_data) < 2:
+            return None
+
+        handle_low = min(recent_lows[right_lip_idx:])
+        handle_high = max(recent_highs[right_lip_idx:])
+
+        # Handle should be a shallow pullback (less than 50% of cup depth)
+        handle_depth = (right_lip_price - handle_low) / (right_lip_price - cup_bottom_price)
+        if handle_depth > 0.50:
+            return None
+
+        # Current price should be near or above handle
+        current_price = closes[-1]
+
+        # Calculate confidence
+        confidence = 55 if is_intraday else 60
+
+        # Better confidence for:
+        # - Symmetric cup (right lip near left lip)
+        if lip_diff < 0.03:
+            confidence += 10
+        # - Shallow handle
+        if handle_depth < 0.30:
+            confidence += 10
+        # - U-shaped cup (not V-shaped)
+        cup_width = right_lip_idx - left_lip_idx
+        if cup_width >= lookback * 0.4:
+            confidence += 10
+        # - Volume confirmation
+        if volumes and len(volumes) >= lookback:
+            # Volume should increase on right side
+            left_volume = sum(volumes[-lookback:cup_bottom_idx])
+            right_volume = sum(volumes[cup_bottom_idx:])
+            if right_volume > left_volume:
+                confidence += 10
+
+        # Price target: Cup depth projected above the lip
+        neckline = max(left_lip_price, right_lip_price)
+        price_target = neckline + (neckline - cup_bottom_price)
+
+        return PatternResult(
+            pattern_type=PatternType.CUP_AND_HANDLE,
+            confidence=min(confidence, 90),
+            direction="bullish",
+            start_index=len(closes) - lookback + left_lip_idx,
+            end_index=len(closes) - 1,
+            price_target=price_target,
+            stop_loss=handle_low * 0.98,
+            description=f"Cup & Handle pattern. Neckline: ${neckline:.2f}. Target: ${price_target:.2f}. Cup depth: {cup_depth*100:.1f}%"
         )
 
     def detect_breakout(
@@ -1180,6 +1357,7 @@ class PatternRecognitionService:
                 PatternType.ENGULFING_BEARISH: 1.15,
                 PatternType.BULL_FLAG: 1.0,
                 PatternType.BEAR_FLAG: 1.0,
+                PatternType.CUP_AND_HANDLE: 0.9,        # Can form on short timeframes
                 PatternType.HEAD_AND_SHOULDERS: 0.6,    # Less reliable on short timeframes
                 PatternType.DOUBLE_TOP: 0.7,
                 PatternType.DOUBLE_BOTTOM: 0.7,
@@ -1193,6 +1371,7 @@ class PatternRecognitionService:
                 PatternType.ENGULFING_BEARISH: 1.1,
                 PatternType.BULL_FLAG: 1.1,
                 PatternType.BEAR_FLAG: 1.1,
+                PatternType.CUP_AND_HANDLE: 1.0,
                 PatternType.HEAD_AND_SHOULDERS: 0.7,
                 PatternType.DOUBLE_TOP: 0.8,
                 PatternType.DOUBLE_BOTTOM: 0.8,
@@ -1206,6 +1385,7 @@ class PatternRecognitionService:
                 PatternType.ENGULFING_BEARISH: 1.0,
                 PatternType.BULL_FLAG: 1.15,
                 PatternType.BEAR_FLAG: 1.15,
+                PatternType.CUP_AND_HANDLE: 1.1,
                 PatternType.HEAD_AND_SHOULDERS: 0.85,
                 PatternType.DOUBLE_TOP: 0.9,
                 PatternType.DOUBLE_BOTTOM: 0.9,
@@ -1221,6 +1401,7 @@ class PatternRecognitionService:
                 PatternType.ENGULFING_BEARISH: 1.0,
                 PatternType.BULL_FLAG: 1.1,
                 PatternType.BEAR_FLAG: 1.1,
+                PatternType.CUP_AND_HANDLE: 1.2,  # Most reliable on daily
                 PatternType.HEAD_AND_SHOULDERS: 1.2,   # Most reliable on daily
                 PatternType.DOUBLE_TOP: 1.15,
                 PatternType.DOUBLE_BOTTOM: 1.15,
@@ -1260,14 +1441,19 @@ class PatternRecognitionService:
         if triangle:
             patterns.append(triangle)
 
-        # Detect flag patterns
-        bull_flag = self.detect_bull_flag(highs, lows, closes, volumes)
+        # Detect flag patterns (with timeframe awareness)
+        bull_flag = self.detect_bull_flag(highs, lows, closes, volumes, timeframe=tf_key)
         if bull_flag:
             patterns.append(bull_flag)
 
         bear_flag = self.detect_bear_flag(highs, lows, closes, volumes)
         if bear_flag:
             patterns.append(bear_flag)
+
+        # Detect cup and handle (with timeframe awareness)
+        cup_handle = self.detect_cup_and_handle(highs, lows, closes, volumes, timeframe=tf_key)
+        if cup_handle:
+            patterns.append(cup_handle)
 
         # Detect breakouts
         breakout = self.detect_breakout(highs, lows, closes, volumes)
@@ -1338,6 +1524,10 @@ class PatternRecognitionService:
                         "low": p.entry_zone_low,
                         "high": p.entry_zone_high,
                     } if p.entry_zone_low and p.entry_zone_high else None,
+                    "start_index": p.start_index,
+                    "end_index": p.end_index,
+                    "key_points": p.key_points,
+                    "pattern_lines": p.pattern_lines,
                 }
                 for p in patterns
             ],

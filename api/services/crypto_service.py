@@ -4,13 +4,26 @@ Crypto Trading Service
 Supports BTC, ETH, and other major cryptocurrencies
 """
 import os
-import logging
+import time
 from typing import Dict, Any, Optional, List
 from datetime import datetime, timedelta
 from decimal import Decimal
 import httpx
 
-logger = logging.getLogger(__name__)
+from exceptions import (
+    CryptoServiceError,
+    CryptoRateLimitError,
+    CryptoOrderError,
+    CryptoOrderSizeTooSmallError,
+    CryptoInsufficientDataError,
+    CryptoSymbolError,
+    CryptoAPIError,
+    AlpacaAuthError,
+    parse_crypto_api_error,
+)
+from services.logging_config import get_logger, log_api_call, log_method
+
+logger = get_logger(__name__)
 
 # Supported cryptocurrencies on Alpaca (verified to work)
 # Updated 2025: Alpaca now supports major coins including SOL, DOGE, etc.
@@ -37,11 +50,39 @@ class CryptoService:
     """
     Service for 24/7 cryptocurrency trading.
     Uses Alpaca's crypto trading API.
+
+    Raises:
+        ValueError: If required API keys are missing
     """
 
     def __init__(self):
+        """
+        Initialize CryptoService with Alpaca credentials.
+
+        Raises:
+            ValueError: If required ALPACA_API_KEY or ALPACA_SECRET_KEY are missing
+        """
         self.api_key = os.getenv("ALPACA_API_KEY", "")
         self.secret_key = os.getenv("ALPACA_SECRET_KEY", "")
+
+        # Validate required API keys
+        if not self.api_key:
+            raise AlpacaAuthError(
+                message="ALPACA_API_KEY is required for crypto trading but not set. "
+                "Please set ALPACA_API_KEY in your .env file. "
+                "Get your API key from https://alpaca.markets/",
+                permission_required="api_key"
+            )
+        if not self.secret_key:
+            raise AlpacaAuthError(
+                message="ALPACA_SECRET_KEY is required for crypto trading but not set. "
+                "Please set ALPACA_SECRET_KEY in your .env file. "
+                "Get your secret key from https://alpaca.markets/",
+                permission_required="secret_key"
+            )
+
+        logger.info("Crypto service API keys validated successfully")
+
         self.paper_trading = os.getenv("ALPACA_TRADING_MODE", "paper") == "paper"
 
         if self.paper_trading:
@@ -66,28 +107,56 @@ class CryptoService:
     ) -> Optional[Dict]:
         """Make authenticated request to Alpaca API"""
         url = f"{base_url or self.base_url}{endpoint}"
+        start_time = time.perf_counter()
 
         async with httpx.AsyncClient() as client:
-            response = await client.request(
-                method,
-                url,
-                headers=self._headers,
-                params=params,
-                json=json_data,
-                timeout=30.0
-            )
+            try:
+                response = await client.request(
+                    method,
+                    url,
+                    headers=self._headers,
+                    params=params,
+                    json=json_data,
+                    timeout=30.0
+                )
 
-            if response.status_code == 200:
-                return response.json()
-            elif response.status_code == 204:
-                return {"success": True}
-            else:
-                error_msg = f"Crypto API error: {response.status_code} - {response.text}"
-                logger.error(error_msg)
-                if return_error:
-                    return {"error": True, "status_code": response.status_code, "message": response.text}
-                return None
+                response_time_ms = (time.perf_counter() - start_time) * 1000
 
+                if response.status_code == 200:
+                    log_api_call(
+                        logger, method, url,
+                        status_code=response.status_code,
+                        response_time_ms=response_time_ms
+                    )
+                    return response.json()
+                elif response.status_code == 204:
+                    log_api_call(
+                        logger, method, url,
+                        status_code=response.status_code,
+                        response_time_ms=response_time_ms
+                    )
+                    return {"success": True}
+                else:
+                    error_msg = f"Crypto API error: {response.status_code} - {response.text}"
+                    log_api_call(
+                        logger, method, url,
+                        status_code=response.status_code,
+                        response_time_ms=response_time_ms,
+                        error=error_msg
+                    )
+                    if return_error:
+                        return {"error": True, "status_code": response.status_code, "message": response.text}
+                    return None
+            except httpx.RequestError as e:
+                response_time_ms = (time.perf_counter() - start_time) * 1000
+                log_api_call(
+                    logger, method, url,
+                    response_time_ms=response_time_ms,
+                    error=f"Request failed: {e}"
+                )
+                raise
+
+    @log_method(logger=logger)
     async def get_crypto_quote(self, symbol: str) -> Optional[Dict[str, Any]]:
         """
         Get real-time quote for a cryptocurrency with 24h stats.
@@ -153,6 +222,49 @@ class CryptoService:
             "volume_24h": volume_24h,
         }
 
+    @log_method(logger=logger)
+    async def get_current_price(self, symbol: str) -> Optional[float]:
+        """
+        Get the current price for a cryptocurrency.
+
+        This is a convenience method that wraps get_crypto_quote() and returns
+        just the price as a float. Useful for trade execution where only the
+        current price is needed.
+
+        Args:
+            symbol: Crypto symbol like "BTC/USD" or "BTCUSD"
+
+        Returns:
+            Current price as a float, or None if quote fetch fails
+
+        Example:
+            price = await crypto_service.get_current_price("BTC/USD")
+            # Returns: 42150.50
+        """
+        logger.info(f"Fetching current price for {symbol}")
+
+        try:
+            quote = await self.get_crypto_quote(symbol)
+
+            if quote is None:
+                logger.warning(f"Failed to get quote for {symbol} - quote returned None")
+                return None
+
+            price = quote.get("price")
+
+            if price is None:
+                logger.warning(f"Quote for {symbol} does not contain price field")
+                return None
+
+            price_float = float(price)
+            logger.info(f"Current price for {symbol}: ${price_float:,.2f}")
+            return price_float
+
+        except Exception as e:
+            logger.error(f"Error fetching current price for {symbol}: {e}")
+            raise
+
+    @log_method(logger=logger)
     async def get_crypto_bars(
         self,
         symbol: str,
@@ -245,6 +357,7 @@ class CryptoService:
 
         return quotes
 
+    @log_method(logger=logger)
     async def place_crypto_order(
         self,
         symbol: str,
@@ -277,21 +390,24 @@ class CryptoService:
         if not symbol.endswith("USD"):
             symbol += "USD"
 
-        logger.debug(f"Symbol normalization: {original_symbol} -> {symbol}")
+        logger.debug(
+            f"Symbol normalization: {original_symbol} -> {symbol}",
+            extra={"original_symbol": original_symbol, "normalized_symbol": symbol}
+        )
 
         # === MINIMUM ORDER VALIDATION ===
         # Alpaca has minimum notional value of $1 for crypto
         # Also validate that qty is reasonable
         if qty <= 0:
-            logger.error(f"Invalid quantity: {qty}")
-            return {
-                "error": True,
-                "error_message": "ORDER_SIZE_TOO_SMALL: Quantity must be greater than 0",
-                "status_code": 400,
-                "symbol": symbol,
-                "qty": qty,
-                "side": side,
-            }
+            logger.error(
+                f"Invalid quantity: {qty}",
+                extra={"symbol": symbol, "quantity": qty}
+            )
+            raise CryptoOrderSizeTooSmallError(
+                message="Quantity must be greater than 0",
+                symbol=symbol,
+                quantity=qty
+            )
 
         # Round qty to reasonable precision (Alpaca accepts up to 9 decimal places for crypto)
         qty = round(qty, 9)
@@ -307,27 +423,45 @@ class CryptoService:
         if order_type == "limit" and limit_price:
             order_data["limit_price"] = str(round(limit_price, 2))
 
-        logger.info(f"Placing crypto order: {side} {qty} {symbol} (type={order_type})")
-        logger.info(f"Order data: {order_data}")
+        logger.info(
+            f"Placing crypto order: {side} {qty} {symbol} (type={order_type})",
+            extra={"symbol": symbol, "side": side, "quantity": qty, "order_type": order_type}
+        )
         data = await self._make_request("POST", "/v2/orders", json_data=order_data, return_error=True)
 
         if data and data.get("error"):
             error_msg = data.get('message', 'Unknown error')
-            status_code = data.get('status_code', 'N/A')
-            logger.error(f"Order FAILED for {symbol}: {error_msg} (status: {status_code})")
-            logger.error(f"Order details: qty={qty}, side={side}, type={order_type}")
-            # Return error info for execution log
-            return {
-                "error": True,
-                "error_message": error_msg,
-                "status_code": status_code,
-                "symbol": symbol,
-                "qty": qty,
-                "side": side,
-            }
+            status_code = data.get('status_code', 400)
+            logger.error(
+                f"Order FAILED for {symbol}: {error_msg}",
+                extra={
+                    "symbol": symbol,
+                    "side": side,
+                    "quantity": qty,
+                    "order_type": order_type,
+                    "status_code": status_code,
+                    "error_message": error_msg
+                }
+            )
+            # Raise appropriate exception based on error type
+            raise parse_crypto_api_error(
+                status_code=status_code if isinstance(status_code, int) else 400,
+                error_message=error_msg,
+                symbol=symbol
+            )
 
         if data:
-            logger.info(f"Crypto order SUCCESS: {side} {qty} {symbol} - status: {data.get('status')}")
+            logger.info(
+                f"Crypto order SUCCESS: {side} {qty} {symbol} - status: {data.get('status')}",
+                extra={
+                    "symbol": symbol,
+                    "side": side,
+                    "quantity": qty,
+                    "order_type": order_type,
+                    "order_id": data.get("id"),
+                    "status": data.get("status")
+                }
+            )
             return {
                 "order_id": data.get("id"),
                 "symbol": data.get("symbol"),
@@ -339,9 +473,18 @@ class CryptoService:
                 "filled_avg_price": float(data.get("filled_avg_price") or 0),
             }
 
-        logger.error(f"Order returned None for {symbol}")
-        return None
+        logger.error(
+            f"Order returned None for {symbol}",
+            extra={"symbol": symbol, "side": side, "quantity": qty, "order_type": order_type}
+        )
+        raise CryptoOrderError(
+            message=f"Order submission failed for {symbol}: No response from API",
+            symbol=symbol,
+            side=side,
+            quantity=qty
+        )
 
+    @log_method(logger=logger)
     async def get_crypto_positions(self) -> List[Dict[str, Any]]:
         """Get all current crypto positions"""
         data = await self._make_request("GET", "/v2/positions")
@@ -366,6 +509,7 @@ class CryptoService:
 
         return crypto_positions
 
+    @log_method(logger=logger)
     async def close_crypto_position(self, symbol: str) -> Optional[Dict]:
         """Close a crypto position"""
         symbol = symbol.replace("/", "").upper()
@@ -378,6 +522,7 @@ class CryptoService:
         """Crypto markets are always open 24/7"""
         return True
 
+    @log_method(logger=logger)
     async def analyze_crypto(self, symbol: str, timeframe: str = "1Hour") -> Dict[str, Any]:
         """
         Analyze a cryptocurrency for trading signals.
@@ -402,7 +547,12 @@ class CryptoService:
 
         # Require at least 10 bars for basic analysis (reduced from 20)
         if not bars or len(bars) < 10:
-            return {"error": "Insufficient data"}
+            raise CryptoInsufficientDataError(
+                message=f"Insufficient data for {symbol} analysis",
+                symbol=symbol,
+                required_bars=10,
+                available_bars=len(bars) if bars else 0
+            )
 
         closes = [b["close"] for b in bars]
         highs = [b["high"] for b in bars]

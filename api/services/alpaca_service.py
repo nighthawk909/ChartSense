@@ -3,14 +3,28 @@ Alpaca Trading API Integration Service
 Handles all communication with Alpaca brokerage for live/paper trading
 """
 import os
-import logging
+import time
 from typing import List, Optional, Dict, Any
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
 
+from exceptions import (
+    AlpacaError,
+    AlpacaAuthError,
+    AlpacaInsufficientFundsError,
+    AlpacaOrderError,
+    AlpacaOrderSizeTooSmallError,
+    AlpacaMarketClosedError,
+    AlpacaPositionError,
+    AlpacaConnectionError,
+    AlpacaRateLimitError,
+    parse_alpaca_error,
+)
+from services.logging_config import get_logger, log_api_call, log_method
+
 load_dotenv()
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class AlpacaService:
@@ -25,9 +39,30 @@ class AlpacaService:
 
         Args:
             paper_trading: If True, use paper trading API (default for safety)
+
+        Raises:
+            ValueError: If required API keys are missing
         """
         self.api_key = os.getenv("ALPACA_API_KEY", "")
         self.secret_key = os.getenv("ALPACA_SECRET_KEY", "")
+
+        # Validate required API keys
+        if not self.api_key:
+            raise AlpacaAuthError(
+                message="ALPACA_API_KEY is required but not set. "
+                "Please set ALPACA_API_KEY in your .env file. "
+                "Get your API key from https://alpaca.markets/",
+                permission_required="api_key"
+            )
+        if not self.secret_key:
+            raise AlpacaAuthError(
+                message="ALPACA_SECRET_KEY is required but not set. "
+                "Please set ALPACA_SECRET_KEY in your .env file. "
+                "Get your secret key from https://alpaca.markets/",
+                permission_required="secret_key"
+            )
+
+        logger.info("Alpaca API keys validated successfully")
         self.paper_trading = paper_trading
 
         # Select base URL based on trading mode
@@ -75,12 +110,21 @@ class AlpacaService:
             )
             self._initialized = True
             logger.info(f"Alpaca client initialized (paper={self.paper_trading})")
-        except ImportError:
+        except ImportError as e:
             logger.error("alpaca-py package not installed. Run: pip install alpaca-py")
-            raise
+            raise AlpacaConnectionError(
+                message="alpaca-py package not installed. Run: pip install alpaca-py",
+                endpoint="initialization"
+            ) from e
         except Exception as e:
+            error_str = str(e).lower()
             logger.error(f"Failed to initialize Alpaca client: {e}")
-            raise
+            if "unauthorized" in error_str or "forbidden" in error_str:
+                raise AlpacaAuthError(message=f"Authentication failed: {e}") from e
+            raise AlpacaConnectionError(
+                message=f"Failed to initialize Alpaca client: {e}",
+                endpoint="initialization"
+            ) from e
 
     @property
     def is_initialized(self) -> bool:
@@ -89,6 +133,7 @@ class AlpacaService:
 
     # ============== Account Methods ==============
 
+    @log_method(logger=logger)
     async def get_account(self) -> Dict[str, Any]:
         """
         Get account information including equity, cash, buying power.
@@ -96,9 +141,16 @@ class AlpacaService:
         Returns:
             dict with account details
         """
+        start_time = time.perf_counter()
         try:
             api = self._get_api()
             account = api.get_account()
+
+            log_api_call(
+                logger, "GET", f"{self.base_url}/v2/account",
+                status_code=200,
+                response_time_ms=(time.perf_counter() - start_time) * 1000
+            )
 
             return {
                 "id": account.id,
@@ -114,8 +166,12 @@ class AlpacaService:
                 "last_equity": float(account.last_equity) if account.last_equity else None,
             }
         except Exception as e:
-            logger.error(f"Failed to get account: {e}")
-            raise
+            log_api_call(
+                logger, "GET", f"{self.base_url}/v2/account",
+                response_time_ms=(time.perf_counter() - start_time) * 1000,
+                error=str(e)
+            )
+            raise parse_alpaca_error(str(e)) from e
 
     async def get_buying_power(self) -> float:
         """Get available buying power"""
@@ -124,6 +180,7 @@ class AlpacaService:
 
     # ============== Position Methods ==============
 
+    @log_method(logger=logger)
     async def get_positions(self) -> List[Dict[str, Any]]:
         """
         Get all current open positions.
@@ -131,9 +188,17 @@ class AlpacaService:
         Returns:
             List of position dictionaries
         """
+        start_time = time.perf_counter()
         try:
             api = self._get_api()
             positions = api.get_all_positions()
+
+            log_api_call(
+                logger, "GET", f"{self.base_url}/v2/positions",
+                status_code=200,
+                response_time_ms=(time.perf_counter() - start_time) * 1000,
+                position_count=len(positions)
+            )
 
             return [
                 {
@@ -150,9 +215,14 @@ class AlpacaService:
                 for pos in positions
             ]
         except Exception as e:
-            logger.error(f"Failed to get positions: {e}")
-            raise
+            log_api_call(
+                logger, "GET", f"{self.base_url}/v2/positions",
+                response_time_ms=(time.perf_counter() - start_time) * 1000,
+                error=str(e)
+            )
+            raise parse_alpaca_error(str(e)) from e
 
+    @log_method(logger=logger)
     async def get_position(self, symbol: str) -> Optional[Dict[str, Any]]:
         """
         Get a specific position by symbol.
@@ -163,9 +233,17 @@ class AlpacaService:
         Returns:
             Position dict or None if no position
         """
+        start_time = time.perf_counter()
         try:
             api = self._get_api()
             pos = api.get_open_position(symbol.upper())
+
+            log_api_call(
+                logger, "GET", f"{self.base_url}/v2/positions/{symbol.upper()}",
+                status_code=200,
+                response_time_ms=(time.perf_counter() - start_time) * 1000,
+                symbol=symbol.upper()
+            )
 
             return {
                 "symbol": pos.symbol,
@@ -179,12 +257,28 @@ class AlpacaService:
             }
         except Exception as e:
             if "position does not exist" in str(e).lower():
+                log_api_call(
+                    logger, "GET", f"{self.base_url}/v2/positions/{symbol.upper()}",
+                    status_code=404,
+                    response_time_ms=(time.perf_counter() - start_time) * 1000,
+                    symbol=symbol.upper()
+                )
                 return None
-            logger.error(f"Failed to get position {symbol}: {e}")
-            raise
+            log_api_call(
+                logger, "GET", f"{self.base_url}/v2/positions/{symbol.upper()}",
+                response_time_ms=(time.perf_counter() - start_time) * 1000,
+                error=str(e),
+                symbol=symbol.upper()
+            )
+            raise AlpacaPositionError(
+                message=f"Failed to get position {symbol}: {e}",
+                symbol=symbol,
+                operation="get"
+            ) from e
 
     # ============== Order Methods ==============
 
+    @log_method(logger=logger)
     async def submit_market_order(
         self,
         symbol: str,
@@ -204,6 +298,7 @@ class AlpacaService:
         Returns:
             Order details
         """
+        start_time = time.perf_counter()
         try:
             from alpaca.trading.requests import MarketOrderRequest
             from alpaca.trading.enums import OrderSide, TimeInForce
@@ -222,7 +317,16 @@ class AlpacaService:
 
             order = api.submit_order(order_data)
 
-            logger.info(f"Submitted market order: {side} {quantity} {symbol}")
+            log_api_call(
+                logger, "POST", f"{self.base_url}/v2/orders",
+                status_code=200,
+                response_time_ms=(time.perf_counter() - start_time) * 1000,
+                symbol=symbol.upper(),
+                side=side,
+                quantity=quantity,
+                order_type="market",
+                order_id=str(order.id)
+            )
 
             return {
                 "id": str(order.id),
@@ -238,9 +342,25 @@ class AlpacaService:
                 "filled_avg_price": float(order.filled_avg_price) if order.filled_avg_price else None,
             }
         except Exception as e:
-            logger.error(f"Failed to submit market order: {e}")
-            raise
+            log_api_call(
+                logger, "POST", f"{self.base_url}/v2/orders",
+                response_time_ms=(time.perf_counter() - start_time) * 1000,
+                error=str(e),
+                symbol=symbol.upper(),
+                side=side,
+                quantity=quantity,
+                order_type="market"
+            )
+            raise AlpacaOrderError(
+                message=f"Failed to submit market order: {e}",
+                order_type="market",
+                symbol=symbol,
+                side=side,
+                quantity=quantity,
+                alpaca_message=str(e)
+            ) from e
 
+    @log_method(logger=logger)
     async def submit_limit_order(
         self,
         symbol: str,
@@ -262,6 +382,7 @@ class AlpacaService:
         Returns:
             Order details
         """
+        start_time = time.perf_counter()
         try:
             from alpaca.trading.requests import LimitOrderRequest
             from alpaca.trading.enums import OrderSide, TimeInForce
@@ -281,7 +402,17 @@ class AlpacaService:
 
             order = api.submit_order(order_data)
 
-            logger.info(f"Submitted limit order: {side} {quantity} {symbol} @ {limit_price}")
+            log_api_call(
+                logger, "POST", f"{self.base_url}/v2/orders",
+                status_code=200,
+                response_time_ms=(time.perf_counter() - start_time) * 1000,
+                symbol=symbol.upper(),
+                side=side,
+                quantity=quantity,
+                order_type="limit",
+                limit_price=limit_price,
+                order_id=str(order.id)
+            )
 
             return {
                 "id": str(order.id),
@@ -295,9 +426,26 @@ class AlpacaService:
                 "submitted_at": order.submitted_at.isoformat() if order.submitted_at else None,
             }
         except Exception as e:
-            logger.error(f"Failed to submit limit order: {e}")
-            raise
+            log_api_call(
+                logger, "POST", f"{self.base_url}/v2/orders",
+                response_time_ms=(time.perf_counter() - start_time) * 1000,
+                error=str(e),
+                symbol=symbol.upper(),
+                side=side,
+                quantity=quantity,
+                order_type="limit",
+                limit_price=limit_price
+            )
+            raise AlpacaOrderError(
+                message=f"Failed to submit limit order: {e}",
+                order_type="limit",
+                symbol=symbol,
+                side=side,
+                quantity=quantity,
+                alpaca_message=str(e)
+            ) from e
 
+    @log_method(logger=logger)
     async def submit_stop_loss_order(
         self,
         symbol: str,
@@ -317,6 +465,7 @@ class AlpacaService:
         Returns:
             Order details
         """
+        start_time = time.perf_counter()
         try:
             from alpaca.trading.requests import StopOrderRequest
             from alpaca.trading.enums import OrderSide, TimeInForce
@@ -333,7 +482,17 @@ class AlpacaService:
 
             order = api.submit_order(order_data)
 
-            logger.info(f"Submitted stop-loss order: {symbol} @ {stop_price}")
+            log_api_call(
+                logger, "POST", f"{self.base_url}/v2/orders",
+                status_code=200,
+                response_time_ms=(time.perf_counter() - start_time) * 1000,
+                symbol=symbol.upper(),
+                side="sell",
+                quantity=quantity,
+                order_type="stop_loss",
+                stop_price=stop_price,
+                order_id=str(order.id)
+            )
 
             return {
                 "id": str(order.id),
@@ -343,9 +502,26 @@ class AlpacaService:
                 "status": order.status.value,
             }
         except Exception as e:
-            logger.error(f"Failed to submit stop-loss order: {e}")
-            raise
+            log_api_call(
+                logger, "POST", f"{self.base_url}/v2/orders",
+                response_time_ms=(time.perf_counter() - start_time) * 1000,
+                error=str(e),
+                symbol=symbol.upper(),
+                side="sell",
+                quantity=quantity,
+                order_type="stop_loss",
+                stop_price=stop_price
+            )
+            raise AlpacaOrderError(
+                message=f"Failed to submit stop-loss order: {e}",
+                order_type="stop_loss",
+                symbol=symbol,
+                side="sell",
+                quantity=quantity,
+                alpaca_message=str(e)
+            ) from e
 
+    @log_method(logger=logger)
     async def submit_bracket_order(
         self,
         symbol: str,
@@ -379,6 +555,7 @@ class AlpacaService:
         Returns:
             Order details including child order IDs
         """
+        start_time = time.perf_counter()
         try:
             from alpaca.trading.requests import (
                 MarketOrderRequest,
@@ -423,11 +600,6 @@ class AlpacaService:
 
             order = api.submit_order(order_data)
 
-            logger.info(
-                f"Submitted bracket order: {side} {quantity} {symbol} "
-                f"(SL: ${stop_loss_price:.2f}, TP: ${take_profit_price:.2f})"
-            )
-
             # Extract child order IDs if available
             legs = []
             if hasattr(order, 'legs') and order.legs:
@@ -437,6 +609,19 @@ class AlpacaService:
                         "type": leg.type.value if hasattr(leg.type, 'value') else str(leg.type),
                         "status": leg.status.value if hasattr(leg.status, 'value') else str(leg.status),
                     })
+
+            log_api_call(
+                logger, "POST", f"{self.base_url}/v2/orders",
+                status_code=200,
+                response_time_ms=(time.perf_counter() - start_time) * 1000,
+                symbol=symbol.upper(),
+                side=side,
+                quantity=quantity,
+                order_type="bracket",
+                stop_loss_price=stop_loss_price,
+                take_profit_price=take_profit_price,
+                order_id=str(order.id)
+            )
 
             return {
                 "id": str(order.id),
@@ -454,8 +639,25 @@ class AlpacaService:
                 "submitted_at": order.submitted_at.isoformat() if order.submitted_at else None,
             }
         except Exception as e:
-            logger.error(f"Failed to submit bracket order: {e}")
-            raise
+            log_api_call(
+                logger, "POST", f"{self.base_url}/v2/orders",
+                response_time_ms=(time.perf_counter() - start_time) * 1000,
+                error=str(e),
+                symbol=symbol.upper(),
+                side=side,
+                quantity=quantity,
+                order_type="bracket",
+                stop_loss_price=stop_loss_price,
+                take_profit_price=take_profit_price
+            )
+            raise AlpacaOrderError(
+                message=f"Failed to submit bracket order: {e}",
+                order_type="bracket",
+                symbol=symbol,
+                side=side,
+                quantity=quantity,
+                alpaca_message=str(e)
+            ) from e
 
     async def submit_oco_order(
         self,
@@ -523,7 +725,14 @@ class AlpacaService:
             }
         except Exception as e:
             logger.error(f"Failed to submit OCO order: {e}")
-            raise
+            raise AlpacaOrderError(
+                message=f"Failed to submit OCO order: {e}",
+                order_type="oco",
+                symbol=symbol,
+                side="sell",
+                quantity=quantity,
+                alpaca_message=str(e)
+            ) from e
 
     async def submit_trailing_stop_order(
         self,
@@ -583,7 +792,14 @@ class AlpacaService:
             }
         except Exception as e:
             logger.error(f"Failed to submit trailing stop order: {e}")
-            raise
+            raise AlpacaOrderError(
+                message=f"Failed to submit trailing stop order: {e}",
+                order_type="trailing_stop",
+                symbol=symbol,
+                side="sell",
+                quantity=quantity,
+                alpaca_message=str(e)
+            ) from e
 
     async def replace_order(
         self,
@@ -639,7 +855,11 @@ class AlpacaService:
             }
         except Exception as e:
             logger.error(f"Failed to replace order {order_id}: {e}")
-            raise
+            raise AlpacaOrderError(
+                message=f"Failed to replace order {order_id}: {e}",
+                order_type="replace",
+                alpaca_message=str(e)
+            ) from e
 
     async def cancel_order(self, order_id: str) -> bool:
         """
@@ -736,7 +956,7 @@ class AlpacaService:
             ]
         except Exception as e:
             logger.error(f"Failed to get orders: {e}")
-            raise
+            raise parse_alpaca_error(str(e)) from e
 
     async def close_position(self, symbol: str, quantity: Optional[float] = None) -> Dict[str, Any]:
         """
@@ -768,7 +988,11 @@ class AlpacaService:
                 }
         except Exception as e:
             logger.error(f"Failed to close position {symbol}: {e}")
-            raise
+            raise AlpacaPositionError(
+                message=f"Failed to close position {symbol}: {e}",
+                symbol=symbol,
+                operation="close"
+            ) from e
 
     async def close_all_positions(self) -> List[Dict[str, Any]]:
         """Close all open positions"""
@@ -788,7 +1012,10 @@ class AlpacaService:
             ]
         except Exception as e:
             logger.error(f"Failed to close all positions: {e}")
-            raise
+            raise AlpacaPositionError(
+                message=f"Failed to close all positions: {e}",
+                operation="close_all"
+            ) from e
 
     # ============== Market Data Methods ==============
 
@@ -821,7 +1048,23 @@ class AlpacaService:
             }
         except Exception as e:
             logger.error(f"Failed to get quote for {symbol}: {e}")
-            raise
+            raise parse_alpaca_error(str(e), symbol) from e
+
+    async def get_quote(self, symbol: str) -> Dict[str, Any]:
+        """
+        Alias for get_latest_quote for backward compatibility.
+
+        Args:
+            symbol: Stock symbol
+
+        Returns:
+            Quote with bid/ask/last price and computed current price
+        """
+        quote = await self.get_latest_quote(symbol)
+        # Add 'price' field as midpoint for compatibility with trading logic
+        if quote.get("bid_price") and quote.get("ask_price"):
+            quote["price"] = (quote["bid_price"] + quote["ask_price"]) / 2
+        return quote
 
     async def get_latest_bar(self, symbol: str) -> Dict[str, Any]:
         """
@@ -853,7 +1096,7 @@ class AlpacaService:
             }
         except Exception as e:
             logger.error(f"Failed to get bar for {symbol}: {e}")
-            raise
+            raise parse_alpaca_error(str(e), symbol) from e
 
     async def get_latest_trade(self, symbol: str) -> Dict[str, Any]:
         """
@@ -884,7 +1127,7 @@ class AlpacaService:
             }
         except Exception as e:
             logger.error(f"Failed to get latest trade for {symbol}: {e}")
-            raise
+            raise parse_alpaca_error(str(e), symbol) from e
 
     async def get_bars(
         self,
@@ -996,7 +1239,7 @@ class AlpacaService:
             return result
         except Exception as e:
             logger.error(f"Failed to get bars for {symbol}: {e}")
-            raise
+            raise parse_alpaca_error(str(e), symbol) from e
 
     # ============== Market Status ==============
 
@@ -1024,7 +1267,7 @@ class AlpacaService:
             }
         except Exception as e:
             logger.error(f"Failed to get market clock: {e}")
-            raise
+            raise parse_alpaca_error(str(e)) from e
 
     async def get_market_hours_info(self) -> Dict[str, Any]:
         """
@@ -1157,7 +1400,14 @@ class AlpacaService:
             }
         except Exception as e:
             logger.error(f"Failed to submit extended hours order: {e}")
-            raise
+            raise AlpacaOrderError(
+                message=f"Failed to submit extended hours order: {e}",
+                order_type="limit_extended",
+                symbol=symbol,
+                side=side,
+                quantity=quantity,
+                alpaca_message=str(e)
+            ) from e
 
     async def search_assets(self, query: str, limit: int = 20) -> List[Dict[str, str]]:
         """

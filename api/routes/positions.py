@@ -68,10 +68,13 @@ async def get_current_positions():
     try:
         alpaca_positions = await alpaca.get_positions()
 
-        # Get our tracked data from database
-        db = SessionLocal()
-        db_positions = {p.symbol: p for p in db.query(DBPosition).all()}
-        db.close()
+        # Get our tracked data from database (use context manager for proper cleanup)
+        db_positions = {}
+        try:
+            db = SessionLocal()
+            db_positions = {p.symbol: p for p in db.query(DBPosition).all()}
+        finally:
+            db.close()
 
         positions = []
         total_value = 0
@@ -99,6 +102,10 @@ async def get_current_positions():
                 entry_time=db_pos.entry_time if db_pos else None,
                 entry_score=db_pos.entry_score if db_pos else None,
                 asset_class="crypto" if is_crypto else "stock",
+                # Entry insight fields
+                entry_reason=getattr(db_pos, 'entry_reason', None) if db_pos else None,
+                indicators_snapshot=getattr(db_pos, 'indicators_snapshot', None) if db_pos else None,
+                confluence_factors=getattr(db_pos, 'confluence_factors', None) if db_pos else None,
             )
             positions.append(position)
 

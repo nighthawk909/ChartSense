@@ -158,6 +158,7 @@ interface TickerCarouselProps {
   cardsPerView?: number;
   autoAdvance?: boolean;
   autoAdvanceInterval?: number;
+  autoTradeEnabled?: boolean; // Whether bot auto-trade mode is enabled
 }
 
 export default function TickerCarousel({
@@ -168,6 +169,7 @@ export default function TickerCarousel({
   cardsPerView = 4,
   autoAdvance: initialAutoAdvance = false,
   autoAdvanceInterval = 5000,
+  autoTradeEnabled = false,
 }: TickerCarouselProps) {
   const navigate = useNavigate();
   const [isAnimating, setIsAnimating] = useState(false);
@@ -213,12 +215,12 @@ export default function TickerCarousel({
     if (onTickerClick) {
       onTickerClick(item.symbol, item.assetType);
     } else {
-      // Default navigation - crypto goes to /crypto page, stocks go to /stock/:symbol
-      if (item.assetType === 'crypto') {
-        navigate('/crypto');
-      } else {
-        navigate(`/stock/${item.symbol}`);
-      }
+      // Navigate directly to the analysis page for both crypto and stocks
+      // Crypto symbols like BTC/USD become BTCUSD, stocks remain as-is
+      const urlSymbol = item.assetType === 'crypto'
+        ? item.symbol.replace('/', '')
+        : item.symbol;
+      navigate(`/stock/${urlSymbol}`);
     }
   }, [onTickerClick, navigate]);
 
@@ -590,9 +592,13 @@ export default function TickerCarousel({
 
                 {/* Show status when signal is BUY but no AI decision yet - hidden on mobile */}
                 {!item.aiDecision && item.analysis?.signal === 'BUY' && item.analysis?.meets_threshold && (
-                  <div className="hidden sm:flex items-center gap-1.5 pt-2 border-t border-slate-600 text-[10px] text-yellow-400/80">
+                  <div className="hidden sm:flex items-center gap-1.5 pt-2 border-t border-slate-600 text-[10px] text-slate-400">
                     <Clock className="w-3 h-3" />
-                    <span>Technical signal only - Enable Auto Trade for execution</span>
+                    <span>
+                      {autoTradeEnabled
+                        ? 'Awaiting risk check & AI evaluation'
+                        : 'Auto Trade disabled in Tactical Controls'}
+                    </span>
                   </div>
                 )}
 

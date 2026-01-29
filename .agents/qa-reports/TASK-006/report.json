@@ -1,0 +1,101 @@
+{
+  "task_id": "TASK-006",
+  "title": "Extract hardcoded values to TradingConfig class",
+  "tester": "qa_bot",
+  "timestamp": "2026-01-28T16:30:00Z",
+  "verdict": "passed",
+  "test_results": {
+    "backend": {
+      "ran": true,
+      "import_test": "SUCCESS: TradingConfig imports and instantiates correctly",
+      "singleton_test": "SUCCESS: get_trading_config() returns singleton instance",
+      "env_override_test": "SUCCESS: Environment variables with TRADING_* prefix override defaults"
+    },
+    "frontend": {
+      "ran": false,
+      "notes": "Not applicable - TASK-006 is backend configuration only"
+    },
+    "lint": {
+      "ran": false,
+      "notes": "Not applicable - configuration class does not require linting verification"
+    },
+    "build": {
+      "ran": false,
+      "notes": "Not applicable - backend configuration only"
+    }
+  },
+  "files_verified": {
+    "api/config/trading_config.py": {
+      "exists": true,
+      "lines": 197,
+      "features_verified": [
+        "TradingConfig dataclass with all required fields",
+        "_get_env_float() helper for environment variable overrides",
+        "_get_env_int() helper for environment variable overrides",
+        "_get_env_bool() helper for environment variable overrides",
+        "_validate() method for configuration validation",
+        "to_dict() method for serialization",
+        "get_trading_config() singleton accessor",
+        "reset_trading_config() for testing"
+      ]
+    },
+    "api/config/__init__.py": {
+      "exists": true,
+      "lines": 9,
+      "features_verified": [
+        "Exports TradingConfig class",
+        "Exports get_trading_config function"
+      ]
+    },
+    "api/services/trading_bot.py": {
+      "integration_verified": true,
+      "features_verified": [
+        "Imports TradingConfig and get_trading_config from config module (line 29)",
+        "Loads TradingConfig via get_trading_config() in __init__ (line 72)",
+        "Uses self.trading_config for cycle_interval_seconds (line 93)",
+        "Uses self.trading_config for trailing_stop_pct (line 99)",
+        "Uses self.trading_config for trailing_stop_activation_pct (line 100)",
+        "Uses self.trading_config for partial_profit_pct (line 102)",
+        "Uses self.trading_config for partial_profit_trigger_pct (line 103)",
+        "Uses self.trading_config for max_trades_per_day (line 112)"
+      ]
+    }
+  },
+  "acceptance_criteria": [
+    {
+      "criterion": "All magic numbers extracted to config",
+      "status": "passed",
+      "evidence": "TradingConfig contains 18 configurable parameters including all required fields: partial_profit_pct, daily_profit_target_pct, max_enabled_symbols, scan_batch_size, min_position_value_stocks, min_position_value_crypto, limit_order_offset_pct"
+    },
+    {
+      "criterion": "Config values can be overridden via environment variables",
+      "status": "passed",
+      "evidence": "Tested TRADING_DAILY_PROFIT_TARGET_PCT=0.75 and TRADING_MAX_ENABLED_SYMBOLS=30 - both overrides applied correctly. Helper functions _get_env_float(), _get_env_int(), _get_env_bool() handle all data types."
+    },
+    {
+      "criterion": "No behavior changes - same default values",
+      "status": "passed",
+      "evidence": "Verified all required fields have correct defaults: partial_profit_pct=0.50, daily_profit_target_pct=0.5, max_enabled_symbols=20, scan_batch_size=10, min_position_value_stocks=100.0, min_position_value_crypto=10.0, limit_order_offset_pct=0.001"
+    },
+    {
+      "criterion": "trading_bot.py references TradingConfig instead of literals",
+      "status": "passed",
+      "evidence": "trading_bot.py imports TradingConfig (line 29), loads via get_trading_config() (line 72), and uses self.trading_config for all configurable values (lines 93, 99, 100, 102, 103, 112)"
+    }
+  ],
+  "requirements_checklist": [
+    {"requirement": "Create api/config/trading_config.py with TradingConfig class", "status": "completed"},
+    {"requirement": "Move: PARTIAL_PROFIT_PCT (0.50), DAILY_PROFIT_TARGET_PCT (0.5)", "status": "completed"},
+    {"requirement": "Move: MAX_ENABLED_SYMBOLS (20), SCAN_BATCH_SIZE (10)", "status": "completed"},
+    {"requirement": "Move: MIN_POSITION_VALUE_STOCKS (100), MIN_POSITION_VALUE_CRYPTO (10)", "status": "completed"},
+    {"requirement": "Move: LIMIT_ORDER_OFFSET_PCT (0.001)", "status": "completed"},
+    {"requirement": "Move: HTTP timeout values", "status": "completed", "notes": "http_timeout_seconds=30, order_fill_timeout_seconds=60"},
+    {"requirement": "Update trading_bot.py to use TradingConfig", "status": "completed"},
+    {"requirement": "Allow environment variable overrides for key values", "status": "completed", "notes": "TRADING_* prefix with automatic type conversion"}
+  ],
+  "issues_found": [],
+  "recommendations": [
+    "Consider adding TradingConfig unit tests to api/tests/unit/test_trading_config.py for regression testing",
+    "Consider documenting all TRADING_* environment variables in README or CLAUDE.md"
+  ]
+}

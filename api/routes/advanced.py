@@ -440,7 +440,12 @@ async def run_backtest(request: BacktestRequest):
     - Max drawdown
     - Sharpe ratio
     """
-    av_service = AlphaVantageService()
+    import logging
+    logger = logging.getLogger(__name__)
+
+    logger.info(f"[BACKTEST] Starting backtest for {request.symbol} with strategy {request.strategy}")
+
+    alpaca_service = get_alpaca_service()
     backtest_engine = get_backtest_engine()
 
     # Map strategy string to enum
@@ -457,23 +462,29 @@ async def run_backtest(request: BacktestRequest):
     if not strategy:
         raise HTTPException(status_code=400, detail=f"Unknown strategy: {request.strategy}")
 
-    # Get historical data
-    history = await av_service.get_history(request.symbol.upper(), "daily", "full")
+    # Get historical data from Alpaca (more reliable, unlimited requests)
+    try:
+        logger.info(f"[BACKTEST] Fetching bars for {request.symbol}")
+        bars = await alpaca_service.get_bars(request.symbol.upper(), "1Day", 500)
+        logger.info(f"[BACKTEST] Got {len(bars) if bars else 0} bars")
+    except Exception as e:
+        logger.error(f"[BACKTEST] Error fetching bars: {type(e).__name__}: {e}")
+        raise HTTPException(status_code=500, detail=f"Error fetching data: {str(e)}")
 
-    if not history or not history.data:
+    if not bars:
         raise HTTPException(status_code=404, detail=f"No data found for {request.symbol}")
 
     # Need at least 200 bars for proper backtesting
-    if len(history.data) < 200:
-        raise HTTPException(status_code=400, detail="Insufficient historical data (need 200+ bars)")
+    if len(bars) < 200:
+        raise HTTPException(status_code=400, detail=f"Insufficient historical data (got {len(bars)}, need 200+ bars)")
 
-    # Extract OHLCV data
-    opens = [d.open for d in history.data]
-    highs = [d.high for d in history.data]
-    lows = [d.low for d in history.data]
-    closes = [d.close for d in history.data]
-    volumes = [d.volume for d in history.data]
-    dates = [d.date for d in history.data]
+    # Extract OHLCV data (bars are sorted oldest to newest)
+    opens = [bar["open"] for bar in bars]
+    highs = [bar["high"] for bar in bars]
+    lows = [bar["low"] for bar in bars]
+    closes = [bar["close"] for bar in bars]
+    volumes = [bar["volume"] for bar in bars]
+    dates = [bar["timestamp"].split("T")[0] if isinstance(bar["timestamp"], str) else bar["timestamp"].strftime("%Y-%m-%d") for bar in bars]
 
     # Run backtest
     result = backtest_engine.run_backtest(

@@ -1,0 +1,90 @@
+{
+  "task_id": "TASK-015",
+  "title": "Add structured logging with correlation IDs for backend services",
+  "qa_date": "2026-01-28T22:00:00Z",
+  "qa_agent": "qa",
+  "status": "PASS",
+  "score": 100,
+  "summary": "All acceptance criteria verified. Structured logging with correlation IDs properly implemented across all backend services.",
+  "acceptance_criteria": {
+    "structured_json_format": {
+      "status": "PASS",
+      "evidence": "logging_config.py lines 55-107: StructuredFormatter class outputs JSON with timestamp, correlation_id, service, level, message, and optional extra fields"
+    },
+    "correlation_id_support": {
+      "status": "PASS",
+      "evidence": "logging_config.py lines 20-52: ContextVar-based correlation_id with get_correlation_id(), set_correlation_id(), clear_correlation_id() functions. CorrelationIdMiddleware (lines 383-421) injects correlation ID from X-Correlation-ID header or generates new UUID"
+    },
+    "log_method_decorator": {
+      "status": "PASS",
+      "evidence": "logging_config.py lines 235-361: @log_method decorator supports both sync and async functions, logs entry/exit/error with execution time in milliseconds. Supports log_args and log_result options"
+    },
+    "log_api_call_helper": {
+      "status": "PASS",
+      "evidence": "logging_config.py lines 179-232: log_api_call() function standardizes API call logging with method, endpoint, status_code, response_time_ms fields"
+    },
+    "no_print_statements": {
+      "status": "PASS",
+      "evidence": "grep found no print() statements in alpha_vantage.py, alpaca_service.py, or crypto_service.py"
+    },
+    "services_integrated": {
+      "status": "PASS",
+      "evidence": "All three services import and use logging_config: alpha_vantage.py (line 18), alpaca_service.py (line 23), crypto_service.py (line 24). Each creates logger with get_logger(__name__) and applies @log_method decorator to methods"
+    },
+    "main_py_integration": {
+      "status": "PASS",
+      "evidence": "main.py imports setup_logging and CorrelationIdMiddleware (lines 23-25), calls setup_logging() (line 30), adds CorrelationIdMiddleware (line 68)"
+    }
+  },
+  "component_verification": {
+    "logging_config.py": {
+      "exists": true,
+      "path": "api/services/logging_config.py",
+      "line_count": 450,
+      "key_components": [
+        "ContextVar for correlation_id (line 21)",
+        "get_correlation_id() (lines 27-36)",
+        "set_correlation_id() (lines 39-47)",
+        "clear_correlation_id() (lines 50-52)",
+        "StructuredFormatter (lines 55-107)",
+        "ConsoleFormatter (lines 110-143)",
+        "get_logger() (lines 146-176)",
+        "log_api_call() (lines 179-232)",
+        "@log_method decorator (lines 235-361)",
+        "CorrelationIdMiddleware (lines 383-421)",
+        "setup_logging() (lines 425-449)"
+      ]
+    },
+    "alpha_vantage.py": {
+      "logger_import": "line 18",
+      "logger_creation": "line 20",
+      "log_method_decorators": ["line 161", "line 190", "line 249", "line 271", "line 302"],
+      "log_api_call_usage": ["line 105", "line 118", "line 129", "line 142", "line 152"]
+    },
+    "alpaca_service.py": {
+      "logger_import": "line 23",
+      "logger_creation": "line 27",
+      "log_method_decorators": ["line 136", "line 183", "line 225", "line 281", "line 363", "line 448", "line 524"],
+      "log_api_call_usage": ["line 149", "line 169", "line 196", "line 218", "line 241", "line 260", "line 267", "line 320", "line 345", "line 405", "line 429", "line 485", "line 505", "line 613", "line 642"]
+    },
+    "crypto_service.py": {
+      "logger_import": "line 24",
+      "logger_creation": "line 26",
+      "log_method_decorators": ["line 159", "line 225", "line 318", "line 445", "line 470", "line 483"],
+      "log_api_call_usage": ["line 126", "line 133", "line 141", "line 152"]
+    }
+  },
+  "log_format_example": {
+    "json_format": {
+      "timestamp": "2026-01-28T14:30:00.123456Z",
+      "correlation_id": "abc123-def456-...",
+      "service": "alpha_vantage",
+      "level": "INFO",
+      "message": "Fetching quote for AAPL",
+      "extra": {}
+    },
+    "console_format": "[abc12345] INFO     alpha_vantage        - Fetching quote for AAPL"
+  },
+  "recommendations": [],
+  "blockers": []
+}

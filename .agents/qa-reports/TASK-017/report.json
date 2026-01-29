@@ -1,0 +1,120 @@
+{
+  "task_id": "TASK-017",
+  "title": "Add get_current_price method to CryptoService",
+  "qa_timestamp": "2026-01-29T00:10:00Z",
+  "status": "QA_FAILED",
+  "overall_result": "FAIL",
+  "summary": "The get_current_price() method is correctly implemented and returns Optional[float]. However, the calling code in bot.py has a type mismatch bug - it treats the return value as a dict instead of a float, causing the execute-opportunity endpoint to fail.",
+  "tests_performed": [
+    {
+      "test_id": "T1",
+      "name": "Verify get_current_price method exists",
+      "type": "unit",
+      "command": "python -c \"from services.crypto_service import CryptoService; print('get_current_price' in dir(CryptoService))\"",
+      "expected": "True",
+      "actual": "True",
+      "status": "PASS",
+      "notes": "Method exists in CryptoService class"
+    },
+    {
+      "test_id": "T2",
+      "name": "Verify return type annotation",
+      "type": "unit",
+      "command": "python -c \"import inspect; from services.crypto_service import CryptoService; print(inspect.signature(CryptoService.get_current_price).return_annotation)\"",
+      "expected": "float | None",
+      "actual": "float | None",
+      "status": "PASS",
+      "notes": "Method properly returns Optional[float], not a dict"
+    },
+    {
+      "test_id": "T3",
+      "name": "Verify get_crypto_quote still works independently",
+      "type": "integration",
+      "command": "curl -s http://localhost:8000/api/crypto/quote/BTCUSD",
+      "expected": "JSON with price field",
+      "actual": "{\"symbol\":\"BTC/USD\",\"price\":88997.1,...}",
+      "status": "PASS",
+      "notes": "get_crypto_quote() is working correctly and returns current price"
+    },
+    {
+      "test_id": "T4",
+      "name": "Verify execute-opportunity endpoint with crypto symbol",
+      "type": "integration",
+      "command": "curl -s -X POST 'http://localhost:8000/api/bot/execute-opportunity?symbol=BTC/USD&signal=BUY&confidence=78'",
+      "expected": "Success response or handled error",
+      "actual": "{\"success\":false,\"error\":\"'CryptoService' object has no attribute 'get_current_price'\"}",
+      "status": "FAIL",
+      "notes": "Two issues: (1) Running server doesn't have new code - needs restart. (2) CRITICAL BUG in bot.py - calling code treats return value as dict"
+    },
+    {
+      "test_id": "T5",
+      "name": "Verify API server health",
+      "type": "integration",
+      "command": "curl -s http://localhost:8000/health",
+      "expected": "{\"status\":\"healthy\"}",
+      "actual": "{\"status\":\"healthy\"}",
+      "status": "PASS",
+      "notes": "Server is running but needs restart to pick up new code"
+    }
+  ],
+  "critical_bugs_found": [
+    {
+      "bug_id": "BUG-017-001",
+      "severity": "CRITICAL",
+      "location": "api/routes/bot.py",
+      "lines": [1334, 1335, 1554, 1555],
+      "description": "Type mismatch: bot.py treats get_current_price() return as dict but method returns float",
+      "current_code": "price_data = await crypto.get_current_price(symbol)\ncurrent_price = price_data.get(\"price\", 0)",
+      "problem": "get_current_price() returns Optional[float], not a dict. Calling .get() on a float will raise AttributeError",
+      "fix_required": "Change to: current_price = await crypto.get_current_price(symbol)",
+      "blocking": true
+    }
+  ],
+  "issues_found": [
+    {
+      "issue_id": "ISS-017-001",
+      "severity": "LOW",
+      "description": "Running server has stale code - needs restart to pick up crypto_service.py changes",
+      "resolution": "Restart uvicorn: cd api && uvicorn main:app --reload --port 8000",
+      "blocking": false
+    }
+  ],
+  "acceptance_criteria_verification": {
+    "crypto_service_get_current_price_returns_float": {
+      "status": "PASS",
+      "details": "Method correctly returns Optional[float] as specified. Return type annotation and implementation confirmed."
+    },
+    "trade_execution_for_crypto_works": {
+      "status": "FAIL",
+      "details": "Will fail due to type mismatch bug in bot.py lines 1335 and 1555"
+    },
+    "no_breaking_changes_to_get_crypto_quote": {
+      "status": "PASS",
+      "details": "get_crypto_quote() works correctly - verified via /api/crypto/quote/BTCUSD endpoint"
+    },
+    "execute_opportunity_endpoint_succeeds": {
+      "status": "FAIL",
+      "details": "Endpoint returns error. After server restart, will hit AttributeError due to BUG-017-001"
+    }
+  },
+  "recommendation": "qa_failed",
+  "required_fixes": [
+    {
+      "file": "api/routes/bot.py",
+      "line": 1334,
+      "change": "Remove line 1335 (.get() call) and use return value directly",
+      "priority": "HIGH"
+    },
+    {
+      "file": "api/routes/bot.py",
+      "line": 1554,
+      "change": "Remove line 1555 (.get() call) and use return value directly",
+      "priority": "HIGH"
+    }
+  ],
+  "next_steps": [
+    "Fix type mismatch in api/routes/bot.py lines 1334-1335 and 1554-1555",
+    "Restart API server to pick up all changes",
+    "Re-run QA tests to verify fix"
+  ]
+}

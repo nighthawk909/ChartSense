@@ -43,10 +43,22 @@ export default function AIIntelligenceSidebar({
   const [selectedDecision, setSelectedDecision] = useState<AIDecision | null>(null);
   const [showReasoningModal, setShowReasoningModal] = useState(false);
   const [activeTab, setActiveTab] = useState<'decisions' | 'analysis' | 'scan'>('decisions');
+  const [expandedAnalysis, setExpandedAnalysis] = useState<string | null>(null);
 
   const handleDecisionClick = (decision: AIDecision) => {
     setSelectedDecision(decision);
     setShowReasoningModal(true);
+  };
+
+  // Handle click on crypto analysis card - if it has AI decision, show modal
+  const handleAnalysisClick = (symbol: string, result: CryptoAnalysisResult) => {
+    if (result.ai_decision) {
+      setSelectedDecision(result.ai_decision);
+      setShowReasoningModal(true);
+    } else {
+      // Toggle expanded state for cards without AI decision
+      setExpandedAnalysis(expandedAnalysis === symbol ? null : symbol);
+    }
   };
 
   return (
@@ -184,11 +196,14 @@ export default function AIIntelligenceSidebar({
                       const isApproved = aiDecision?.decision === 'APPROVE';
                       const isRejected = aiDecision?.decision === 'REJECT';
                       const isWait = aiDecision?.decision === 'WAIT';
+                      const isExpanded = expandedAnalysis === opp.symbol;
+                      const hasAiDecision = !!aiDecision;
 
                       return (
                         <div
                           key={idx}
-                          className={`p-3 rounded-lg border transition-colors ${
+                          onClick={() => handleAnalysisClick(opp.symbol, opp as CryptoAnalysisResult)}
+                          className={`p-3 rounded-lg border transition-colors cursor-pointer hover:border-purple-500/50 ${
                             isApproved ? 'bg-green-500/10 border-green-500/30' :
                             isRejected ? 'bg-red-500/10 border-red-500/30' :
                             isWait ? 'bg-yellow-500/10 border-yellow-500/30' :
@@ -213,15 +228,50 @@ export default function AIIntelligenceSidebar({
                                 </span>
                               )}
                             </div>
-                            <span className={`text-sm font-semibold ${
-                              isApproved ? 'text-green-400' :
-                              isRejected ? 'text-red-400' :
-                              'text-yellow-400'
-                            }`}>
-                              {opp.confidence.toFixed(0)}%
-                            </span>
+                            <div className="flex items-center gap-2">
+                              <span className={`text-sm font-semibold ${
+                                isApproved ? 'text-green-400' :
+                                isRejected ? 'text-red-400' :
+                                'text-yellow-400'
+                              }`}>
+                                {opp.confidence.toFixed(0)}%
+                              </span>
+                              <span className="text-[10px] text-purple-400">
+                                {hasAiDecision ? '↗ details' : '↓ expand'}
+                              </span>
+                            </div>
                           </div>
-                          <p className="text-xs text-slate-400 line-clamp-2">{opp.reason}</p>
+                          <p className={`text-xs text-slate-400 ${isExpanded ? '' : 'line-clamp-2'}`}>{opp.reason}</p>
+
+                          {/* Expanded content for cards without AI decision */}
+                          {isExpanded && !hasAiDecision && (
+                            <div className="mt-2 pt-2 border-t border-slate-600/50">
+                              {opp.signals && opp.signals.length > 0 && (
+                                <div className="mb-2">
+                                  <p className="text-[10px] text-slate-500 uppercase mb-1">Signals</p>
+                                  <ul className="text-xs text-slate-300 space-y-0.5">
+                                    {opp.signals.map((sig: string, i: number) => (
+                                      <li key={i}>• {sig}</li>
+                                    ))}
+                                  </ul>
+                                </div>
+                              )}
+                              {opp.indicators && Object.keys(opp.indicators).length > 0 && (
+                                <div>
+                                  <p className="text-[10px] text-slate-500 uppercase mb-1">Indicators</p>
+                                  <div className="grid grid-cols-2 gap-1 text-xs">
+                                    {Object.entries(opp.indicators).slice(0, 6).map(([key, val]) => (
+                                      <div key={key} className="flex justify-between">
+                                        <span className="text-slate-400">{key}:</span>
+                                        <span className="text-white">{typeof val === 'number' ? val.toFixed(2) : String(val)}</span>
+                                      </div>
+                                    ))}
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                          )}
+
                           <div className="mt-2 flex items-center gap-2">
                             <div className="flex-1 bg-slate-700 rounded-full h-1.5">
                               <div

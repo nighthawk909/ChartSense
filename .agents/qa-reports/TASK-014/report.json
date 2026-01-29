@@ -1,0 +1,84 @@
+{
+  "task_id": "TASK-014",
+  "qa_agent": "qa",
+  "timestamp": "2026-01-28T18:00:00Z",
+  "verdict": "FAIL",
+  "tests_run": 44,
+  "tests_passed": 37,
+  "tests_failed": 7,
+  "execution_time": "8.57s",
+  "details": "44 integration tests executed. 37 passed, 7 failed. Failures are due to API signature mismatches between test code and actual implementation. Tests need updating to match current ExecutionLogger and TradingBot APIs.",
+  "issues_found": [
+    {
+      "test": "TestBotErrorStates::test_error_recovery_logs_to_execution_logger",
+      "error_type": "AttributeError",
+      "error_message": "'ExecutionLogger' object has no attribute 'get_recent_failures'",
+      "root_cause": "Test calls non-existent method get_recent_failures(). Correct method is get_failed_attempts()",
+      "severity": "medium",
+      "fix_suggestion": "Replace 'get_recent_failures()' with 'get_failed_attempts()' on line 303"
+    },
+    {
+      "test": "TestRateLimitHandling::test_rate_limit_error_logged",
+      "error_type": "TypeError",
+      "error_message": "AdaptiveIndicatorEngine.calculate_adaptive_indicators() got an unexpected keyword argument 'mode'",
+      "root_cause": "SmartScanner passes 'mode' argument but AdaptiveIndicatorEngine doesn't accept it. This is an integration issue in the production code, not just the test.",
+      "severity": "high",
+      "fix_suggestion": "Update SmartScanner to pass correct arguments to AdaptiveIndicatorEngine"
+    },
+    {
+      "test": "TestRateLimitHandling::test_bot_continues_after_transient_error",
+      "error_type": "TypeError",
+      "error_message": "AdaptiveIndicatorEngine.calculate_adaptive_indicators() got an unexpected keyword argument 'mode'",
+      "root_cause": "Same as above - SmartScanner API mismatch with AdaptiveIndicatorEngine",
+      "severity": "high",
+      "fix_suggestion": "Update SmartScanner to pass correct arguments to AdaptiveIndicatorEngine"
+    },
+    {
+      "test": "TestMarketHoursDetection::test_session_transition_triggers_queued_trades",
+      "error_type": "AttributeError",
+      "error_message": "'TradingBot' object has no attribute '_queued_trades'",
+      "root_cause": "Test assumes _queued_trades attribute exists on TradingBot but it doesn't",
+      "severity": "medium",
+      "fix_suggestion": "Either add _queued_trades attribute to TradingBot or remove/redesign this test"
+    },
+    {
+      "test": "TestPausedStateBehavior::test_paused_state_skips_trading_cycles",
+      "error_type": "TypeError",
+      "error_message": "AdaptiveIndicatorEngine.calculate_adaptive_indicators() got an unexpected keyword argument 'mode'",
+      "root_cause": "SmartScanner integration issue - called during real trading cycle execution",
+      "severity": "high",
+      "fix_suggestion": "Fix SmartScanner or mock the scanning methods more completely"
+    },
+    {
+      "test": "TestPausedStateBehavior::test_paused_state_sets_current_cycle_to_paused",
+      "error_type": "TypeError",
+      "error_message": "AdaptiveIndicatorEngine.calculate_adaptive_indicators() got an unexpected keyword argument 'mode'",
+      "root_cause": "SmartScanner integration issue",
+      "severity": "high",
+      "fix_suggestion": "Fix SmartScanner or mock the scanning methods"
+    },
+    {
+      "test": "TestExecutionLogger::test_execution_logger_records_failures",
+      "error_type": "TypeError",
+      "error_message": "ExecutionLogger.log_failure() missing 2 required positional arguments: 'asset_class' and 'order_type'",
+      "root_cause": "Test calls log_failure() without required 'asset_class' and 'order_type' parameters",
+      "severity": "medium",
+      "fix_suggestion": "Add asset_class='stock' and order_type='market' to log_failure() call on line 893"
+    }
+  ],
+  "categories": {
+    "api_signature_mismatch": 2,
+    "missing_method_attribute": 2,
+    "production_code_bug": 3
+  },
+  "recommendation": "TASK-014 should be marked as 'needs_fix'. 3 failures indicate a production bug in SmartScanner (passing 'mode' to AdaptiveIndicatorEngine incorrectly). 4 failures are test code issues that can be fixed by updating test assertions to match current APIs.",
+  "blocking_issues": [
+    "SmartScanner.py line ~310 passes 'mode' keyword argument to AdaptiveIndicatorEngine.calculate_adaptive_indicators() but this method doesn't accept that parameter"
+  ],
+  "acceptance_criteria_results": {
+    "all_state_transitions_tested": "PASS - All 11 state transition tests pass",
+    "error_recovery_validated": "PARTIAL - 2/3 error tests pass, 1 fails due to wrong method name",
+    "concurrent_scanning_works": "PASS - All 4 concurrent scanning tests pass",
+    "tests_under_30_seconds": "PASS - Tests completed in 8.57 seconds"
+  }
+}

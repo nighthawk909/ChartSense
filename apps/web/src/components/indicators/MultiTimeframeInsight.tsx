@@ -19,6 +19,29 @@ import {
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
+// Helper to detect if symbol is crypto
+function isCryptoSymbol(symbol: string): boolean {
+  if (!symbol) return false;
+  const upperSymbol = symbol.toUpperCase();
+  return (
+    upperSymbol.includes('/USD') ||
+    upperSymbol.endsWith('USD') ||
+    upperSymbol.endsWith('USDT') ||
+    ['BTC', 'ETH', 'SOL', 'DOGE', 'ADA', 'XRP', 'AVAX', 'LINK', 'DOT', 'MATIC', 'LTC', 'UNI', 'AAVE', 'SHIB', 'ATOM', 'NEAR', 'FTM', 'ALGO', 'VET', 'ICP'].some(
+      crypto => upperSymbol === crypto || upperSymbol.startsWith(crypto + '/') || upperSymbol === crypto + 'USD' || upperSymbol === crypto + 'USDT'
+    )
+  );
+}
+
+// Normalize crypto symbol for API (remove slash, add USD if needed)
+function normalizeCryptoSymbol(symbol: string): string {
+  const upperSymbol = symbol.toUpperCase().replace('/', '');
+  if (!upperSymbol.endsWith('USD') && !upperSymbol.endsWith('USDT')) {
+    return upperSymbol + 'USD';
+  }
+  return upperSymbol;
+}
+
 interface TimeframeAnalysis {
   timeframe: string;
   label: string;
@@ -140,12 +163,85 @@ export default function MultiTimeframeInsight({ symbol, compact = false }: Multi
     setLoading(true);
     setError(null);
     try {
-      const response = await fetch(`${API_URL}/api/analysis/ai-insight-multi/${symbol}`);
-      if (!response.ok) {
-        throw new Error(`Failed to fetch: ${response.statusText}`);
+      const isCrypto = isCryptoSymbol(symbol);
+
+      if (isCrypto) {
+        // For crypto, fetch analysis for multiple timeframes and combine
+        const apiSymbol = normalizeCryptoSymbol(symbol);
+        const [dailyRes, hourlyRes, shortRes] = await Promise.all([
+          fetch(`${API_URL}/api/crypto/analyze/${apiSymbol}?interval=daily`),
+          fetch(`${API_URL}/api/crypto/analyze/${apiSymbol}?interval=1hour`),
+          fetch(`${API_URL}/api/crypto/analyze/${apiSymbol}?interval=15min`),
+        ]);
+
+        const dailyData = dailyRes.ok ? await dailyRes.json() : null;
+        const hourlyData = hourlyRes.ok ? await hourlyRes.json() : null;
+        const shortData = shortRes.ok ? await shortRes.json() : null;
+
+        // Transform crypto analysis to multi-timeframe format
+        const transformToTimeframe = (data: any, label: string, tfLabel: string) => ({
+          timeframe: tfLabel,
+          label: label,
+          recommendation: data?.recommendation?.replace('_', ' ') || 'HOLD',
+          confidence: data?.score || 50,
+          signals: data?.signals?.filter((s: string) => !s.includes('down') && !s.includes('bearish')).slice(0, 3) || [],
+          concerns: data?.signals?.filter((s: string) => s.includes('down') || s.includes('bearish')).slice(0, 3) || [],
+          key_levels: undefined,
+        });
+
+        const combinedData: MultiTimeframeData = {
+          symbol: apiSymbol,
+          current_price: dailyData?.current_price || 0,
+          overall_recommendation: dailyData?.recommendation?.replace('_', ' ') || 'HOLD',
+          overall_score: dailyData?.score || 50,
+          timeframes: {
+            scalp: transformToTimeframe(shortData, '5-15 min trades', 'SCALP'),
+            intraday: transformToTimeframe(hourlyData, 'Same day trades', 'INTRADAY'),
+            swing: transformToTimeframe(dailyData, '2-10 day trades', 'SWING'),
+            longterm: transformToTimeframe(dailyData, 'Weeks to months', 'LONG-TERM'),
+          },
+          elliott_wave: undefined,
+          indicators: {
+            rsi_daily: dailyData?.indicators?.rsi || 50,
+            rsi_hourly: hourlyData?.indicators?.rsi || 50,
+            rsi_15min: shortData?.indicators?.rsi || 50,
+            macd_histogram: dailyData?.indicators?.macd_histogram || 0,
+            sma_20: dailyData?.indicators?.sma_20 || 0,
+            sma_50: dailyData?.indicators?.sma_50 || 0,
+            sma_200: dailyData?.indicators?.sma_200 || 0,
+            ema_12: dailyData?.indicators?.ema_12 || 0,
+            ema_26: dailyData?.indicators?.ema_26 || 0,
+            bb_upper: dailyData?.indicators?.bb_upper || 0,
+            bb_lower: dailyData?.indicators?.bb_lower || 0,
+            atr_14: dailyData?.indicators?.atr || 0,
+            volume_ratio: dailyData?.indicators?.volume_ratio || 1,
+          },
+          timestamp: new Date().toISOString(),
+        };
+
+        // Fetch Elliott Wave data for crypto
+        try {
+          const ewRes = await fetch(`${API_URL}/api/crypto/patterns/${apiSymbol}?interval=daily`);
+          if (ewRes.ok) {
+            const ewData = await ewRes.json();
+            if (ewData.elliott_wave) {
+              combinedData.elliott_wave = ewData.elliott_wave;
+            }
+          }
+        } catch (e) {
+          console.log('Elliott wave fetch failed for crypto', e);
+        }
+
+        setData(combinedData);
+      } else {
+        // For stocks, use the existing endpoint
+        const response = await fetch(`${API_URL}/api/analysis/ai-insight-multi/${symbol}`);
+        if (!response.ok) {
+          throw new Error(`Failed to fetch: ${response.statusText}`);
+        }
+        const result = await response.json();
+        setData(result);
       }
-      const result = await response.json();
-      setData(result);
     } catch (err) {
       console.error('Multi-timeframe fetch error:', err);
       setError(err instanceof Error ? err.message : 'Failed to fetch analysis');

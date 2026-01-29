@@ -1,0 +1,119 @@
+{
+  "task_id": "TASK-013",
+  "reviewer": "reviewer_bot",
+  "timestamp": "2026-01-28T14:40:00Z",
+  "verdict": "approved",
+  "files_reviewed": [
+    "apps/web/src/types/api.ts",
+    "apps/web/src/services/botApi.ts"
+  ],
+  "feedback": [
+    {
+      "file": "apps/web/src/types/api.ts",
+      "line": 9,
+      "severity": "praise",
+      "category": "style",
+      "comment": "Comprehensive ApiErrorCode union type covers all HTTP error categories plus TIMEOUT and UNKNOWN for edge cases"
+    },
+    {
+      "file": "apps/web/src/types/api.ts",
+      "line": 23,
+      "severity": "praise",
+      "category": "logic",
+      "comment": "ApiError interface includes 'retryable' boolean - allows components to easily determine if retry is appropriate"
+    },
+    {
+      "file": "apps/web/src/types/api.ts",
+      "line": 35,
+      "severity": "praise",
+      "category": "style",
+      "comment": "ApiResponse<T> generic type provides type-safe success/error discrimination pattern"
+    },
+    {
+      "file": "apps/web/src/types/api.ts",
+      "line": 58,
+      "severity": "praise",
+      "category": "logic",
+      "comment": "DEFAULT_API_OPTIONS provides sensible defaults: 10s timeout, retry enabled, 1 max retry, 1s delay"
+    },
+    {
+      "file": "apps/web/src/services/botApi.ts",
+      "line": 60,
+      "severity": "praise",
+      "category": "logic",
+      "comment": "getErrorCode() correctly maps HTTP status codes to ApiErrorCode, handles undefined status as NETWORK_ERROR"
+    },
+    {
+      "file": "apps/web/src/services/botApi.ts",
+      "line": 77,
+      "severity": "praise",
+      "category": "logic",
+      "comment": "isRetryableError() correctly identifies transient failures: NETWORK_ERROR, TIMEOUT, SERVER_ERROR, RATE_LIMIT"
+    },
+    {
+      "file": "apps/web/src/services/botApi.ts",
+      "line": 84,
+      "severity": "praise",
+      "category": "logic",
+      "comment": "parseAxiosError() extracts error details from response.data.detail or response.data.message (FastAPI compatibility)"
+    },
+    {
+      "file": "apps/web/src/services/botApi.ts",
+      "line": 121,
+      "severity": "praise",
+      "category": "logic",
+      "comment": "wrapApiCall<T>() implements retry loop with configurable attempts, correctly tracks lastError and returns it on failure"
+    },
+    {
+      "file": "apps/web/src/services/botApi.ts",
+      "line": 140,
+      "severity": "praise",
+      "category": "logic",
+      "comment": "Exponential backoff for RATE_LIMIT errors (delay * 2^attempt) - good practice for handling 429s"
+    },
+    {
+      "file": "apps/web/src/services/botApi.ts",
+      "line": 160,
+      "severity": "praise",
+      "category": "style",
+      "comment": "Error type checker functions (isNetworkError, isAuthError, etc.) provide clean API for components to handle specific error types"
+    },
+    {
+      "file": "apps/web/src/services/botApi.ts",
+      "line": 201,
+      "severity": "praise",
+      "category": "style",
+      "comment": "Original botApi, positionsApi, etc. preserved for backward compatibility - non-breaking change"
+    },
+    {
+      "file": "apps/web/src/services/botApi.ts",
+      "line": 468,
+      "severity": "praise",
+      "category": "logic",
+      "comment": "safeBotApi, safePositionsApi, etc. wrap all methods with wrapApiCall() for standardized error handling"
+    },
+    {
+      "file": "apps/web/src/services/botApi.ts",
+      "line": 569,
+      "severity": "praise",
+      "category": "style",
+      "comment": "safeTradingApi combines all safe* APIs into single convenient export"
+    },
+    {
+      "file": "apps/web/src/services/botApi.ts",
+      "line": 647,
+      "severity": "praise",
+      "category": "style",
+      "comment": "Re-exports types from api.ts for convenience - components can import types from botApi.ts directly"
+    }
+  ],
+  "overall_comments": "TASK-013 is excellently implemented. The centralized error handling wrapper provides:\n\n1. **Type-Safe Error Handling**: ApiResponse<T> with discriminated union (success: true + data OR success: false + error)\n\n2. **Comprehensive Error Classification**: ApiErrorCode covers all HTTP error categories (AUTH, FORBIDDEN, NOT_FOUND, RATE_LIMIT, VALIDATION, SERVER) plus network/timeout/unknown\n\n3. **Automatic Retry Logic**: wrapApiCall() retries transient failures (network, timeout, 5xx, rate limit) with configurable attempts and exponential backoff for rate limits\n\n4. **Backward Compatibility**: Original APIs (botApi, positionsApi, etc.) preserved; new safe* variants added alongside\n\n5. **Clean Error Helpers**: isNetworkError(), isAuthError(), isRateLimitError(), etc. make conditional error handling simple\n\n6. **FastAPI Compatibility**: Error parsing extracts message from response.data.detail (FastAPI format) or response.data.message\n\nThis prevents silent API failures and reduces boilerplate error handling in React components.",
+  "tests_passed": "not_run",
+  "test_output": "Recommend adding unit tests for wrapApiCall() and error parsing in a follow-up task",
+  "acceptance_criteria_review": {
+    "api_calls_return_standardized_response": "PASS - All safe* APIs return ApiResponse<T> via wrapApiCall()",
+    "network_errors_automatically_retried": "PASS - Lines 136-146: retry on transient errors with delay",
+    "components_can_check_error_code": "PASS - error.code is ApiErrorCode, helper functions provided",
+    "no_unhandled_promise_rejections": "PASS - wrapApiCall catches all errors and returns ApiResponse with error field"
+  }
+}

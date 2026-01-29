@@ -242,12 +242,16 @@ class SmartScanner:
             }
             trading_mode = mode_map[horizon]
 
+            # Set the adaptive engine mode before calculating indicators
+            self.adaptive_engine.set_mode(trading_mode, auto=False)
+
             # Calculate adaptive indicators
+            # Note: calculate_adaptive_indicators uses the engine's current mode
+            # and expects (highs, lows, closes, volumes) - NOT mode or prices
             indicators = self.adaptive_engine.calculate_adaptive_indicators(
-                mode=trading_mode,
-                prices=closes,
                 highs=highs,
                 lows=lows,
+                closes=closes,
                 volumes=volumes,
             )
 

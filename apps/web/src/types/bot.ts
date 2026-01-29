@@ -217,6 +217,10 @@ export interface Position {
   exit_reason?: string;  // Human-readable exit strategy explanation
   hold_duration_hours?: number;
   suggested_exit_time?: string;
+  // Entry insight fields (for position details modal)
+  entry_reason?: string;  // Human-readable reason why we entered
+  indicators_snapshot?: Record<string, number | string>;  // Technical indicators at entry
+  confluence_factors?: string[];  // List of confirming technical factors
 }
 
 export interface PositionsList {

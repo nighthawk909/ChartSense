@@ -90,7 +90,7 @@ class AdaptiveIndicatorConfig:
 class IndicatorService:
     """Service for calculating technical indicators"""
 
-    def calculate_sma(self, prices: List[float], period: int) -> List[float]:
+    def calculate_sma(self, prices: List[float], period: int) -> List[Optional[float]]:
         """
         Calculate Simple Moving Average
 
@@ -99,19 +99,21 @@ class IndicatorService:
             period: Number of periods for the average
 
         Returns:
-            List of SMA values (shorter than input by period-1)
+            List of SMA values, same length as input with None for initial values
         """
         if len(prices) < period:
-            return []
+            return [None] * len(prices)
 
-        sma_values = []
+        # Pad with None for values before we have enough data
+        sma_values: List[Optional[float]] = [None] * (period - 1)
+
         for i in range(period - 1, len(prices)):
             window = prices[i - period + 1:i + 1]
             sma_values.append(sum(window) / period)
 
         return sma_values
 
-    def calculate_ema(self, prices: List[float], period: int) -> List[float]:
+    def calculate_ema(self, prices: List[float], period: int) -> List[Optional[float]]:
         """
         Calculate Exponential Moving Average
 
@@ -120,13 +122,14 @@ class IndicatorService:
             period: Number of periods for the average
 
         Returns:
-            List of EMA values
+            List of EMA values, same length as input with None for initial values
         """
         if len(prices) < period:
-            return []
+            return [None] * len(prices)
 
         multiplier = 2 / (period + 1)
-        ema_values = []
+        # Pad with None for values before we have enough data
+        ema_values: List[Optional[float]] = [None] * (period - 1)
 
         # First EMA is SMA
         first_sma = sum(prices[:period]) / period
@@ -139,7 +142,7 @@ class IndicatorService:
 
         return ema_values
 
-    def calculate_rsi(self, prices: List[float], period: int = 14) -> List[float]:
+    def calculate_rsi(self, prices: List[float], period: int = 14) -> List[Optional[float]]:
         """
         Calculate Relative Strength Index
 
@@ -148,10 +151,10 @@ class IndicatorService:
             period: RSI period (default 14)
 
         Returns:
-            List of RSI values (0-100 scale)
+            List of RSI values (0-100 scale), same length as input with None for initial values
         """
         if len(prices) < period + 1:
-            return []
+            return [None] * len(prices)
 
         # Calculate price changes
         changes = [prices[i] - prices[i - 1] for i in range(1, len(prices))]
@@ -160,7 +163,8 @@ class IndicatorService:
         gains = [max(0, change) for change in changes]
         losses = [abs(min(0, change)) for change in changes]
 
-        rsi_values = []
+        # Pad with None for values before we have enough data
+        rsi_values: List[Optional[float]] = [None] * period
 
         # First RSI calculation uses simple average
         avg_gain = sum(gains[:period]) / period
@@ -191,7 +195,7 @@ class IndicatorService:
         fast_period: int = 12,
         slow_period: int = 26,
         signal_period: int = 9,
-    ) -> Tuple[List[float], List[float], List[float]]:
+    ) -> Tuple[List[Optional[float]], List[Optional[float]], List[Optional[float]]]:
         """
         Calculate MACD (Moving Average Convergence Divergence)
 
@@ -202,41 +206,76 @@ class IndicatorService:
             signal_period: Signal line period (default 9)
 
         Returns:
-            Tuple of (MACD line, Signal line, Histogram)
+            Tuple of (MACD line, Signal line, Histogram), same length as input with None for initial values
         """
-        if len(prices) < slow_period:
-            return [], [], []
+        n = len(prices)
+        if n < slow_period:
+            none_list: List[Optional[float]] = [None] * n
+            return none_list.copy(), none_list.copy(), none_list.copy()
 
         fast_ema = self.calculate_ema(prices, fast_period)
         slow_ema = self.calculate_ema(prices, slow_period)
 
-        # Align EMAs (slow EMA starts later)
-        offset = slow_period - fast_period
-        fast_ema = fast_ema[offset:]
+        # MACD line = Fast EMA - Slow EMA (both arrays now have same length as prices)
+        macd_line: List[Optional[float]] = []
+        for fast, slow in zip(fast_ema, slow_ema):
+            if fast is not None and slow is not None:
+                macd_line.append(fast - slow)
+            else:
+                macd_line.append(None)
 
-        # MACD line = Fast EMA - Slow EMA
-        macd_line = [fast - slow for fast, slow in zip(fast_ema, slow_ema)]
+        # Signal line = EMA of MACD line (need non-None values for calculation)
+        # Find first valid MACD value
+        first_valid = next((i for i, v in enumerate(macd_line) if v is not None), n)
+        valid_macd = [v for v in macd_line if v is not None]
 
-        if len(macd_line) < signal_period:
-            return macd_line, [], []
+        if len(valid_macd) < signal_period:
+            none_list = [None] * n
+            return macd_line, none_list.copy(), none_list.copy()
 
-        # Signal line = EMA of MACD line
-        signal_line = self.calculate_ema(macd_line, signal_period)
+        # Calculate signal EMA on valid MACD values
+        signal_values = self._calculate_ema_raw(valid_macd, signal_period)
 
-        # Align MACD line with signal line
-        macd_aligned = macd_line[signal_period - 1:]
+        # Pad signal line to match original length
+        signal_line: List[Optional[float]] = [None] * (first_valid + signal_period - 1) + signal_values
+
+        # Ensure signal_line has same length as prices
+        while len(signal_line) < n:
+            signal_line.append(signal_line[-1] if signal_line else None)
 
         # Histogram = MACD line - Signal line
-        histogram = [macd - signal for macd, signal in zip(macd_aligned, signal_line)]
+        histogram: List[Optional[float]] = []
+        for macd, signal in zip(macd_line, signal_line):
+            if macd is not None and signal is not None:
+                histogram.append(macd - signal)
+            else:
+                histogram.append(None)
 
-        return macd_aligned, signal_line, histogram
+        return macd_line, signal_line, histogram
+
+    def _calculate_ema_raw(self, prices: List[float], period: int) -> List[float]:
+        """Calculate EMA without padding (for internal use)"""
+        if len(prices) < period:
+            return []
+
+        multiplier = 2 / (period + 1)
+        ema_values = []
+
+        first_sma = sum(prices[:period]) / period
+        ema_values.append(first_sma)
+
+        for i in range(period, len(prices)):
+            ema = (prices[i] * multiplier) + (ema_values[-1] * (1 - multiplier))
+            ema_values.append(ema)
+
+        return ema_values
 
     def calculate_bollinger_bands(
         self,
         prices: List[float],
         period: int = 20,
         std_dev: float = 2.0,
-    ) -> Tuple[List[float], List[float], List[float]]:
+    ) -> Tuple[List[Optional[float]], List[Optional[float]], List[Optional[float]]]:
         """
         Calculate Bollinger Bands
 
@@ -246,22 +285,28 @@ class IndicatorService:
             std_dev: Number of standard deviations (default 2.0)
 
         Returns:
-            Tuple of (Upper band, Middle band (SMA), Lower band)
+            Tuple of (Upper band, Middle band (SMA), Lower band), same length as input with None for initial values
         """
         if len(prices) < period:
-            return [], [], []
+            none_list: List[Optional[float]] = [None] * len(prices)
+            return none_list.copy(), none_list.copy(), none_list.copy()
 
         middle_band = self.calculate_sma(prices, period)
-        upper_band = []
-        lower_band = []
+        # Pad with None for values before we have enough data
+        upper_band: List[Optional[float]] = [None] * (period - 1)
+        lower_band: List[Optional[float]] = [None] * (period - 1)
 
         for i in range(period - 1, len(prices)):
             window = prices[i - period + 1:i + 1]
             std = statistics.stdev(window)
-            sma = middle_band[i - period + 1]
+            sma = middle_band[i]  # middle_band is now aligned with prices
 
-            upper_band.append(sma + (std_dev * std))
-            lower_band.append(sma - (std_dev * std))
+            if sma is not None:
+                upper_band.append(sma + (std_dev * std))
+                lower_band.append(sma - (std_dev * std))
+            else:
+                upper_band.append(None)
+                lower_band.append(None)
 
         return upper_band, middle_band, lower_band
 

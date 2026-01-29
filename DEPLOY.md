@@ -44,7 +44,31 @@
 | `ALPACA_TRADING_MODE` | Yes | `paper` or `live` |
 | `OPENAI_API_KEY` | No | Enables AI stock discovery |
 | `ALPHA_VANTAGE_API_KEY` | No | Company fundamentals |
-| `DATABASE_URL` | No | PostgreSQL URL (Railway provides) |
+| `DATABASE_URL` | Auto | PostgreSQL URL (Railway auto-injects) |
+| `ALLOWED_ORIGINS` | No | Additional CORS origins (comma-separated) |
+| `SECRET_KEY` | Yes | Random string for security |
+
+---
+
+## Database Persistence (IMPORTANT)
+
+**Your trades persist automatically when using Railway/Render:**
+
+1. **Railway**: Click "New" > "Database" > "PostgreSQL" in your project
+   - Railway auto-injects `DATABASE_URL` - no config needed!
+
+2. **Render**: Add PostgreSQL from Dashboard > "New" > "PostgreSQL"
+   - Copy connection string to `DATABASE_URL` env var
+
+3. **Alternative Cloud DBs** (if hosting elsewhere):
+   - Supabase: Free PostgreSQL at [supabase.com](https://supabase.com)
+   - Neon: Free PostgreSQL at [neon.tech](https://neon.tech)
+
+**What gets saved:**
+- All executed trades with entry/exit prices
+- Open positions with stop-loss/take-profit levels
+- Performance metrics (win rate, P&L, Sharpe ratio)
+- Bot configuration and settings
 
 ---
 

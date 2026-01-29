@@ -1,0 +1,128 @@
+{
+  "task_id": "TASK-014",
+  "qa_agent": "qa",
+  "timestamp": "2026-01-28T18:15:00Z",
+  "verdict": "FAIL",
+  "rerun_number": 2,
+  "tests_run": 44,
+  "tests_passed": 37,
+  "tests_failed": 7,
+  "execution_time": "8.11s",
+  "details": "Re-ran QA after fix agent attempt. 7 tests still failing. The fix agent did NOT address the issues - production code (SmartScanner) and test code both need fixes.",
+  "issues_found": [
+    {
+      "test": "TestBotErrorStates::test_error_recovery_logs_to_execution_logger",
+      "error_type": "AttributeError",
+      "error_message": "'ExecutionLogger' object has no attribute 'get_recent_failures'",
+      "root_cause": "Test calls non-existent method get_recent_failures(). Correct method is get_failed_attempts()",
+      "file": "api/tests/integration/test_trading_bot_states.py",
+      "line": 303,
+      "severity": "medium",
+      "fix_required": "TEST_CODE",
+      "fix_suggestion": "Replace get_recent_failures() with get_failed_attempts() on line 303"
+    },
+    {
+      "test": "TestRateLimitHandling::test_rate_limit_error_logged",
+      "error_type": "TypeError",
+      "error_message": "AdaptiveIndicatorEngine.calculate_adaptive_indicators() got an unexpected keyword argument 'mode'",
+      "root_cause": "SmartScanner.py line 246 passes mode=trading_mode but AdaptiveIndicatorEngine.calculate_adaptive_indicators() signature is (self, highs, lows, closes, volumes) - no mode parameter",
+      "file": "api/services/smart_scanner.py",
+      "line": 246,
+      "severity": "critical",
+      "fix_required": "PRODUCTION_CODE",
+      "fix_suggestion": "Remove mode argument from calculate_adaptive_indicators() call. Call self.adaptive_engine.set_mode(trading_mode) before calculate_adaptive_indicators(highs, lows, closes, volumes)"
+    },
+    {
+      "test": "TestRateLimitHandling::test_bot_continues_after_transient_error",
+      "error_type": "TypeError",
+      "error_message": "AdaptiveIndicatorEngine.calculate_adaptive_indicators() got an unexpected keyword argument 'mode'",
+      "root_cause": "Same as above - SmartScanner mode argument bug",
+      "file": "api/services/smart_scanner.py",
+      "line": 246,
+      "severity": "critical",
+      "fix_required": "PRODUCTION_CODE",
+      "fix_suggestion": "Same fix as above"
+    },
+    {
+      "test": "TestMarketHoursDetection::test_session_transition_triggers_queued_trades",
+      "error_type": "AssertionError",
+      "error_message": "assert 2 > 2 (trading_cycle_count > count_while_paused failed)",
+      "root_cause": "Timing-related test flakiness. The _queued_trades attribute DOES exist (line 84 of trading_bot.py). Test fails due to race conditions in async code.",
+      "file": "api/tests/integration/test_trading_bot_states.py",
+      "line": 735,
+      "severity": "medium",
+      "fix_required": "TEST_CODE",
+      "fix_suggestion": "Increase sleep times or use asyncio.Event for synchronization instead of relying on timing"
+    },
+    {
+      "test": "TestPausedStateBehavior::test_paused_state_skips_trading_cycles",
+      "error_type": "AssertionError",
+      "error_message": "assert 2 > 2",
+      "root_cause": "Test doesn't properly mock _run_trading_cycle - the real cycle runs and triggers SmartScanner which fails with mode arg bug. Also timing-dependent.",
+      "file": "api/tests/integration/test_trading_bot_states.py",
+      "line": 735,
+      "severity": "medium",
+      "fix_required": "BOTH",
+      "fix_suggestion": "1) Fix SmartScanner mode bug, 2) Ensure mock replaces method before bot.start()"
+    },
+    {
+      "test": "TestPausedStateBehavior::test_paused_state_sets_current_cycle_to_paused",
+      "error_type": "AssertionError",
+      "error_message": "assert 'checking_exits' == 'paused'",
+      "root_cause": "After pause(), the main loop continues a cycle in progress. current_cycle is set to 'checking_exits' by _intelligent_scan_with_cascade() before pause takes effect.",
+      "file": "api/tests/integration/test_trading_bot_states.py",
+      "line": 747,
+      "severity": "medium",
+      "fix_required": "BOTH",
+      "fix_suggestion": "1) Fix SmartScanner mode bug to prevent error cascade, 2) The test may need to wait longer for paused state to take effect, or check for multiple valid states"
+    },
+    {
+      "test": "TestExecutionLogger::test_execution_logger_records_failures",
+      "error_type": "TypeError",
+      "error_message": "ExecutionLogger.log_failure() missing 2 required positional arguments: 'asset_class' and 'order_type'",
+      "root_cause": "Test calls log_failure() without required 'asset_class' and 'order_type' parameters. Also calls get_recent_failures() which should be get_failed_attempts()",
+      "file": "api/tests/integration/test_trading_bot_states.py",
+      "line": 893,
+      "severity": "medium",
+      "fix_required": "TEST_CODE",
+      "fix_suggestion": "Line 893: Add asset_class='stock', order_type='market' to log_failure() call. Line 903: Replace get_recent_failures() with get_failed_attempts()"
+    }
+  ],
+  "fix_summary": {
+    "production_code_fixes_needed": 1,
+    "test_code_fixes_needed": 4,
+    "both_fixes_needed": 2
+  },
+  "production_code_bug": {
+    "file": "api/services/smart_scanner.py",
+    "line": 246,
+    "required_fix": "Remove mode argument. Call self.adaptive_engine.set_mode(trading_mode) before calculate_adaptive_indicators(highs, lows, closes, volumes)"
+  },
+  "test_code_fixes": [
+    {
+      "file": "api/tests/integration/test_trading_bot_states.py",
+      "line": 303,
+      "change": "Replace get_recent_failures() with get_failed_attempts()"
+    },
+    {
+      "file": "api/tests/integration/test_trading_bot_states.py",
+      "line": 893,
+      "change": "Add asset_class='stock', order_type='market' to log_failure() call"
+    },
+    {
+      "file": "api/tests/integration/test_trading_bot_states.py",
+      "line": 903,
+      "change": "Replace get_recent_failures() with get_failed_attempts()"
+    }
+  ],
+  "recommendation": "TASK-014 must remain qa_failed. The fix agent did not make any changes. Two types of fixes are needed: 1) PRODUCTION CODE: Fix SmartScanner.py line 246 - remove mode argument from calculate_adaptive_indicators() call 2) TEST CODE: Fix 3 locations in test_trading_bot_states.py to use correct ExecutionLogger API",
+  "blocking_issues": [
+    "SmartScanner.py line 246 passes mode keyword argument to AdaptiveIndicatorEngine.calculate_adaptive_indicators() but this method does not accept that parameter. This is a PRODUCTION BUG that affects bot operation, not just tests."
+  ],
+  "acceptance_criteria_results": {
+    "all_state_transitions_tested": "PASS - All 11 state transition tests pass",
+    "error_recovery_validated": "PARTIAL - 2/3 error tests pass, 1 fails due to wrong method name in test",
+    "concurrent_scanning_works": "PASS - All 4 concurrent scanning tests pass",
+    "tests_under_30_seconds": "PASS - Tests completed in 8.11 seconds"
+  }
+}

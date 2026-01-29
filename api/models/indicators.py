@@ -60,15 +60,18 @@ class StochasticResponse(BaseModel):
 
 class IndicatorSummary(BaseModel):
     """Single indicator summary"""
-    value: float
+    value: Optional[float] = None
     signal: str
+    # Allow extra fields for complex indicators like bollinger bands
+    class Config:
+        extra = "allow"
 
 
 class TechnicalSummary(BaseModel):
     """Summary of all technical indicators"""
     symbol: str
     current_price: Optional[float]
-    indicators: Dict[str, IndicatorSummary]
+    indicators: Dict[str, Any]  # Use Any to allow flexible indicator structures
     overall_signal: str  # Bullish, Bearish, Neutral
     bullish_count: int
     bearish_count: int

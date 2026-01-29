@@ -28,6 +28,7 @@ logger = logging.getLogger(__name__)
 
 class TradingHorizon(str, Enum):
     """Trading time horizon - from longest to shortest"""
+    LONG = "LONG"             # 10+ days, target 15-30%
     SWING = "SWING"           # 2-10 days, target 5-15%
     INTRADAY = "INTRADAY"     # 1-8 hours, target 1-3%
     SCALP = "SCALP"           # 5-60 minutes, target 0.3-1%
@@ -112,32 +113,49 @@ class HierarchicalStrategy:
 
     def __init__(self):
         # Score thresholds for each horizon
+        # Scan intervals based on trade type (user requested):
+        # - Scalp: 60 seconds (fast, short-term trades)
+        # - Intraday: 2 minutes (120 seconds)
+        # - Swing: 10 minutes (600 seconds)
+        # - Long: 30 minutes (1800 seconds)
         self.thresholds = {
+            TradingHorizon.LONG: {
+                "min_score": 75,          # Highest bar for long-term holds
+                "excellent_score": 90,
+                "risk_reward_min": 3.0,   # Need 3:1 minimum for long
+                "max_positions": 2,
+                "scan_interval_seconds": 1800,  # 30 minutes
+            },
             TradingHorizon.SWING: {
                 "min_score": 70,          # Higher bar for multi-day holds
                 "excellent_score": 85,
                 "risk_reward_min": 2.0,   # Need 2:1 minimum for swing
                 "max_positions": 3,
-                "scan_interval_minutes": 60,  # Check hourly
+                "scan_interval_seconds": 600,  # 10 minutes
             },
             TradingHorizon.INTRADAY: {
                 "min_score": 65,
                 "excellent_score": 80,
                 "risk_reward_min": 1.5,
                 "max_positions": 5,
-                "scan_interval_minutes": 15,  # Check every 15 min
+                "scan_interval_seconds": 120,  # 2 minutes
             },
             TradingHorizon.SCALP: {
                 "min_score": 60,          # Lower bar for quick trades
                 "excellent_score": 75,
                 "risk_reward_min": 1.2,   # 1.2:1 okay for scalps
                 "max_positions": 3,
-                "scan_interval_minutes": 5,   # Check frequently
+                "scan_interval_seconds": 60,   # 1 minute (60 seconds)
             },
         }
 
         # Multi-timeframe configurations
         self.timeframe_configs = {
+            TradingHorizon.LONG: {
+                "trend": "1w",       # Weekly for trend
+                "momentum": "1d",    # Daily for momentum
+                "entry": "4h",       # 4-hour for entry
+            },
             TradingHorizon.SWING: {
                 "trend": "1d",       # Daily for trend
                 "momentum": "4h",    # 4-hour for momentum
@@ -157,6 +175,17 @@ class HierarchicalStrategy:
 
         # Indicator parameters by horizon (from adaptive engine)
         self.indicator_params = {
+            TradingHorizon.LONG: {
+                "rsi_period": 28,
+                "macd_fast": 26,
+                "macd_slow": 52,
+                "macd_signal": 9,
+                "bb_period": 50,
+                "bb_std": 3.0,
+                "atr_period": 28,
+                "atr_multiplier_stop": 3.0,
+                "atr_multiplier_target": 6.0,
+            },
             TradingHorizon.SWING: {
                 "rsi_period": 21,
                 "macd_fast": 19,
@@ -209,6 +238,7 @@ class HierarchicalStrategy:
         self.last_scan_time: Dict[TradingHorizon, datetime] = {}
         self.active_opportunities: Dict[str, TradingOpportunity] = {}
         self.horizon_exhausted: Dict[TradingHorizon, bool] = {
+            TradingHorizon.LONG: False,
             TradingHorizon.SWING: False,
             TradingHorizon.INTRADAY: False,
             TradingHorizon.SCALP: False,
@@ -216,6 +246,7 @@ class HierarchicalStrategy:
 
         # Performance tracking
         self.trades_by_horizon: Dict[TradingHorizon, List[Dict]] = {
+            TradingHorizon.LONG: [],
             TradingHorizon.SWING: [],
             TradingHorizon.INTRADAY: [],
             TradingHorizon.SCALP: [],
@@ -226,36 +257,75 @@ class HierarchicalStrategy:
         Determine which trading horizon to focus on right now.
 
         Logic:
-        1. If we haven't found any swing setups, try swing first
-        2. If swing is "exhausted" (scanned, nothing good), try intraday
-        3. If intraday exhausted, try scalp
-        4. Reset exhausted flags periodically (hourly for swing, etc.)
+        1. If we haven't found any long-term setups, try long first
+        2. If long is "exhausted", try swing
+        3. If swing is "exhausted" (scanned, nothing good), try intraday
+        4. If intraday exhausted, try scalp
+        5. Reset exhausted flags based on scan intervals:
+           - Scalp: 60 seconds
+           - Intraday: 2 minutes (120 seconds)
+           - Swing: 10 minutes (600 seconds)
+           - Long: 30 minutes (1800 seconds)
         """
         now = datetime.now()
 
-        # Reset exhausted flags based on time
+        # Reset exhausted flags based on time (using scan_interval_seconds)
         for horizon, last_time in self.last_scan_time.items():
-            interval = self.thresholds[horizon]["scan_interval_minutes"]
-            if (now - last_time) > timedelta(minutes=interval):
+            interval_seconds = self.thresholds[horizon]["scan_interval_seconds"]
+            if (now - last_time) > timedelta(seconds=interval_seconds):
                 self.horizon_exhausted[horizon] = False
 
-        # Cascade through horizons
-        if not self.horizon_exhausted[TradingHorizon.SWING]:
+        # Cascade through horizons (Long -> Swing -> Intraday -> Scalp)
+        if not self.horizon_exhausted[TradingHorizon.LONG]:
+            return TradingHorizon.LONG
+        elif not self.horizon_exhausted[TradingHorizon.SWING]:
             return TradingHorizon.SWING
         elif not self.horizon_exhausted[TradingHorizon.INTRADAY]:
             return TradingHorizon.INTRADAY
         elif not self.horizon_exhausted[TradingHorizon.SCALP]:
             return TradingHorizon.SCALP
         else:
-            # All exhausted - reset and start fresh with swing
+            # All exhausted - reset and start fresh with long
             self.horizon_exhausted = {h: False for h in TradingHorizon}
-            return TradingHorizon.SWING
+            return TradingHorizon.LONG
 
     def mark_horizon_exhausted(self, horizon: TradingHorizon):
         """Mark a horizon as scanned with no good opportunities"""
         self.horizon_exhausted[horizon] = True
         self.last_scan_time[horizon] = datetime.now()
         logger.info(f"Horizon {horizon.value} exhausted - cascading to next")
+
+    def get_scan_interval_seconds(self, horizon: TradingHorizon) -> int:
+        """Get the scan interval in seconds for a given horizon.
+
+        User-requested intervals:
+        - Scalp: 60 seconds
+        - Intraday: 120 seconds (2 min)
+        - Swing: 600 seconds (10 min)
+        - Long: 1800 seconds (30 min)
+        """
+        return self.thresholds[horizon]["scan_interval_seconds"]
+
+    def get_next_scan_time(self, horizon: TradingHorizon) -> Optional[datetime]:
+        """Get the next scheduled scan time for a horizon, or None if ready to scan now."""
+        if horizon not in self.last_scan_time:
+            return None  # Never scanned, scan now
+
+        interval_seconds = self.get_scan_interval_seconds(horizon)
+        next_scan = self.last_scan_time[horizon] + timedelta(seconds=interval_seconds)
+
+        if datetime.now() >= next_scan:
+            return None  # Ready to scan now
+        return next_scan
+
+    def seconds_until_next_scan(self, horizon: TradingHorizon) -> int:
+        """Get seconds until next scan for a horizon (0 if ready now)."""
+        next_scan = self.get_next_scan_time(horizon)
+        if next_scan is None:
+            return 0
+
+        delta = (next_scan - datetime.now()).total_seconds()
+        return max(0, int(delta))
 
     def evaluate_opportunity(
         self,
@@ -276,6 +346,102 @@ class HierarchicalStrategy:
         - Elliott Wave position
         - Multi-timeframe confluence
         """
+        # ===== INDICATOR VALIDATION =====
+        # Define required and important indicators
+        critical_indicators = ["current_price"]  # Absolutely required
+        important_indicators = ["atr", "rsi_14", "macd_histogram"]  # Needed for reliable scoring
+
+        # Check if indicators dict is None or empty
+        if not indicators:
+            logger.warning(
+                f"[INCOMPLETE_DATA] {symbol}: indicators dict is None or empty - skipping opportunity"
+            )
+            return None
+
+        # Check critical indicators
+        missing_critical = []
+        for ind in critical_indicators:
+            if ind not in indicators or indicators[ind] is None:
+                missing_critical.append(ind)
+
+        if missing_critical:
+            logger.warning(
+                f"[INCOMPLETE_DATA] {symbol}: Missing critical indicators {missing_critical} - skipping opportunity"
+            )
+            return None
+
+        # Validate current_price is a valid number
+        if not isinstance(current_price, (int, float)) or current_price <= 0:
+            logger.warning(
+                f"[INCOMPLETE_DATA] {symbol}: Invalid current_price ({current_price}) - skipping opportunity"
+            )
+            return None
+
+        # Check important indicators and log warnings (but don't skip)
+        missing_important = []
+        for ind in important_indicators:
+            if ind not in indicators or indicators[ind] is None:
+                missing_important.append(ind)
+
+        if missing_important:
+            logger.warning(
+                f"[INCOMPLETE_DATA] {symbol}: Missing important indicators {missing_important} - using fallbacks"
+            )
+
+        # Apply sensible fallbacks for missing non-critical indicators
+        # ATR fallback: 2% of current price (reasonable volatility estimate)
+        if indicators.get("atr") is None:
+            indicators["atr"] = current_price * 0.02
+            logger.debug(f"{symbol}: Using ATR fallback (2% of price)")
+
+        # RSI fallback: neutral value
+        if indicators.get("rsi_14") is None:
+            indicators["rsi_14"] = 50
+            logger.debug(f"{symbol}: Using RSI fallback (neutral 50)")
+
+        # MACD fallbacks: neutral values
+        if indicators.get("macd_histogram") is None:
+            indicators["macd_histogram"] = 0
+        if indicators.get("macd_histogram_prev") is None:
+            indicators["macd_histogram_prev"] = 0
+        if indicators.get("macd_line") is None:
+            indicators["macd_line"] = 0
+        if indicators.get("macd_signal") is None:
+            indicators["macd_signal"] = 0
+
+        # SMA fallbacks: use current price
+        if indicators.get("sma_20") is None:
+            indicators["sma_20"] = current_price
+        if indicators.get("sma_50") is None:
+            indicators["sma_50"] = current_price
+        if indicators.get("sma_200") is None:
+            indicators["sma_200"] = current_price
+
+        # Volume fallback: neutral ratio
+        if indicators.get("volume_ratio") is None:
+            indicators["volume_ratio"] = 1.0
+
+        # Stochastic fallbacks: neutral values
+        if indicators.get("stoch_k") is None:
+            indicators["stoch_k"] = 50
+        if indicators.get("stoch_d") is None:
+            indicators["stoch_d"] = 50
+
+        # ADX fallback: low trend strength
+        if indicators.get("adx") is None:
+            indicators["adx"] = 20
+
+        # ROC fallback: neutral
+        if indicators.get("roc") is None:
+            indicators["roc"] = 0
+
+        # VWAP fallback: current price
+        if indicators.get("vwap") is None:
+            indicators["vwap"] = current_price
+
+        # Ensure current_price is in indicators for scoring methods
+        indicators["current_price"] = current_price
+
         params = self.indicator_params[horizon]
         thresholds = self.thresholds[horizon]
 
@@ -323,7 +489,7 @@ class HierarchicalStrategy:
         direction = self._determine_direction(indicators, patterns, multi_tf_analysis)
 
         # ===== CALCULATE ENTRY/EXIT LEVELS =====
-        atr = indicators.get("atr", current_price * 0.02)  # Fallback to 2%
+        atr = indicators["atr"]  # Already validated with fallback in validation section
 
         entry_price = current_price
 
@@ -467,19 +633,25 @@ class HierarchicalStrategy:
         return max(0, min(100, score))
 
     def _calculate_momentum_score(self, indicators: Dict, params: Dict) -> float:
-        """Score momentum indicators (0-100)"""
+        """Score momentum indicators (0-100)
+
+        Updated based on backtest analysis (2026-01-28):
+        - Momentum (ROC) is the best performer (Sharpe 0.33) - INCREASED weight
+        - MACD is the worst performer (Sharpe -0.43) - REDUCED weight
+        - RSI with tighter thresholds (25/75) performs better
+        """
         score = 50
 
-        # RSI
+        # RSI - UPDATED with tighter thresholds (25/75 instead of 30/70)
         rsi = indicators.get("rsi_14", 50)
-        if 30 < rsi < 45:
+        if 25 < rsi < 40:
             score += 15  # Oversold bouncing = good long
-        elif 55 < rsi < 70:
+        elif 50 < rsi < 65:
             score += 10  # Healthy bullish
-        elif rsi < 30:
+        elif rsi < 25:
             score += 20  # Very oversold = reversal opportunity
-        elif rsi > 70:
-            score -= 5   # Overbought caution
+        elif rsi > 75:
+            score -= 5   # Very overbought caution
 
         # Stochastic
         stoch_k = indicators.get("stoch_k", 50)
@@ -489,18 +661,32 @@ class HierarchicalStrategy:
         elif stoch_k > 80 and stoch_k < stoch_d:
             score += 10  # Overbought with bearish (short opportunity)
 
-        # MACD crossover
+        # MACD crossover - REDUCED weight (poor backtest results)
         macd_line = indicators.get("macd_line", 0)
         macd_signal = indicators.get("macd_signal", 0)
         if macd_line > macd_signal and indicators.get("macd_histogram", 0) > 0:
-            score += 15  # Bullish MACD
+            score += 5  # Reduced from 15 - MACD had worst backtest performance
 
-        # Rate of change
+        # Rate of change (Momentum) - INCREASED weight (best backtest performer!)
         roc = indicators.get("roc", 0)
-        if 0 < roc < 5:
-            score += 10  # Positive momentum
-        elif roc > 10:
-            score += 5   # Strong but maybe extended
+        if roc > 5:
+            score += 20  # Strong positive momentum - key signal
+        elif 2 < roc <= 5:
+            score += 15  # Good momentum
+        elif 0 < roc <= 2:
+            score += 10  # Slight positive momentum
+        elif roc < -5:
+            score -= 10  # Strong negative momentum - avoid
+
+        # Mean reversion component - check deviation from SMA
+        sma_20 = indicators.get("sma_20", 0)
+        current_price = indicators.get("current_price", 0)
+        if sma_20 > 0 and current_price > 0:
+            deviation = ((current_price - sma_20) / sma_20) * 100
+            if deviation < -3:
+                score += 15  # Price below SMA = mean reversion opportunity
+            elif deviation > 5:
+                score -= 5   # Price extended above SMA
 
         return max(0, min(100, score))
 

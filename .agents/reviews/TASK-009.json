@@ -1,0 +1,104 @@
+{
+  "task_id": "TASK-009",
+  "reviewer": "reviewer_bot",
+  "timestamp": "2026-01-28T13:15:00Z",
+  "verdict": "approved",
+  "files_reviewed": [
+    "api/services/trading_bot.py"
+  ],
+  "feedback": [
+    {
+      "file": "api/services/trading_bot.py",
+      "line": 410,
+      "severity": "praise",
+      "category": "logic",
+      "comment": "_normalize_and_validate_symbol() method provides comprehensive validation: checks non-empty string, strips whitespace, converts to uppercase, validates length (1-10 chars)"
+    },
+    {
+      "file": "api/services/trading_bot.py",
+      "line": 443,
+      "severity": "praise",
+      "category": "logic",
+      "comment": "Smart crypto detection: identifies crypto symbols by '/' character or USD/USDT/USDC suffix, handles multiple input formats (BTC/USD, BTCUSD, BTC-USD all normalize correctly)"
+    },
+    {
+      "file": "api/services/trading_bot.py",
+      "line": 468,
+      "severity": "praise",
+      "category": "security",
+      "comment": "Validates crypto symbol format is BASE/QUOTE with both parts being alphanumeric - prevents injection of malformed symbols"
+    },
+    {
+      "file": "api/services/trading_bot.py",
+      "line": 491,
+      "severity": "praise",
+      "category": "logic",
+      "comment": "Stock symbol validation allows only A-Z, 0-9, '.', '-' characters - covers standard symbols and exceptions like BRK.A, BRK.B"
+    },
+    {
+      "file": "api/services/trading_bot.py",
+      "line": 498,
+      "severity": "praise",
+      "category": "style",
+      "comment": "Warns about unusually long stock symbols (>5 chars) but doesn't reject them - good balance of validation and flexibility for OTC stocks"
+    },
+    {
+      "file": "api/services/trading_bot.py",
+      "line": 505,
+      "severity": "praise",
+      "category": "logic",
+      "comment": "_validate_and_filter_symbols() provides batch validation with deduplication and detailed logging of rejected symbols"
+    },
+    {
+      "file": "api/services/trading_bot.py",
+      "line": 300,
+      "severity": "praise",
+      "category": "logic",
+      "comment": "Validation applied in _apply_config() - validates config symbols before using them"
+    },
+    {
+      "file": "api/services/trading_bot.py",
+      "line": 550,
+      "severity": "praise",
+      "category": "logic",
+      "comment": "Validation applied in _load_db_config() for config.enabled_symbols"
+    },
+    {
+      "file": "api/services/trading_bot.py",
+      "line": 608,
+      "severity": "praise",
+      "category": "logic",
+      "comment": "Validation applied in _load_db_config() for user_symbols from UserStock table"
+    },
+    {
+      "file": "api/services/trading_bot.py",
+      "line": 619,
+      "severity": "praise",
+      "category": "logic",
+      "comment": "Validation applied in _load_db_config() for repo_symbols from StockRepository table"
+    },
+    {
+      "file": "api/services/trading_bot.py",
+      "line": 1515,
+      "severity": "praise",
+      "category": "logic",
+      "comment": "Validation applied in _refresh_symbols_from_watchlist() - validates watchlist symbols"
+    },
+    {
+      "file": "api/services/trading_bot.py",
+      "line": 434,
+      "severity": "praise",
+      "category": "style",
+      "comment": "Consistent [SYMBOL_VALIDATION] and [SYMBOL_FILTER] logging prefixes make it easy to filter logs for debugging symbol issues"
+    }
+  ],
+  "overall_comments": "TASK-009 is excellently implemented. The _normalize_and_validate_symbol() method (line 410) provides comprehensive input validation: type checking, whitespace stripping, uppercase normalization, length validation (1-10 chars), and character validation. It smartly detects crypto vs stock symbols and normalizes crypto formats (BTC/USD, BTCUSD, BTC-USD all work). The _validate_and_filter_symbols() helper (line 505) provides batch validation with deduplication. Most importantly, validation is applied at ALL symbol entry points: _apply_config(), _load_db_config() (for config, user, and repo symbols), and _refresh_symbols_from_watchlist(). This prevents silent failures from malformed symbols at the source.",
+  "tests_passed": "not_run",
+  "test_output": "Recommend adding unit tests for _normalize_and_validate_symbol() in a follow-up task",
+  "acceptance_criteria_review": {
+    "invalid_symbols_rejected_with_clear_error": "PASS - Returns (symbol, False, error_message) tuple with specific error descriptions",
+    "symbols_normalized_consistently": "PASS - strip().upper() applied to all symbols; crypto normalized to BASE/QUOTE format",
+    "crypto_symbols_handled_correctly": "PASS - BTC/USD, BTCUSD, BTC-USD all normalize to BTC/USD",
+    "no_silent_failures": "PASS - All validation failures logged with [SYMBOL_VALIDATION] or [SYMBOL_FILTER] prefix"
+  }
+}

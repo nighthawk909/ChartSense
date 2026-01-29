@@ -52,11 +52,10 @@ export default function Watchlist() {
   }, [searchQuery])
 
   const handleSymbolSelect = (symbol: string) => {
-    if (symbol.includes('/') || symbol.endsWith('USD') || symbol.endsWith('USDT')) {
-      navigate('/crypto')
-    } else {
-      navigate(`/stock/${symbol}`)
-    }
+    // All symbols now go to the unified stock detail page
+    // Encode the symbol for URL (handles / in crypto symbols like BTC/USD)
+    const encodedSymbol = encodeURIComponent(symbol)
+    navigate(`/stock/${encodedSymbol}`)
   }
 
   const handleAddSymbol = async (symbol: string) => {

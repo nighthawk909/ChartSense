@@ -1,0 +1,107 @@
+{
+  "task_id": "TASK-020",
+  "title": "Fix AlpacaService.place_order AttributeError",
+  "qa_date": "2026-01-28T19:55:00-05:00",
+  "tester": "QA Bot",
+  "status": "BLOCKED_BY_STALE_SERVER",
+
+  "summary": "The code fix has been correctly applied in the source files, but the running server has stale code loaded in memory and needs to be restarted.",
+
+  "findings": {
+    "code_verification": {
+      "passed": true,
+      "details": [
+        "Searched entire api/ directory for 'place_order' method calls - none found",
+        "Verified bot.py lines 1380 and 1588 use 'submit_market_order' (correct method)",
+        "Git diff confirms change from 'place_order' to 'submit_market_order' was made",
+        "alpaca_service.py defines 'submit_market_order' at line 282 (correct implementation)"
+      ]
+    },
+    "server_cache_issue": {
+      "passed": false,
+      "details": [
+        "Running server returns error: 'AlpacaService' object has no attribute 'place_order'",
+        "This error originates from OLD code that was in memory before the fix",
+        "Cleared all __pycache__ directories - cache is clean",
+        "Touched bot.py to trigger uvicorn --reload - no effect",
+        "Server uptime shows 909+ seconds, started before code fix was applied"
+      ]
+    },
+    "endpoint_tests": {
+      "test_1": {
+        "endpoint": "POST /api/bot/execute-opportunity?symbol=AAPL&signal=BUY&confidence=75",
+        "expected": "Order submission using submit_market_order",
+        "actual": "Error: 'AlpacaService' object has no attribute 'place_order'",
+        "status": "FAILED (stale code)"
+      }
+    }
+  },
+
+  "root_cause_analysis": {
+    "issue": "Server running with stale code in memory",
+    "evidence": [
+      "File on disk (bot.py) contains: 'await bot.alpaca.submit_market_order(' at line 1380",
+      "Git diff shows change from 'place_order' to 'submit_market_order'",
+      "Server error message references non-existent 'place_order' method",
+      "No 'place_order' method exists in AlpacaService class"
+    ],
+    "conclusion": "The fix has been correctly implemented. Server restart required to load new code."
+  },
+
+  "files_verified": [
+    {
+      "path": "api/routes/bot.py",
+      "line": 1380,
+      "content": "result = await bot.alpaca.submit_market_order(",
+      "status": "CORRECT"
+    },
+    {
+      "path": "api/routes/bot.py",
+      "line": 1588,
+      "content": "result = await bot.alpaca.submit_market_order(",
+      "status": "CORRECT"
+    },
+    {
+      "path": "api/services/alpaca_service.py",
+      "line": 282,
+      "content": "async def submit_market_order(",
+      "status": "METHOD EXISTS"
+    }
+  ],
+
+  "resolution_steps": [
+    {
+      "step": 1,
+      "action": "Kill all Python processes running the API server",
+      "command": "taskkill /F /IM python3.11.exe (Windows) or pkill -f uvicorn (Linux/Mac)",
+      "note": "Or close the terminal window running the server"
+    },
+    {
+      "step": 2,
+      "action": "Clear any remaining Python cache",
+      "command": "find api -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true"
+    },
+    {
+      "step": 3,
+      "action": "Restart the API server with reload enabled",
+      "command": "cd api && uvicorn main:app --reload --port 8000"
+    },
+    {
+      "step": 4,
+      "action": "Test the endpoint again",
+      "command": "curl -X POST 'http://localhost:8000/api/bot/execute-opportunity?symbol=AAPL&signal=BUY&confidence=75'"
+    }
+  ],
+
+  "recommendations": [
+    "Server must be restarted to pick up code changes",
+    "After restart, execute-opportunity endpoint should work correctly",
+    "Consider using watchdog file patterns in uvicorn config for better auto-reload detection"
+  ],
+
+  "final_verdict": {
+    "code_fix_status": "VERIFIED_CORRECT",
+    "qa_test_status": "BLOCKED_BY_STALE_SERVER",
+    "action_required": "MANUAL_SERVER_RESTART"
+  }
+}

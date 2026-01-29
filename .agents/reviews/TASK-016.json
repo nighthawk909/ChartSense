@@ -1,0 +1,106 @@
+{
+  "task_id": "TASK-016",
+  "title": "Add database indexes for trade and position queries",
+  "reviewer": "reviewer",
+  "review_timestamp": "2026-01-28T21:15:00Z",
+  "verdict": "APPROVED",
+  "score": 92,
+  "summary": "Excellent implementation of database indexes with comprehensive documentation and a robust migration script. All requirements met with one justified deviation: Position(status) index was not added because the column does not exist in the model - appropriate alternatives were provided.",
+  "files_reviewed": [
+    {
+      "path": "api/database/models.py",
+      "status": "approved",
+      "comments": [
+        "Comprehensive index strategy documented at file top (lines 1-25)",
+        "Trade table indexes properly defined in __table_args__ (lines 78-87)",
+        "Position table indexes properly defined (lines 148-153)",
+        "Inline docstrings explain purpose of each index",
+        "Composite indexes ordered for leftmost-prefix optimization"
+      ]
+    },
+    {
+      "path": "api/database/migrations/add_indexes.py",
+      "status": "approved",
+      "comments": [
+        "Well-documented migration script with usage examples",
+        "Idempotent design - safe to run multiple times",
+        "Supports --dry-run for testing without changes",
+        "Supports --verify for checking index existence",
+        "Supports --rollback for removing indexes",
+        "Handles both SQLite and PostgreSQL",
+        "Proper error handling with informative messages"
+      ]
+    }
+  ],
+  "requirements_checklist": {
+    "composite_index_trade_symbol_created_at": {
+      "status": "met",
+      "evidence": "Line 80: Index('ix_trades_symbol_created_at', 'symbol', 'created_at')"
+    },
+    "index_trade_type": {
+      "status": "met",
+      "evidence": "Line 84: Index('ix_trades_trade_type', 'trade_type')"
+    },
+    "index_position_symbol": {
+      "status": "met",
+      "evidence": "Line 156: unique=True, index=True on symbol column - unique constraint acts as index"
+    },
+    "index_position_status": {
+      "status": "not_applicable",
+      "evidence": "Position model does not have a 'status' column. Coder added ix_positions_trade_type and ix_positions_entry_time as useful alternatives. This is a valid deviation from the requirement."
+    },
+    "migration_script_standalone": {
+      "status": "met",
+      "evidence": "Lines 336-374: __main__ block with argparse for CLI usage"
+    },
+    "index_strategy_documented": {
+      "status": "met",
+      "evidence": "Lines 1-25: Comprehensive docstring documenting index strategy, performance notes, and query patterns"
+    }
+  },
+  "acceptance_criteria_checklist": {
+    "trade_history_queries_use_index": {
+      "status": "met",
+      "evidence": "Composite index (symbol, created_at) optimizes WHERE symbol = ? ORDER BY created_at queries"
+    },
+    "position_lookups_optimized": {
+      "status": "met",
+      "evidence": "Unique constraint on Position.symbol acts as index for O(log n) lookups"
+    },
+    "migration_no_data_loss": {
+      "status": "met",
+      "evidence": "Migration only creates indexes via CREATE INDEX statements, no data modification"
+    },
+    "no_breaking_changes": {
+      "status": "met",
+      "evidence": "Adding indexes does not change query semantics or behavior"
+    }
+  },
+  "additional_indexes_added": [
+    {
+      "name": "ix_trades_symbol_exit_time",
+      "purpose": "Composite index for finding open trades by symbol (WHERE symbol = ? AND exit_time IS NULL)"
+    },
+    {
+      "name": "ix_trades_exit_time",
+      "purpose": "Single column for filtering completed trades (WHERE exit_time IS NOT NULL)"
+    },
+    {
+      "name": "ix_positions_entry_time",
+      "purpose": "Single column for sorting/filtering positions by entry date"
+    }
+  ],
+  "strengths": [
+    "Excellent documentation explaining index strategy and query patterns",
+    "Migration script is production-ready with dry-run, verify, and rollback capabilities",
+    "Idempotent migration design prevents duplicate index errors",
+    "Cross-database support (SQLite and PostgreSQL)",
+    "Additional useful indexes beyond requirements"
+  ],
+  "issues": [],
+  "recommendations": [
+    "Consider adding EXPLAIN QUERY PLAN tests to verify indexes are being used",
+    "If Position model ever gets a 'status' column, remember to add the index"
+  ],
+  "action": "Proceed to QA"
+}

@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { Outlet, Link, useLocation, useNavigate } from 'react-router-dom'
-import { TrendingUp, LayoutDashboard, Star, Settings, Bot, Search, X, Loader2, LineChart, History, Menu } from 'lucide-react'
+import { TrendingUp, LayoutDashboard, Star, Settings, Bot, Search, X, Loader2, LineChart, History, Menu, FlaskConical } from 'lucide-react'
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
 
@@ -29,6 +29,7 @@ export default function Layout() {
     { path: '/watchlist', icon: Star, label: 'Watchlist' },
     { path: '/analysis-history', icon: History, label: 'Analysis History' },
     { path: '/bot', icon: Bot, label: 'Trading Bot' },
+    { path: '/backtest', icon: FlaskConical, label: 'Backtesting' },
     { path: '/settings', icon: Settings, label: 'Settings' },
   ]
 

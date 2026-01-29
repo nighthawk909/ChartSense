@@ -5,6 +5,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { RefreshCw, Brain } from 'lucide-react';
 
+import { tradingBotLogger as logger } from '../utils/logger';
 import BotStatusCard from '../components/bot/BotStatusCard';
 import BotControls from '../components/bot/BotControls';
 import AccountSummary from '../components/bot/AccountSummary';
@@ -98,13 +99,13 @@ export default function TradingBot() {
       }
     } catch (err) {
       // Log detailed diagnostics on status fetch failure
-      console.error('[TradingBot] Failed to fetch status:', err);
-      console.error('[TradingBot] API URL attempted:', `${API_URL}/api/bot/status`);
+      logger.error('Failed to fetch status:', err);
+      logger.error('API URL attempted:', `${API_URL}/api/bot/status`);
 
       // Check if it's a network error vs API error
       if (err instanceof TypeError && err.message.includes('fetch')) {
-        console.error('[TradingBot] DIAGNOSIS: Network error - API server may be offline');
-        console.error('[TradingBot] Make sure the backend is running: cd api && uvicorn main:app --reload --port 8000');
+        logger.error('DIAGNOSIS: Network error - API server may be offline');
+        logger.error('Make sure the backend is running: cd api && uvicorn main:app --reload --port 8000');
       }
     } finally {
       setStatusLoading(false);
@@ -117,7 +118,7 @@ export default function TradingBot() {
       const data = await positionsApi.getAccount();
       setAccount(data);
     } catch (err) {
-      console.error('Failed to fetch account:', err);
+      logger.error('Failed to fetch account:', err);
     } finally {
       setAccountLoading(false);
     }
@@ -129,7 +130,7 @@ export default function TradingBot() {
       const data = await positionsApi.getPositions();
       setPositions(data.positions);
     } catch (err) {
-      console.error('Failed to fetch positions:', err);
+      logger.error('Failed to fetch positions:', err);
     } finally {
       setPositionsLoading(false);
     }
@@ -144,7 +145,7 @@ export default function TradingBot() {
       setTradesTotal(data.total_count);
       setTradesPage(page);
     } catch (err) {
-      console.error('Failed to fetch trades:', err);
+      logger.error('Failed to fetch trades:', err);
     } finally {
       setTradesLoading(false);
     }
@@ -156,7 +157,7 @@ export default function TradingBot() {
       const data = await performanceApi.getMetrics(30);
       setMetrics(data);
     } catch (err) {
-      console.error('Failed to fetch metrics:', err);
+      logger.error('Failed to fetch metrics:', err);
     } finally {
       setMetricsLoading(false);
     }
@@ -171,7 +172,7 @@ export default function TradingBot() {
         setActivities(data.activities || []);
       }
     } catch (err) {
-      console.error('Failed to fetch activity:', err);
+      logger.error('Failed to fetch activity:', err);
     } finally {
       setActivityLoading(false);
     }
@@ -204,102 +205,104 @@ export default function TradingBot() {
 
   // Bot control handlers with comprehensive diagnostic logging
   const handleStart = async () => {
-    console.log('[TradingBot] ========== START BOT INITIATED ==========');
-    console.log('[TradingBot] Timestamp:', new Date().toISOString());
-    console.log('[TradingBot] API URL:', API_URL);
-    console.log('[TradingBot] Current Status:', status?.state);
+    logger.group('START BOT INITIATED');
+    logger.info('Timestamp:', new Date().toISOString());
+    logger.info('API URL:', API_URL);
+    logger.info('Current Status:', status?.state);
 
     setActionLoading(true);
     try {
-      console.log('[TradingBot] Calling botApi.start()...');
+      logger.debug('Calling botApi.start()...');
       const startTime = performance.now();
 
       const result = await botApi.start();
 
       const duration = performance.now() - startTime;
-      console.log('[TradingBot] Start API Response:', result);
-      console.log('[TradingBot] Response time:', duration.toFixed(0), 'ms');
+      logger.info('Start API Response:', result);
+      logger.debug('Response time:', duration.toFixed(0), 'ms');
 
       if (result.success) {
-        console.log('[TradingBot] Bot started successfully');
-        console.log('[TradingBot] Message:', result.message);
-        console.log('[TradingBot] State:', result.state);
+        logger.info('Bot started successfully');
+        logger.debug('Message:', result.message);
+        logger.debug('State:', result.state);
       } else {
-        console.error('[TradingBot] Bot start returned success=false:', result);
+        logger.error('Bot start returned success=false:', result);
       }
 
       setTimeout(fetchStatus, 1000);
     } catch (err) {
-      console.error('[TradingBot] ========== START FAILED ==========');
-      console.error('[TradingBot] Error:', err);
+      logger.error('========== START FAILED ==========');
+      logger.error('Error:', err);
       if (err instanceof Error) {
-        console.error('[TradingBot] Error message:', err.message);
-        console.error('[TradingBot] Error stack:', err.stack);
+        logger.error('Error message:', err.message);
+        logger.error('Error stack:', err.stack);
       }
 
       // Try to diagnose the issue
-      console.log('[TradingBot] Running diagnostics...');
+      logger.debug('Running diagnostics...');
       try {
         const healthCheck = await fetch(`${API_URL}/health`);
-        console.log('[TradingBot] Health check status:', healthCheck.status);
+        logger.debug('Health check status:', healthCheck.status);
         if (!healthCheck.ok) {
-          console.error('[TradingBot] DIAGNOSIS: API server is not responding properly');
+          logger.error('DIAGNOSIS: API server is not responding properly');
         }
       } catch (healthErr) {
-        console.error('[TradingBot] DIAGNOSIS: API server appears to be offline');
-        console.error('[TradingBot] Cannot reach:', `${API_URL}/health`);
+        logger.error('DIAGNOSIS: API server appears to be offline');
+        logger.error('Cannot reach:', `${API_URL}/health`);
       }
     } finally {
       setActionLoading(false);
-      console.log('[TradingBot] ========== START COMPLETE ==========');
+      logger.groupEnd();
     }
   };
 
   const handleStop = async () => {
-    console.log('[TradingBot] ========== STOP BOT INITIATED ==========');
-    console.log('[TradingBot] Timestamp:', new Date().toISOString());
+    logger.group('STOP BOT INITIATED');
+    logger.info('Timestamp:', new Date().toISOString());
 
     setActionLoading(true);
     try {
-      console.log('[TradingBot] Calling botApi.stop()...');
+      logger.debug('Calling botApi.stop()...');
       const result = await botApi.stop();
-      console.log('[TradingBot] Stop API Response:', result);
+      logger.info('Stop API Response:', result);
       setTimeout(fetchStatus, 1000);
     } catch (err) {
-      console.error('[TradingBot] Failed to stop bot:', err);
+      logger.error('Failed to stop bot:', err);
     } finally {
       setActionLoading(false);
-      console.log('[TradingBot] ========== STOP COMPLETE ==========');
+      logger.groupEnd();
     }
   };
 
   const handlePause = async () => {
-    console.log('[TradingBot] ========== PAUSE BOT INITIATED ==========');
+    logger.group('PAUSE BOT INITIATED');
     setActionLoading(true);
     try {
-      console.log('[TradingBot] Calling botApi.pause()...');
+      logger.debug('Calling botApi.pause()...');
       const result = await botApi.pause();
-      console.log('[TradingBot] Pause API Response:', result);
+      logger.info('Pause API Response:', result);
       setTimeout(fetchStatus, 1000);
     } catch (err) {
-      console.error('[TradingBot] Failed to pause bot:', err);
+      logger.error('Failed to pause bot:', err);
     } finally {
       setActionLoading(false);
+      logger.groupEnd();
     }
   };
 
   const handleResume = async () => {
-    console.log('[TradingBot] ========== RESUME BOT INITIATED ==========');
+    logger.group('RESUME BOT INITIATED');
     setActionLoading(true);
     try {
-      console.log('[TradingBot] Calling botApi.resume()...');
+      logger.debug('Calling botApi.resume()...');
       const result = await botApi.resume();
-      console.log('[TradingBot] Resume API Response:', result);
+      logger.info('Resume API Response:', result);
       setTimeout(fetchStatus, 1000);
     } catch (err) {
-      console.error('[TradingBot] Failed to resume bot:', err);
+      logger.error('Failed to resume bot:', err);
     } finally {
       setActionLoading(false);
+      logger.groupEnd();
     }
   };
 
@@ -310,7 +313,7 @@ export default function TradingBot() {
       await positionsApi.closePosition(symbol);
       setTimeout(fetchPositions, 1000);
     } catch (err) {
-      console.error('Failed to close position:', err);
+      logger.error('Failed to close position:', err);
     }
   };
 
@@ -325,7 +328,7 @@ export default function TradingBot() {
         }, 1000);
       }
     } catch (err) {
-      console.error('Failed to emergency close all:', err);
+      logger.error('Failed to emergency close all:', err);
     }
   };
 
@@ -337,7 +340,7 @@ export default function TradingBot() {
         setNewEntriesPaused(data.new_entries_paused);
       }
     } catch (err) {
-      console.error('Failed to toggle pause entries:', err);
+      logger.error('Failed to toggle pause entries:', err);
     }
   };
 
@@ -349,7 +352,7 @@ export default function TradingBot() {
         setCurrentStrategy(data.strategy_override || 'moderate');
       }
     } catch (err) {
-      console.error('Failed to set strategy override:', err);
+      logger.error('Failed to set strategy override:', err);
     }
   };
 
@@ -359,28 +362,28 @@ export default function TradingBot() {
       const response = await fetch(`${API_URL}/api/bot/asset-class-mode?mode=${mode}`, { method: 'POST' });
       if (response.ok) {
         const data = await response.json();
-        console.log('Asset class mode updated:', data);
+        logger.info('Asset class mode updated:', data);
         // Refresh status to get updated scan progress
         setTimeout(fetchStatus, 500);
       }
     } catch (err) {
-      console.error('Failed to set asset class mode:', err);
+      logger.error('Failed to set asset class mode:', err);
     }
   };
 
   const handleToggleAutoTrade = async () => {
     const newValue = !status?.auto_trade_mode;
-    console.log('[TradingBot] Toggling auto_trade_mode to:', newValue);
+    logger.info('Toggling auto_trade_mode to:', newValue);
     try {
       const response = await fetch(`${API_URL}/api/bot/auto-trade?enabled=${newValue}`, { method: 'POST' });
       if (response.ok) {
         const data = await response.json();
-        console.log('[TradingBot] Auto trade mode updated:', data);
+        logger.info('Auto trade mode updated:', data);
         // Refresh status to get updated state
         setTimeout(fetchStatus, 500);
       }
     } catch (err) {
-      console.error('Failed to toggle auto trade mode:', err);
+      logger.error('Failed to toggle auto trade mode:', err);
     }
   };
 
@@ -467,10 +470,11 @@ export default function TradingBot() {
         currentIndex={carouselIndex}
         onIndexChange={setCarouselIndex}
         cardsPerView={cardsPerView}
+        autoTradeEnabled={status?.auto_trade_mode ?? false}
       />
 
-      {/* Top Row - Status, Controls, Account */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+      {/* Top Row - Status, Controls, Account - items-start prevents vertical stretching */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
         <BotStatusCard status={status} loading={statusLoading} />
         <BotControls
           state={status?.state || 'STOPPED'}
@@ -482,6 +486,7 @@ export default function TradingBot() {
           onPauseNewEntries={handlePauseNewEntries}
           onStrategyOverride={handleStrategyOverride}
           onToggleAutoTrade={handleToggleAutoTrade}
+          onOpenAIPanel={() => setShowAISidebar(true)}
           loading={actionLoading}
           newEntriesPaused={newEntriesPaused}
           currentStrategy={currentStrategy}
@@ -491,30 +496,36 @@ export default function TradingBot() {
           currentCycle={status?.current_cycle || 'idle'}
           autoTradeMode={status?.auto_trade_mode || false}
           totalScansToday={status?.total_scans_today || scanCount}
+          stockScanProgress={status?.stock_scan_progress}
+          cryptoScanProgress={status?.crypto_scan_progress}
+          assetClassMode={status?.asset_class_mode || 'both'}
+          cryptoEnabled={status?.crypto_trading_enabled || false}
         />
         <AccountSummary account={account} loading={accountLoading} />
       </div>
 
-      {/* Middle Row - Positions, Performance, and Activity */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+      {/* Middle Row - Positions and Trade History side by side */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
         <CurrentPositions
           positions={positions}
           onClosePosition={handleClosePosition}
           loading={positionsLoading}
         />
+        <TradeHistory
+          trades={trades}
+          totalCount={tradesTotal}
+          page={tradesPage}
+          pageSize={10}
+          onPageChange={fetchTrades}
+          loading={tradesLoading}
+        />
+      </div>
+
+      {/* Bottom Row - Performance and Activity */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
         <PerformanceStats metrics={metrics} loading={metricsLoading} />
         <ActivityLog activities={activities} loading={activityLoading} />
       </div>
-
-      {/* Bottom Row - Trade History */}
-      <TradeHistory
-        trades={trades}
-        totalCount={tradesTotal}
-        page={tradesPage}
-        pageSize={10}
-        onPageChange={fetchTrades}
-        loading={tradesLoading}
-      />
 
       {/* AI Intelligence Sidebar */}
       <AIIntelligenceSidebar

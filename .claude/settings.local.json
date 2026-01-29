@@ -88,15 +88,33 @@
       "Bash(timeout 30 sleep:*)",
       "Bash(timeout 45 sleep:*)",
       "Bash(timeout 3 sleep:*)",
-      "Bash(timeout /t 30 /nobreak)"
+      "Bash(timeout /t 30 /nobreak)",
+      "Bash(__NEW_LINE_95474a4e3bd3dc17__ echo \"\")",
+      "Bash(__NEW_LINE_6b87ee12e771b90a__ echo \"\")",
+      "Bash(taskkill /F /FI \"WINDOWTITLE eq uvicorn*\")",
+      "Bash(del /s /q \"C:\\\\Users\\\\jcoci\\\\OneDrive\\\\Desktop\\\\ChartSense\\\\api\\\\*.pyc\")",
+      "Bash(copy /b \"C:\\\\Users\\\\jcoci\\\\OneDrive\\\\Desktop\\\\ChartSense\\\\api\\\\main.py\" +,, \"C:\\\\Users\\\\jcoci\\\\OneDrive\\\\Desktop\\\\ChartSense\\\\api\\\\main.py\")",
+      "Bash(npx tsc:*)",
+      "Bash(npm install)",
+      "Bash(./venv/Scripts/pip install:*)",
+      "Bash(./venv/Scripts/python:*)",
+      "Bash(.venvScriptspip.exe install coinbase-advanced-py --quiet)",
+      "Bash(C:UsersjcociOneDriveDesktopSimpleTradeapivenvScriptspip.exe install coinbase-advanced-py)",
+      "Bash(dir \"C:\\\\Users\\\\jcoci\\\\OneDrive\\\\Desktop\\\\ChartSense\\\\*.bat\" /b)",
+      "Bash(wc:*)",
+      "Bash(while IFS= read -r file)",
+      "Bash(do wc -l \"$file\")",
+      "Bash(npm run lint)",
+      "Bash(cmd /c \"taskkill /F /PID 45732\")",
+      "Bash(cmd /c \"taskkill /F /PID 34792\")",
+      "Bash(cmd /c \"taskkill /F /PID 24344\")",
+      "Bash(cmd /c \"taskkill /F /PID 12916\")",
+      "Bash(cmd /c \"wmic process where ParentProcessId=34792 delete\")",
+      "Bash(cmd /c \"wmic process where ParentProcessId=45732 delete\")",
+      "Bash(cmd /c \"wmic process where ParentProcessId=24344 delete\")",
+      "Bash(cmd /c \"wmic process where ParentProcessId=12916 delete\")",
+      "Bash(cmd /c \"taskkill /F /PID 15936\")"
     ]
   },
-  "hooks": {
-    "SessionStart": [
-      {
-        "type": "command",
-        "command": "rm -f tmpclaude-*-cwd 2>/dev/null; exit 0"
-      }
-    ]
-  }
+  "hooks": {}
 }

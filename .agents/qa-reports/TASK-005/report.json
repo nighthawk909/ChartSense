@@ -1,0 +1,53 @@
+{
+  "task_id": "TASK-005",
+  "title": "Add API key validation on service initialization",
+  "tester": "qa_bot",
+  "timestamp": "2026-01-28T14:20:00Z",
+  "verdict": "passed",
+  "test_results": {
+    "backend": {
+      "ran": true,
+      "passed": 189,
+      "failed": 0,
+      "notes": "All existing tests continue to pass with key validation in place"
+    },
+    "code_review": {
+      "alpaca_service.py": {
+        "validation_present": true,
+        "lines": "45-62",
+        "validates": ["ALPACA_API_KEY", "ALPACA_SECRET_KEY"],
+        "error_type": "AlpacaAuthError",
+        "error_message_quality": "Includes key name, setup instructions, and Alpaca URL"
+      },
+      "alpha_vantage.py": {
+        "validation_present": true,
+        "behavior": "Logs warning if ALPHA_VANTAGE_API_KEY not set, uses demo key",
+        "notes": "Optional key - warns but doesn't crash"
+      }
+    }
+  },
+  "acceptance_criteria": [
+    {
+      "criterion": "Service initialization fails immediately if required keys missing",
+      "status": "passed",
+      "evidence": "AlpacaService.__init__ raises AlpacaAuthError before any other initialization"
+    },
+    {
+      "criterion": "Error message clearly states which key is missing",
+      "status": "passed",
+      "evidence": "Messages include: 'ALPACA_API_KEY is required but not set' and 'ALPACA_SECRET_KEY is required but not set'"
+    },
+    {
+      "criterion": "Optional keys log warning but don't crash",
+      "status": "passed",
+      "evidence": "AlphaVantageService logs warning for missing key but continues with 'demo' key"
+    },
+    {
+      "criterion": "Existing functionality unaffected when keys are present",
+      "status": "passed",
+      "evidence": "All 189 backend tests pass"
+    }
+  ],
+  "issues_found": [],
+  "recommendations": []
+}

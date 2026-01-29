@@ -1,0 +1,69 @@
+{
+  "task_id": "TASK-011",
+  "reviewer": "reviewer_bot",
+  "timestamp": "2026-01-28T12:40:00Z",
+  "verdict": "approved",
+  "files_reviewed": [
+    "api/services/hierarchical_strategy.py"
+  ],
+  "feedback": [
+    {
+      "file": "api/services/hierarchical_strategy.py",
+      "line": 351,
+      "severity": "praise",
+      "category": "logic",
+      "comment": "Excellent implementation - defines both critical_indicators (absolutely required) and important_indicators (needed for reliable scoring) at the start of evaluate_opportunity()"
+    },
+    {
+      "file": "api/services/hierarchical_strategy.py",
+      "line": 355,
+      "severity": "praise",
+      "category": "logic",
+      "comment": "Good early return pattern - checks if indicators dict is None or empty first, preventing AttributeError crashes"
+    },
+    {
+      "file": "api/services/hierarchical_strategy.py",
+      "line": 357,
+      "severity": "praise",
+      "category": "style",
+      "comment": "Consistent [INCOMPLETE_DATA] logging prefix makes it easy to filter logs for debugging incomplete data issues"
+    },
+    {
+      "file": "api/services/hierarchical_strategy.py",
+      "line": 374,
+      "severity": "praise",
+      "category": "security",
+      "comment": "Good validation of current_price - checks type and ensures positive value, preventing division by zero and invalid calculations"
+    },
+    {
+      "file": "api/services/hierarchical_strategy.py",
+      "line": 392,
+      "severity": "praise",
+      "category": "logic",
+      "comment": "Sensible fallback values: ATR defaults to 2% of price (reasonable volatility estimate), RSI defaults to 50 (neutral), MACD defaults to 0 (neutral). These allow scoring to proceed while being conservative."
+    },
+    {
+      "file": "api/services/hierarchical_strategy.py",
+      "line": 492,
+      "severity": "praise",
+      "category": "logic",
+      "comment": "ATR is now guaranteed to have a valid value (either actual or fallback) by the time it's used for stop-loss/target calculations, eliminating potential crashes"
+    },
+    {
+      "file": "api/services/hierarchical_strategy.py",
+      "line": 508,
+      "severity": "suggestion",
+      "category": "logic",
+      "comment": "risk_reward_ratio calculation guards against division by zero (risk > 0 check) - good defensive programming"
+    }
+  ],
+  "overall_comments": "TASK-011 is well implemented. The evaluate_opportunity() method now has comprehensive validation at the start (lines 349-443) that: (1) checks for None/empty indicators dict, (2) validates critical indicators like current_price, (3) logs warnings with [INCOMPLETE_DATA] prefix for easy filtering, (4) returns None for insufficient data, and (5) applies sensible fallbacks for non-critical indicators before scoring proceeds. The fallback values are conservative (neutral RSI=50, neutral MACD=0, ATR=2% of price) which prevents crashes while not artificially inflating scores. This is exactly what the task required.",
+  "tests_passed": "not_run",
+  "test_output": "Tests not executed - recommend adding unit tests for edge cases with missing indicator data in a follow-up task",
+  "acceptance_criteria_review": {
+    "no_crashes_when_indicators_incomplete": "PASS - Early returns on None/empty dict and missing critical indicators",
+    "warnings_logged_for_missing_data": "PASS - Uses [INCOMPLETE_DATA] prefix in log messages",
+    "opportunities_with_insufficient_data_skipped": "PASS - Returns None for missing critical indicators",
+    "scoring_only_proceeds_with_valid_data": "PASS - Validation block (349-443) completes before scoring (line 448+)"
+  }
+}

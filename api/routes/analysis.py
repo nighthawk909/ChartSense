@@ -1,5 +1,6 @@
 """
 Technical analysis routes - indicator calculations
+Includes unified recommendation endpoint
 """
 from fastapi import APIRouter, HTTPException, Query
 from typing import Optional, List, Dict, Any
@@ -13,6 +14,7 @@ from models.indicators import (
     MovingAverageResponse,
     TechnicalSummary,
 )
+from models.stock import TimeInterval
 from datetime import datetime, timedelta
 import logging
 
@@ -32,8 +34,10 @@ async def get_rsi(
 ):
     """Calculate RSI (Relative Strength Index) for a symbol"""
     try:
+        # Convert string interval to TimeInterval enum
+        interval_enum = TimeInterval(interval) if interval in [e.value for e in TimeInterval] else TimeInterval.DAILY
         # Get historical data
-        history = await av_service.get_history(symbol.upper(), interval=interval)
+        history = await av_service.get_history(symbol.upper(), interval=interval_enum)
         if not history:
             raise HTTPException(status_code=404, detail=f"No data found for {symbol}")
 
@@ -146,7 +150,7 @@ async def get_sma(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/summary/{symbol}", response_model=TechnicalSummary)
+@router.get("/summary/{symbol}")
 async def get_technical_summary(symbol: str):
     """Get a summary of all technical indicators for a symbol.
 
@@ -276,14 +280,14 @@ async def get_technical_summary(symbol: str):
         else:
             overall = "Neutral"
 
-        return TechnicalSummary(
-            symbol=symbol.upper(),
-            current_price=current_price,
-            indicators=indicators,
-            overall_signal=overall,
-            bullish_count=bullish_count,
-            bearish_count=bearish_count,
-        )
+        return {
+            "symbol": symbol.upper(),
+            "current_price": current_price,
+            "indicators": indicators,
+            "overall_signal": overall,
+            "bullish_count": bullish_count,
+            "bearish_count": bearish_count,
+        }
     except HTTPException:
         raise
     except Exception as e:
@@ -2247,4 +2251,275 @@ async def get_chart_patterns(
         raise
     except Exception as e:
         logger.error(f"Pattern detection error for {symbol}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/unified/{symbol}")
+async def get_unified_recommendation(
+    symbol: str,
+    interval: str = Query(default="1hour", description="Primary analysis interval")
+):
+    """
+    Get a UNIFIED recommendation that aggregates all analysis sources.
+
+    This endpoint combines:
+    - Triple Screen System (Elder's methodology)
+    - Multi-Timeframe Analysis
+    - Technical Indicators (RSI, MACD, etc.)
+    - Pattern Analysis
+    - AI Sentiment
+
+    Returns ONE clear recommendation instead of conflicting signals.
+
+    The recommendation is weighted:
+    - Triple Screen: 30%
+    - Multi-Timeframe: 25%
+    - Technical: 20%
+    - Patterns: 15%
+    - AI Sentiment: 10%
+    """
+    try:
+        from services.unified_recommendation import get_unified_recommendation_service
+        from services.crypto_service import get_crypto_service
+        from services.pattern_recognition import get_pattern_service
+
+        unified_service = get_unified_recommendation_service()
+        alpaca = get_alpaca_service()
+        pattern_service = get_pattern_service()
+
+        # Detect if crypto
+        is_crypto = symbol.upper().endswith("USD") or "/" in symbol
+        if is_crypto:
+            symbol = symbol.upper().replace("/", "")
+
+        # Get current price and bars
+        if is_crypto:
+            crypto_service = get_crypto_service()
+            quote = await crypto_service.get_crypto_quote(symbol)
+            current_price = quote.get("price") if quote else None
+            bars = await crypto_service.get_crypto_bars(symbol, "1Hour", 200)
+        else:
+            quote = await alpaca.get_quote(symbol.upper())
+            current_price = quote.get("price") if quote else None
+            bars = await alpaca.get_bars(symbol.upper(), timeframe="1Hour", limit=200)
+
+        if not bars or len(bars) < 50:
+            raise HTTPException(status_code=404, detail=f"Insufficient data for {symbol}")
+
+        # Prepare price data
+        opens = [b["open"] for b in bars]
+        highs = [b["high"] for b in bars]
+        lows = [b["low"] for b in bars]
+        closes = [b["close"] for b in bars]
+        volumes = [b.get("volume", 0) for b in bars]
+
+        # 1. Get Triple Screen data
+        triple_screen_data = None
+        try:
+            # Calculate indicators for Triple Screen
+            from services.indicators import IndicatorService
+            ind_service = IndicatorService()
+
+            # Daily (Tide)
+            daily_rsi = ind_service.calculate_rsi(closes[-50:], 14)[-1] if len(closes) >= 50 else 50
+            macd_line, signal_line, histogram = ind_service.calculate_macd(closes[-50:])
+            daily_macd_hist = histogram[-1] if histogram else 0
+
+            # Determine tide direction
+            sma_20 = sum(closes[-20:]) / 20 if len(closes) >= 20 else closes[-1]
+            sma_50 = sum(closes[-50:]) / 50 if len(closes) >= 50 else closes[-1]
+            tide_bullish = closes[-1] > sma_20 > sma_50
+
+            # Wave (hourly) - use recent data
+            hourly_rsi = ind_service.calculate_rsi(closes[-20:], 14)[-1] if len(closes) >= 20 else 50
+            wave_ready = 30 < hourly_rsi < 70
+
+            # Ripple - entry timing
+            ripple_bullish = closes[-1] > closes[-2] if len(closes) >= 2 else False
+
+            # Calculate alignment
+            alignment = 0
+            if tide_bullish:
+                alignment += 33
+            if wave_ready:
+                alignment += 33
+            if ripple_bullish:
+                alignment += 34
+
+            if alignment >= 66:
+                ts_rec = "STRONG BUY" if tide_bullish else "STRONG SELL"
+            elif alignment >= 33:
+                ts_rec = "LEAN BUY" if tide_bullish else "LEAN SELL"
+            else:
+                ts_rec = "HOLD"
+
+            triple_screen_data = {
+                "recommendation": ts_rec,
+                "alignment": alignment,
+                "description": f"Alignment: {alignment}%",
+                "tide": {"direction": "bullish" if tide_bullish else "bearish"},
+                "wave": {"direction": "ready" if wave_ready else "waiting"},
+                "ripple": {"direction": "bullish" if ripple_bullish else "bearish"},
+            }
+        except Exception as e:
+            logger.error(f"Triple screen calculation failed: {e}", exc_info=True)
+
+        # 2. Get Multi-Timeframe data (simplified)
+        multi_timeframe_data = None
+        try:
+            # Calculate basic score - use local variables if available
+            rsi = daily_rsi if triple_screen_data else 50
+            score = 50
+            if rsi < 30:
+                score = 75  # Oversold = buy opportunity
+            elif rsi > 70:
+                score = 25  # Overbought = sell signal
+            else:
+                score = 50 + (50 - rsi) / 2  # Neutral zone
+
+            # Adjust by MACD - only if we have Triple Screen data
+            macd_hist = daily_macd_hist if triple_screen_data else 0
+            if macd_hist > 0:
+                score = min(score + 10, 95)
+            elif macd_hist < 0:
+                score = max(score - 10, 5)
+
+            multi_timeframe_data = {
+                "overall_recommendation": "BUY" if score >= 60 else ("SELL" if score <= 40 else "HOLD"),
+                "overall_score": score,
+                "timeframes": {
+                    "scalp": {"recommendation": "HOLD"},
+                    "intraday": {"recommendation": "BUY" if score >= 55 else "HOLD"},
+                    "swing": {"recommendation": "BUY" if score >= 60 else "HOLD"},
+                    "longterm": {"recommendation": "BUY" if score >= 65 else "HOLD"},
+                }
+            }
+        except Exception as e:
+            logger.warning(f"Multi-timeframe calculation failed: {e}")
+
+        # 3. Get Technical data
+        technical_data = None
+        try:
+            # Use values from Triple Screen if available, otherwise calculate fresh
+            from services.indicators import IndicatorService
+            ind_service = IndicatorService()
+
+            rsi_val = daily_rsi if triple_screen_data else (
+                ind_service.calculate_rsi(closes[-50:], 14)[-1] if len(closes) >= 50 else 50
+            )
+            macd_result = ind_service.calculate_macd(closes[-50:]) if len(closes) >= 50 else ([], [], [])
+            macd_hist_val = macd_result[2][-1] if macd_result[2] else 0  # histogram is index 2
+            sma_20_val = sum(closes[-20:]) / 20 if len(closes) >= 20 else closes[-1]
+
+            signals = []
+            if rsi_val < 30:
+                signals.append("RSI oversold - bullish")
+            elif rsi_val > 70:
+                signals.append("RSI overbought - bearish")
+            else:
+                signals.append(f"RSI neutral ({rsi_val:.1f})")
+
+            if macd_hist_val > 0:
+                signals.append("MACD bullish")
+            else:
+                signals.append("MACD bearish")
+
+            if closes[-1] > sma_20_val:
+                signals.append("Price above SMA20 - bullish")
+            else:
+                signals.append("Price below SMA20 - bearish")
+
+            tech_score = multi_timeframe_data.get("overall_score", 50) if multi_timeframe_data else 50
+            technical_data = {
+                "score": tech_score,
+                "recommendation": "BUY" if tech_score >= 60 else ("SELL" if tech_score <= 40 else "HOLD"),
+                "signals": signals,
+                "indicators": {"rsi": rsi_val}
+            }
+        except Exception as e:
+            logger.error(f"Technical calculation failed: {e}", exc_info=True)
+
+        # 4. Get Pattern data
+        pattern_data = None
+        try:
+            analysis = pattern_service.analyze(opens, highs, lows, closes, volumes, timeframe=interval)
+            patterns = analysis.get("patterns", [])
+
+            formatted_patterns = []
+            for p in patterns:
+                formatted_patterns.append({
+                    "type": p.get("type", "unknown"),
+                    "direction": p.get("direction", "neutral"),
+                    "confidence": p.get("confidence", 0),
+                    "stop_loss": p.get("stop_loss"),
+                    "price_target": p.get("price_target"),
+                })
+
+            pattern_data = {
+                "patterns": formatted_patterns,
+                "bullish_score": analysis.get("bullish_score", 0),
+                "bearish_score": analysis.get("bearish_score", 0),
+                "bias": analysis.get("bias", "neutral"),
+            }
+        except Exception as e:
+            logger.warning(f"Pattern analysis failed: {e}")
+
+        # 5. AI Analysis (placeholder - would call actual AI service)
+        ai_analysis_data = None
+        # Could integrate with OpenAI here if configured
+
+        # Get unified recommendation
+        unified = unified_service.aggregate_signals(
+            symbol=symbol,
+            triple_screen_data=triple_screen_data,
+            multi_timeframe_data=multi_timeframe_data,
+            technical_data=technical_data,
+            pattern_data=pattern_data,
+            ai_analysis_data=ai_analysis_data,
+            current_price=current_price,
+        )
+
+        # Format response
+        return {
+            "symbol": symbol.upper(),
+            "current_price": current_price,
+            "timestamp": datetime.now().isoformat(),
+
+            # THE UNIFIED RECOMMENDATION
+            "final_recommendation": unified.final_recommendation,
+            "confidence": round(unified.confidence, 1),
+            "composite_score": round(unified.composite_score, 1),
+            "risk_level": unified.risk_level,
+
+            # Actionable summary
+            "action_summary": unified.action_summary,
+            "reasoning": unified.reasoning,
+
+            # Trade levels
+            "suggested_entry": unified.suggested_entry,
+            "suggested_stop_loss": unified.suggested_stop_loss,
+            "suggested_target": unified.suggested_target,
+
+            # Source breakdown - uses keys expected by frontend SourceBreakdown interface
+            "sources": [
+                {
+                    "source": s.source.lower().replace(" ", "_"),  # e.g., "triple_screen"
+                    "signal": s.recommendation,  # Frontend expects "signal" not "recommendation"
+                    "score": round(s.score, 1),
+                    "weight": s.weight,  # Numeric weight (0-1) for frontend
+                    "contribution": round(s.score * s.weight, 1),
+                    "details": f"{', '.join(s.bullish_signals[:2])} | {', '.join(s.bearish_signals[:2])}" if s.bullish_signals or s.bearish_signals else None,
+                }
+                for s in unified.sources
+            ],
+
+            # Conflicts (if any)
+            "conflicts": unified.conflicts,
+            "has_conflicts": len(unified.conflicts) > 0,
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Unified recommendation error for {symbol}: {e}")
         raise HTTPException(status_code=500, detail=str(e))

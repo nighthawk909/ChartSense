@@ -249,36 +249,53 @@ class BacktestEngine:
         """Check for entry signals based on strategy"""
         current_price = closes[i]
 
+        # Helper to safely get indicator value (handles None and index bounds)
+        def safe_get(arr, idx):
+            if arr is None or idx >= len(arr):
+                return None
+            return arr[idx]
+
         if strategy == StrategyType.RSI_OVERSOLD:
             threshold = params.get("rsi_threshold", 30)
-            if rsi and rsi[i] < threshold:
+            rsi_val = safe_get(rsi, i)
+            if rsi_val is not None and rsi_val < threshold:
                 return True, "long"
-            if rsi and rsi[i] > (100 - threshold):
+            if rsi_val is not None and rsi_val > (100 - threshold):
                 return True, "short"
 
         elif strategy == StrategyType.MACD_CROSSOVER:
-            if macd_line and signal_line:
+            macd_curr = safe_get(macd_line, i)
+            macd_prev = safe_get(macd_line, i-1)
+            sig_curr = safe_get(signal_line, i)
+            sig_prev = safe_get(signal_line, i-1)
+            if all(v is not None for v in [macd_curr, macd_prev, sig_curr, sig_prev]):
                 # Bullish crossover
-                if macd_line[i] > signal_line[i] and macd_line[i-1] <= signal_line[i-1]:
+                if macd_curr > sig_curr and macd_prev <= sig_prev:
                     return True, "long"
                 # Bearish crossover
-                if macd_line[i] < signal_line[i] and macd_line[i-1] >= signal_line[i-1]:
+                if macd_curr < sig_curr and macd_prev >= sig_prev:
                     return True, "short"
 
         elif strategy == StrategyType.GOLDEN_CROSS:
-            if sma_50 and sma_200:
+            sma50_curr = safe_get(sma_50, i)
+            sma50_prev = safe_get(sma_50, i-1)
+            sma200_curr = safe_get(sma_200, i)
+            sma200_prev = safe_get(sma_200, i-1)
+            if all(v is not None for v in [sma50_curr, sma50_prev, sma200_curr, sma200_prev]):
                 # Golden cross
-                if sma_50[i] > sma_200[i] and sma_50[i-1] <= sma_200[i-1]:
+                if sma50_curr > sma200_curr and sma50_prev <= sma200_prev:
                     return True, "long"
                 # Death cross
-                if sma_50[i] < sma_200[i] and sma_50[i-1] >= sma_200[i-1]:
+                if sma50_curr < sma200_curr and sma50_prev >= sma200_prev:
                     return True, "short"
 
         elif strategy == StrategyType.BOLLINGER_BOUNCE:
-            if lower_bb and upper_bb:
-                if current_price <= lower_bb[i]:
+            lower = safe_get(lower_bb, i)
+            upper = safe_get(upper_bb, i)
+            if lower is not None and upper is not None:
+                if current_price <= lower:
                     return True, "long"
-                if current_price >= upper_bb[i]:
+                if current_price >= upper:
                     return True, "short"
 
         elif strategy == StrategyType.MOMENTUM:
@@ -291,8 +308,9 @@ class BacktestEngine:
                     return True, "short"
 
         elif strategy == StrategyType.MEAN_REVERSION:
-            if sma_20:
-                deviation = (current_price - sma_20[i]) / sma_20[i]
+            sma20_val = safe_get(sma_20, i)
+            if sma20_val is not None:
+                deviation = (current_price - sma20_val) / sma20_val
                 if deviation < -0.03:  # 3% below MA
                     return True, "long"
                 elif deviation > 0.03:  # 3% above MA
@@ -309,32 +327,44 @@ class BacktestEngine:
         closes, params
     ) -> tuple[bool, str]:
         """Check for exit signals based on strategy"""
+        # Helper to safely get indicator value (handles None and index bounds)
+        def safe_get(arr, idx):
+            if arr is None or idx >= len(arr):
+                return None
+            return arr[idx]
+
         if strategy == StrategyType.RSI_OVERSOLD:
-            if side == "long" and rsi and rsi[i] > 70:
+            rsi_val = safe_get(rsi, i)
+            if side == "long" and rsi_val is not None and rsi_val > 70:
                 return True, "rsi_overbought"
-            if side == "short" and rsi and rsi[i] < 30:
+            if side == "short" and rsi_val is not None and rsi_val < 30:
                 return True, "rsi_oversold"
 
         elif strategy == StrategyType.MACD_CROSSOVER:
-            if macd_line and signal_line:
-                if side == "long" and macd_line[i] < signal_line[i]:
+            macd_val = safe_get(macd_line, i)
+            sig_val = safe_get(signal_line, i)
+            if macd_val is not None and sig_val is not None:
+                if side == "long" and macd_val < sig_val:
                     return True, "macd_bearish"
-                if side == "short" and macd_line[i] > signal_line[i]:
+                if side == "short" and macd_val > sig_val:
                     return True, "macd_bullish"
 
         elif strategy == StrategyType.BOLLINGER_BOUNCE:
             current_price = closes[i]
-            if side == "long" and upper_bb and current_price >= upper_bb[i]:
+            upper = safe_get(upper_bb, i)
+            lower = safe_get(lower_bb, i)
+            if side == "long" and upper is not None and current_price >= upper:
                 return True, "upper_band"
-            if side == "short" and lower_bb and current_price <= lower_bb[i]:
+            if side == "short" and lower is not None and current_price <= lower:
                 return True, "lower_band"
 
         elif strategy == StrategyType.MEAN_REVERSION:
-            if sma_20:
+            sma20_val = safe_get(sma_20, i)
+            if sma20_val is not None:
                 current_price = closes[i]
-                if side == "long" and current_price >= sma_20[i]:
+                if side == "long" and current_price >= sma20_val:
                     return True, "mean_reached"
-                if side == "short" and current_price <= sma_20[i]:
+                if side == "short" and current_price <= sma20_val:
                     return True, "mean_reached"
 
         return False, ""

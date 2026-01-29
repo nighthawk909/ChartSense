@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
-import { TrendingUp, TrendingDown, RefreshCw, AlertCircle, Activity, DollarSign, Clock, BarChart3 } from 'lucide-react'
+import { useNavigate } from 'react-router-dom'
+import { TrendingUp, TrendingDown, RefreshCw, AlertCircle, Activity, DollarSign, Clock, BarChart3, ExternalLink } from 'lucide-react'
 import CryptoChart from '../components/CryptoChart'
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
@@ -35,6 +36,7 @@ const POPULAR_CRYPTOS = [
 ]
 
 export default function Crypto() {
+  const navigate = useNavigate()
   const [quotes, setQuotes] = useState<Record<string, CryptoQuote>>({})
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
@@ -43,6 +45,13 @@ export default function Crypto() {
   const [error, setError] = useState<string | null>(null)
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null)
   const [selectedTimeframe, setSelectedTimeframe] = useState<CryptoTimeframe>('1Hour')
+
+  // Navigate to the detailed analysis page for a crypto
+  const handleViewDetails = (symbol: string) => {
+    // Convert BTC/USD to BTCUSD for URL
+    const urlSymbol = symbol.replace('/', '')
+    navigate(`/stock/${urlSymbol}`)
+  }
 
   const timeframes: { value: CryptoTimeframe; label: string }[] = [
     { value: '1Min', label: '1m' },
@@ -200,49 +209,63 @@ export default function Crypto() {
           const isSelected = selectedCrypto === crypto.symbol
 
           return (
-            <button
+            <div
               key={crypto.symbol}
-              onClick={() => setSelectedCrypto(isSelected ? null : crypto.symbol)}
-              className={`bg-slate-800 rounded-lg p-4 border transition-all text-left ${
+              className={`bg-slate-800 rounded-lg p-4 border transition-all ${
                 isSelected ? 'border-blue-500 ring-2 ring-blue-500/20' : 'border-slate-700 hover:border-slate-600'
               }`}
             >
-              <div className="flex items-center justify-between mb-3">
-                <div className="flex items-center gap-2">
-                  <span className="text-2xl">{crypto.icon}</span>
-                  <div>
-                    <p className="font-semibold">{crypto.name}</p>
-                    <p className="text-xs text-slate-400">{crypto.symbol}</p>
+              {/* Clickable header for selecting */}
+              <button
+                onClick={() => setSelectedCrypto(isSelected ? null : crypto.symbol)}
+                className="w-full text-left"
+              >
+                <div className="flex items-center justify-between mb-3">
+                  <div className="flex items-center gap-2">
+                    <span className="text-2xl">{crypto.icon}</span>
+                    <div>
+                      <p className="font-semibold">{crypto.name}</p>
+                      <p className="text-xs text-slate-400">{crypto.symbol}</p>
+                    </div>
                   </div>
+                  {quote && (
+                    <div className={`flex items-center gap-1 text-sm ${
+                      quote.change_percent_24h >= 0 ? 'text-green-500' : 'text-red-500'
+                    }`}>
+                      {quote.change_percent_24h >= 0 ? (
+                        <TrendingUp className="h-4 w-4" />
+                      ) : (
+                        <TrendingDown className="h-4 w-4" />
+                      )}
+                      {quote.change_percent_24h >= 0 ? '+' : ''}
+                      {quote.change_percent_24h?.toFixed(2)}%
+                    </div>
+                  )}
                 </div>
-                {quote && (
-                  <div className={`flex items-center gap-1 text-sm ${
-                    quote.change_percent_24h >= 0 ? 'text-green-500' : 'text-red-500'
-                  }`}>
-                    {quote.change_percent_24h >= 0 ? (
-                      <TrendingUp className="h-4 w-4" />
-                    ) : (
-                      <TrendingDown className="h-4 w-4" />
-                    )}
-                    {quote.change_percent_24h >= 0 ? '+' : ''}
-                    {quote.change_percent_24h?.toFixed(2)}%
+
+                {quote ? (
+                  <div>
+                    <p className="text-2xl font-bold">${formatPrice(quote.price)}</p>
+                    <p className={`text-sm ${quote.change_24h >= 0 ? 'text-green-500' : 'text-red-500'}`}>
+                      {quote.change_24h >= 0 ? '+' : ''}${formatPrice(Math.abs(quote.change_24h))} today
+                    </p>
+                  </div>
+                ) : (
+                  <div className="h-14 flex items-center justify-center">
+                    <RefreshCw className="h-5 w-5 animate-spin text-slate-500" />
                   </div>
                 )}
-              </div>
+              </button>
 
-              {quote ? (
-                <div>
-                  <p className="text-2xl font-bold">${formatPrice(quote.price)}</p>
-                  <p className={`text-sm ${quote.change_24h >= 0 ? 'text-green-500' : 'text-red-500'}`}>
-                    {quote.change_24h >= 0 ? '+' : ''}${formatPrice(Math.abs(quote.change_24h))} today
-                  </p>
-                </div>
-              ) : (
-                <div className="h-14 flex items-center justify-center">
-                  <RefreshCw className="h-5 w-5 animate-spin text-slate-500" />
-                </div>
-              )}
-            </button>
+              {/* View Details button */}
+              <button
+                onClick={() => handleViewDetails(crypto.symbol)}
+                className="mt-3 w-full flex items-center justify-center gap-2 px-3 py-2 bg-blue-600 hover:bg-blue-500 text-white text-sm rounded-lg transition-colors"
+              >
+                <ExternalLink className="h-4 w-4" />
+                View Full Analysis
+              </button>
+            </div>
           )
         })}
       </div>

@@ -1,0 +1,82 @@
+{
+  "task_id": "TASK-003",
+  "title": "Add unit tests for risk manager",
+  "tester": "qa_bot",
+  "timestamp": "2026-01-28T14:12:00Z",
+  "verdict": "passed",
+  "test_results": {
+    "backend": {
+      "ran": true,
+      "file": "api/tests/unit/test_risk_manager.py",
+      "passed": 79,
+      "failed": 0,
+      "skipped": 0,
+      "duration_seconds": 0.08,
+      "assertion_count": 143,
+      "warnings": 1,
+      "warning_details": "PydanticDeprecatedSince20 - unrelated to test code"
+    }
+  },
+  "acceptance_criteria": [
+    {
+      "criterion": "Position sizing matches expected values",
+      "status": "passed",
+      "evidence": "TestPositionSizeCalculation class (8 tests) validates basic calculations, risk limits, existing positions, account sizes, expensive stocks, penny stocks"
+    },
+    {
+      "criterion": "Risk limits properly enforced in all scenarios",
+      "status": "passed",
+      "evidence": "TestCanOpenPosition class (6 tests) validates max positions, buying power, daily loss limit, max exposure, position size constraints"
+    },
+    {
+      "criterion": "Daily loss tracking resets correctly",
+      "status": "passed",
+      "evidence": "TestDailyLossTracking class tests record_trade_pnl, daily_stats, and loss limit triggering"
+    },
+    {
+      "criterion": "40+ assertions in test file",
+      "status": "passed",
+      "evidence": "143 assert statements in test_risk_manager.py (requirement: 40+)"
+    },
+    {
+      "criterion": "All tests pass",
+      "status": "passed",
+      "evidence": "79 passed, 0 failed in 0.08s"
+    }
+  ],
+  "test_coverage": {
+    "test_classes": [
+      "TestPositionSizeCalculation - 8 tests",
+      "TestPositionSizeEdgeCases - 7 tests",
+      "TestStopLossCalculation - 8 tests",
+      "TestCanOpenPosition - 6 tests",
+      "TestDailyLossTracking - 4 tests",
+      "TestTrailingStop - 3 tests",
+      "TestParameterUpdates - 7 tests",
+      "TestATRPositionSizing - 5 tests",
+      "TestDrawdownCircuitBreaker - 7 tests",
+      "TestSectorExposureManager - 7 tests",
+      "TestCorrelationRiskManager - 8 tests",
+      "TestRiskManagerIntegration - 3 tests"
+    ],
+    "edge_cases_tested": [
+      "Zero equity",
+      "Negative equity",
+      "Zero entry price",
+      "Negative entry price",
+      "Stop loss equals entry",
+      "Stop loss above entry (long)",
+      "Minimum one share",
+      "Zero/negative ATR"
+    ],
+    "advanced_features_tested": [
+      "ATR-based position sizing",
+      "Drawdown circuit breaker (daily/weekly/total)",
+      "Sector exposure management",
+      "Correlation risk management",
+      "Diversification scoring"
+    ]
+  },
+  "issues_found": [],
+  "recommendations": []
+}

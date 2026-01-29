@@ -578,17 +578,25 @@ async def get_bot_activity():
     Get recent bot activity log.
 
     Returns recent actions, decisions, and events from the trading bot.
+    Now includes crypto scanning activity alongside stock info.
     """
     bot = get_trading_bot()
-
-    # Get activity log if available
-    activity_log = getattr(bot, 'activity_log', [])
 
     # Build activity from available data
     activities = []
 
-    # Add current cycle as activity
+    # Get full status for comprehensive info
     status = bot.get_status()
+
+    # Add state info first
+    activities.append({
+        "timestamp": None,
+        "type": "state",
+        "message": f"Bot is {status['state']}",
+        "level": "info" if status["state"] in ["RUNNING", "PAUSED"] else "warning" if status["state"] == "STOPPED" else "error"
+    })
+
+    # Add current cycle as activity
     if status["current_cycle"]:
         activities.append({
             "timestamp": status["last_trade_time"] or None,
@@ -597,32 +605,136 @@ async def get_bot_activity():
             "level": "info"
         })
 
-    # Add state info
+    # Asset class mode info
+    asset_mode = status.get("asset_class_mode", "both")
+    mode_labels = {"crypto": "Crypto Only", "stocks": "Stocks Only", "both": "Hybrid (Stocks + Crypto)"}
     activities.append({
         "timestamp": None,
-        "type": "state",
-        "message": f"Bot is {status['state']}",
-        "level": "info" if status["state"] in ["RUNNING", "PAUSED"] else "warning" if status["state"] == "STOPPED" else "error"
+        "type": "mode",
+        "message": f"Trading Mode: {mode_labels.get(asset_mode, asset_mode)}",
+        "level": "info"
     })
 
-    # Add market hours check
-    try:
-        market_open = await bot.alpaca.is_market_open()
-        activities.append({
-            "timestamp": None,
-            "type": "market",
-            "message": f"Stock market is {'OPEN' if market_open else 'CLOSED'}",
-            "level": "info" if market_open else "warning"
-        })
-    except:
-        pass
+    # CRYPTO SCAN PROGRESS - Show when crypto is enabled
+    crypto_progress = status.get("crypto_scan_progress", {})
+    if crypto_progress and (asset_mode in ["crypto", "both"]):
+        scan_status = crypto_progress.get("scan_status", "idle")
+        total = crypto_progress.get("total", 0)
+        scanned = crypto_progress.get("scanned", 0)
+        current = crypto_progress.get("current_symbol")
+        signals = crypto_progress.get("signals_found", 0)
+        next_scan = crypto_progress.get("next_scan_in_seconds", 0)
+        last_scan = crypto_progress.get("last_scan_completed")
 
-    # Add watching symbols
-    if status["active_symbols"]:
+        if scan_status == "scanning" and current:
+            activities.append({
+                "timestamp": None,
+                "type": "crypto_scan",
+                "message": f"🔍 Crypto: Scanning {current} ({scanned}/{total})",
+                "level": "info"
+            })
+        elif scan_status == "found_opportunity":
+            best = crypto_progress.get("best_opportunity", {})
+            if best:
+                activities.append({
+                    "timestamp": None,
+                    "type": "crypto_signal",
+                    "message": f"✅ Crypto: Found {best.get('symbol')} ({best.get('confidence', 0):.0f}% confidence)",
+                    "level": "success"
+                })
+        elif scan_status == "exhausted":
+            activities.append({
+                "timestamp": last_scan,
+                "type": "crypto_scan",
+                "message": f"Crypto: Scanned {total} symbols, {signals} signals. Next scan in {next_scan}s",
+                "level": "info"
+            })
+        else:
+            # Idle or waiting
+            if next_scan > 0:
+                activities.append({
+                    "timestamp": last_scan,
+                    "type": "crypto_scan",
+                    "message": f"Crypto: Idle, next scan in {next_scan}s",
+                    "level": "info"
+                })
+            else:
+                activities.append({
+                    "timestamp": None,
+                    "type": "crypto_scan",
+                    "message": f"Crypto: {crypto_progress.get('scan_summary', 'Ready')}",
+                    "level": "info"
+                })
+
+    # STOCK SCAN PROGRESS - Show when stocks are enabled
+    stock_progress = status.get("stock_scan_progress", {})
+    if stock_progress and (asset_mode in ["stocks", "both"]):
+        scan_status = stock_progress.get("scan_status", "idle")
+        market_status = stock_progress.get("market_status", "unknown")
+        total = stock_progress.get("total", 0)
+        scanned = stock_progress.get("scanned", 0)
+        current = stock_progress.get("current_symbol")
+        signals = stock_progress.get("signals_found", 0)
+
+        if scan_status == "market_closed":
+            activities.append({
+                "timestamp": None,
+                "type": "market",
+                "message": f"Stock market is CLOSED ({market_status})",
+                "level": "warning"
+            })
+        elif scan_status == "scanning" and current:
+            activities.append({
+                "timestamp": None,
+                "type": "stock_scan",
+                "message": f"🔍 Stocks: Scanning {current} ({scanned}/{total})",
+                "level": "info"
+            })
+        elif scan_status == "found_opportunity":
+            best = stock_progress.get("best_opportunity", {})
+            if best:
+                activities.append({
+                    "timestamp": None,
+                    "type": "stock_signal",
+                    "message": f"✅ Stocks: Found {best.get('symbol')} ({best.get('confidence', 0):.0f}% confidence)",
+                    "level": "success"
+                })
+        elif scan_status == "disabled":
+            activities.append({
+                "timestamp": None,
+                "type": "stock_scan",
+                "message": "Stock scanning disabled",
+                "level": "warning"
+            })
+        else:
+            # Show summary
+            summary = stock_progress.get("scan_summary", "")
+            if summary:
+                activities.append({
+                    "timestamp": None,
+                    "type": "stock_scan",
+                    "message": f"Stocks: {summary}",
+                    "level": "info"
+                })
+
+    # Positions info
+    crypto_positions = status.get("crypto_positions", 0)
+    crypto_max = status.get("crypto_max_positions", 5)
+    if crypto_positions > 0:
         activities.append({
             "timestamp": None,
-            "type": "symbols",
-            "message": f"Watching: {', '.join(status['active_symbols'][:5])}{'...' if len(status['active_symbols']) > 5 else ''}",
+            "type": "positions",
+            "message": f"Holding {crypto_positions}/{crypto_max} crypto positions",
+            "level": "info"
+        })
+
+    # Total scans today
+    total_scans = status.get("total_scans_today", 0)
+    if total_scans > 0:
+        activities.append({
+            "timestamp": None,
+            "type": "scans",
+            "message": f"Total scans today: {total_scans}",
             "level": "info"
         })
 
@@ -642,7 +754,7 @@ async def get_bot_activity():
         activities.append({
             "timestamp": None,
             "type": "uptime",
-            "message": f"Running for {hours}h {minutes}m",
+            "message": f"Uptime: {hours}h {minutes}m",
             "level": "info"
         })
 
@@ -735,6 +847,56 @@ async def get_execution_errors():
             for a in recent_failures
         ],
         "diagnosis": diagnosis,
+    }
+
+
+@router.get("/ai-status")
+async def get_ai_status():
+    """
+    Check AI advisor status and connectivity.
+
+    Returns whether the AI is enabled, model info, and tests connectivity.
+    """
+    from services.ai_advisor import get_ai_advisor
+    import os
+
+    advisor = get_ai_advisor()
+
+    # Check API key
+    api_key = os.getenv("OPENAI_API_KEY", "")
+    key_configured = bool(api_key and api_key.startswith("sk-"))
+    key_preview = f"{api_key[:12]}...{api_key[-4:]}" if len(api_key) > 20 else "Not set"
+
+    # Test connectivity if enabled
+    connectivity_test = None
+    if advisor.enabled:
+        try:
+            client = advisor._get_client()
+            if client:
+                # Quick test with a tiny request
+                response = client.chat.completions.create(
+                    model="gpt-4o-mini",  # Use cheaper model for test
+                    messages=[{"role": "user", "content": "Say 'OK'"}],
+                    max_tokens=5,
+                )
+                connectivity_test = {
+                    "success": True,
+                    "response": response.choices[0].message.content,
+                    "model_used": "gpt-4o-mini (test)",
+                }
+        except Exception as e:
+            connectivity_test = {
+                "success": False,
+                "error": str(e)[:200],
+            }
+
+    return {
+        "enabled": advisor.enabled,
+        "model": advisor.model,
+        "api_key_configured": key_configured,
+        "api_key_preview": key_preview,
+        "connectivity_test": connectivity_test,
+        "status": "operational" if (advisor.enabled and connectivity_test and connectivity_test.get("success")) else "degraded" if advisor.enabled else "disabled",
     }
 
 
@@ -1169,8 +1331,10 @@ async def execute_opportunity(
             # Use crypto service for crypto symbols
             from services.crypto_service import get_crypto_service
             crypto = get_crypto_service()
-            price_data = await crypto.get_current_price(symbol)
-            current_price = price_data.get("price", 0)
+            # get_current_price returns Optional[float], not a dict
+            current_price = await crypto.get_current_price(symbol)
+            if current_price is None:
+                current_price = 0
         else:
             # Use alpaca for stocks
             quote = await bot.alpaca.get_quote(symbol)
@@ -1206,18 +1370,17 @@ async def execute_opportunity(
             if is_crypto:
                 from services.crypto_service import get_crypto_service
                 crypto = get_crypto_service()
-                result = await crypto.place_order(
+                result = await crypto.place_crypto_order(
                     symbol=symbol,
                     side="buy",
                     qty=quantity,
                     order_type="market",
                 )
             else:
-                result = await bot.alpaca.place_order(
+                result = await bot.alpaca.submit_market_order(
                     symbol=symbol,
-                    qty=quantity,
+                    quantity=quantity,
                     side="buy",
-                    order_type="market",
                     time_in_force="day",
                 )
 
@@ -1389,8 +1552,10 @@ async def auto_trade_opportunities(
             if is_crypto:
                 from services.crypto_service import get_crypto_service
                 crypto = get_crypto_service()
-                price_data = await crypto.get_current_price(symbol)
-                current_price = price_data.get("price", 0)
+                # get_current_price returns Optional[float], not a dict
+                current_price = await crypto.get_current_price(symbol)
+                if current_price is None:
+                    current_price = 0
             else:
                 quote = await bot.alpaca.get_quote(symbol)
                 current_price = quote.get("price", 0)
@@ -1413,18 +1578,17 @@ async def auto_trade_opportunities(
             if is_crypto:
                 from services.crypto_service import get_crypto_service
                 crypto = get_crypto_service()
-                result = await crypto.place_order(
+                result = await crypto.place_crypto_order(
                     symbol=symbol,
                     side="buy",
                     qty=quantity,
                     order_type="market",
                 )
             else:
-                result = await bot.alpaca.place_order(
+                result = await bot.alpaca.submit_market_order(
                     symbol=symbol,
-                    qty=quantity,
+                    quantity=quantity,
                     side="buy",
-                    order_type="market",
                     time_in_force="day",
                 )
 
@@ -1560,4 +1724,240 @@ async def remove_queued_trade(symbol: str):
         "success": True,
         "message": f"Removed {symbol} from queue",
         "queue_length": len(bot._queued_trades),
+    }
+
+
+# ===== POSITION RESCAN ENDPOINTS =====
+
+@router.post("/positions/rescan/{symbol}")
+async def rescan_position(symbol: str):
+    """
+    Rescan a single position to generate current market analysis and recommendation.
+
+    This is useful for positions that were opened before the insight tracking system
+    was implemented, or positions opened manually.
+
+    Returns:
+    - Current technical indicators
+    - Recommended action (HOLD, SELL, ADD)
+    - Updated stop loss / take profit levels
+    - Confidence score
+
+    Endpoint: POST /api/bot/positions/rescan/BCHUSD
+    """
+    from services.crypto_service import get_crypto_service
+    from services.alpaca_service import get_alpaca_service
+    import logging
+
+    logger = logging.getLogger(__name__)
+    symbol_upper = symbol.upper()
+    bot = get_trading_bot()
+
+    # Determine if crypto or stock
+    is_crypto = any(symbol_upper.endswith(suffix) for suffix in ['USD', 'USDT', 'USDC']) or '/' in symbol_upper
+
+    try:
+        if is_crypto:
+            crypto_service = get_crypto_service()
+            # Normalize symbol
+            normalized_symbol = symbol_upper
+            if '/' not in symbol_upper:
+                for suffix in ['USDT', 'USDC', 'USD']:
+                    if symbol_upper.endswith(suffix):
+                        base = symbol_upper[:-len(suffix)]
+                        normalized_symbol = f"{base}/{suffix}"
+                        break
+
+            # Get current analysis
+            analysis = await crypto_service.analyze_crypto(normalized_symbol, "1Hour")
+
+            # Get current position info
+            positions = await crypto_service.get_crypto_positions()
+            position = next((p for p in positions if p.get("symbol", "").replace("/", "") == symbol_upper.replace("/", "")), None)
+
+            if not position:
+                raise HTTPException(status_code=404, detail=f"Position {symbol} not found")
+
+            current_price = position.get("current_price", 0)
+            entry_price = position.get("avg_entry_price", position.get("entry_price", current_price))
+            unrealized_pnl_pct = ((current_price - entry_price) / entry_price * 100) if entry_price > 0 else 0
+
+        else:
+            # Stock position
+            alpaca = get_alpaca_service()
+            positions = await alpaca.get_positions()
+            position = next((p for p in positions if p.get("symbol") == symbol_upper), None)
+
+            if not position:
+                raise HTTPException(status_code=404, detail=f"Position {symbol} not found")
+
+            current_price = float(position.get("current_price", 0))
+            entry_price = float(position.get("avg_entry_price", current_price))
+            unrealized_pnl_pct = float(position.get("unrealized_plpc", 0)) * 100
+
+            # Get analysis via the hierarchical strategy
+            analysis = {"signal": "NEUTRAL", "confidence": 50, "indicators": {}}
+
+            if bot.smart_scanner:
+                try:
+                    opp = await bot.smart_scanner.evaluate_symbol(symbol_upper, is_crypto=False)
+                    if opp:
+                        analysis = {
+                            "signal": opp.direction,
+                            "confidence": opp.overall_score,
+                            "indicators": {
+                                "trend_score": opp.trend_score,
+                                "momentum_score": opp.momentum_score,
+                                "pattern_score": opp.pattern_score,
+                                "patterns": opp.patterns_detected,
+                            },
+                            "entry_price": opp.entry_price,
+                            "stop_loss": opp.stop_loss,
+                            "target": opp.target_1,
+                        }
+                except Exception as e:
+                    logger.warning(f"Smart scanner evaluation failed for {symbol}: {e}")
+
+        # Generate recommendation based on current state
+        signal = analysis.get("signal", "NEUTRAL")
+        confidence = analysis.get("confidence", 50)
+        indicators = analysis.get("indicators", {})
+
+        # Determine recommended action
+        if unrealized_pnl_pct >= 5:
+            if confidence < 50 or signal == "SELL":
+                action = "TAKE_PROFIT"
+                action_reason = f"Position up {unrealized_pnl_pct:.1f}% with weakening momentum. Consider taking profit."
+            else:
+                action = "HOLD"
+                action_reason = f"Position up {unrealized_pnl_pct:.1f}% with continued bullish signals. Hold for further gains."
+        elif unrealized_pnl_pct <= -5:
+            if signal == "SELL" or confidence < 40:
+                action = "CUT_LOSS"
+                action_reason = f"Position down {abs(unrealized_pnl_pct):.1f}% with bearish signals. Consider cutting losses."
+            else:
+                action = "HOLD"
+                action_reason = f"Position down {abs(unrealized_pnl_pct):.1f}% but showing recovery potential. Monitor closely."
+        elif signal == "BUY" and confidence >= 70:
+            action = "ADD"
+            action_reason = f"Strong bullish signal ({confidence:.0f}%). Consider adding to position."
+        elif signal == "SELL" and confidence >= 70:
+            action = "SELL"
+            action_reason = f"Strong bearish signal ({confidence:.0f}%). Consider exiting position."
+        else:
+            action = "HOLD"
+            action_reason = f"No strong directional signal. Continue holding and monitoring."
+
+        # Calculate suggested stop loss and take profit
+        atr_estimate = current_price * 0.02  # Approximate 2% ATR
+        suggested_stop = current_price - (atr_estimate * 2)  # 2x ATR below
+        suggested_target = current_price + (atr_estimate * 3)  # 3x ATR above
+
+        return {
+            "symbol": symbol_upper,
+            "is_crypto": is_crypto,
+            "current_price": current_price,
+            "entry_price": entry_price,
+            "unrealized_pnl_pct": unrealized_pnl_pct,
+            "analysis": {
+                "signal": signal,
+                "confidence": confidence,
+                "indicators": indicators,
+            },
+            "recommendation": {
+                "action": action,
+                "reason": action_reason,
+                "suggested_stop_loss": round(suggested_stop, 2),
+                "suggested_take_profit": round(suggested_target, 2),
+            },
+            "rescanned_at": datetime.now().isoformat(),
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"[RESCAN] Failed to rescan {symbol}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/positions/rescan-all")
+async def rescan_all_positions():
+    """
+    Rescan all current positions to generate updated recommendations.
+
+    Useful for:
+    - Getting insights on legacy positions
+    - Refreshing stop loss / take profit levels
+    - Getting batch recommendations on all holdings
+
+    Endpoint: POST /api/bot/positions/rescan-all
+    """
+    from services.crypto_service import get_crypto_service
+    from services.alpaca_service import get_alpaca_service
+    import asyncio
+    import logging
+
+    logger = logging.getLogger(__name__)
+    bot = get_trading_bot()
+
+    # Gather all positions
+    all_positions = []
+
+    try:
+        # Get crypto positions
+        crypto_service = get_crypto_service()
+        crypto_positions = await crypto_service.get_crypto_positions()
+        for p in crypto_positions:
+            all_positions.append({
+                "symbol": p.get("symbol", "").replace("/", ""),
+                "is_crypto": True,
+            })
+
+        # Get stock positions
+        alpaca = get_alpaca_service()
+        stock_positions = await alpaca.get_positions()
+        for p in stock_positions:
+            symbol = p.get("symbol", "")
+            # Skip crypto symbols that might appear in Alpaca positions
+            if not any(symbol.endswith(s) for s in ['USD', 'USDT', 'USDC']):
+                all_positions.append({
+                    "symbol": symbol,
+                    "is_crypto": False,
+                })
+
+    except Exception as e:
+        logger.error(f"[RESCAN-ALL] Failed to get positions: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to get positions: {e}")
+
+    if not all_positions:
+        return {
+            "total_positions": 0,
+            "rescanned": [],
+            "message": "No positions to rescan",
+        }
+
+    # Rescan each position
+    results = []
+    for pos in all_positions:
+        try:
+            result = await rescan_position(pos["symbol"])
+            results.append(result)
+        except Exception as e:
+            results.append({
+                "symbol": pos["symbol"],
+                "error": str(e),
+            })
+
+    # Summary statistics
+    actions_summary = {}
+    for r in results:
+        if "recommendation" in r:
+            action = r["recommendation"]["action"]
+            actions_summary[action] = actions_summary.get(action, 0) + 1
+
+    return {
+        "total_positions": len(all_positions),
+        "rescanned": results,
+        "actions_summary": actions_summary,
+        "rescanned_at": datetime.now().isoformat(),
     }

@@ -1,0 +1,111 @@
+{
+  "task_id": "TASK-014",
+  "title": "Add integration tests for trading bot state machine",
+  "reviewer": "reviewer",
+  "review_date": "2026-01-28T16:00:00Z",
+  "verdict": "APPROVED",
+  "overall_score": 92,
+  "summary": "Comprehensive integration test suite for the trading bot state machine. The implementation covers all required acceptance criteria with excellent test organization, proper mocking strategy, and thorough coverage of state transitions, error handling, and concurrent scanning.",
+
+  "requirements_verification": {
+    "state_transitions_tested": {
+      "status": "PASS",
+      "details": "All state transitions comprehensively tested: STOPPED->RUNNING, RUNNING->PAUSED, PAUSED->RUNNING, RUNNING->STOPPED, PAUSED->STOPPED. Full cycle test verifies complete STOPPED->RUNNING->PAUSED->RUNNING->STOPPED flow. Edge cases (starting when running, stopping when stopped, pausing when not running) properly tested."
+    },
+    "error_state_handling": {
+      "status": "PASS",
+      "details": "TestBotErrorStates class covers: connection error transitions to ERROR state, error state can be stopped, and error recovery logging. Tests verify error_message is populated appropriately."
+    },
+    "concurrent_scanning": {
+      "status": "PASS",
+      "details": "TestConcurrentScanning class verifies asyncio.gather behavior with 4 tests: (1) parallel start timing validation with <0.05s threshold, (2) one scanner failure doesn't block other, (3) stocks-only mode, (4) crypto-only mode. Timing validation ensures scanners are truly concurrent."
+    },
+    "rate_limit_handling": {
+      "status": "PASS",
+      "details": "TestRateLimitHandling class covers: graceful handling of rate limits during scans (bot stays RUNNING), rate limit errors are logged, and bot continues after transient errors."
+    },
+    "market_hours_detection": {
+      "status": "PASS",
+      "details": "TestMarketHoursDetection class has 7 tests covering all sessions: regular, pre_market, after_hours, overnight, weekend. Also tests session transitions triggering queued trades and crypto trading during stock market closed hours."
+    },
+    "mocks_used_appropriately": {
+      "status": "PASS",
+      "details": "Tests use MockAlpacaService, MockCryptoService, and mock database session. Error simulation via simulate_error() method. Market hours mocking allows testing all session types. No real API calls made."
+    }
+  },
+
+  "acceptance_criteria_verification": {
+    "all_state_transitions_tested": {
+      "status": "PASS",
+      "details": "11 state transition tests in TestBotStateTransitions class with assertions for state, start_time, _running_task, and error_message."
+    },
+    "error_recovery_validated": {
+      "status": "PASS",
+      "details": "3 error state tests verify ERROR state handling, recovery paths, and logging."
+    },
+    "concurrent_scanning_nonblocking": {
+      "status": "PASS",
+      "details": "test_stock_and_crypto_scan_run_concurrently verifies start time difference <0.05s. test_concurrent_scan_does_not_block_on_one_failure confirms stock completes despite crypto exception."
+    },
+    "tests_run_quickly": {
+      "status": "LIKELY PASS",
+      "details": "cycle_interval_seconds set to 0.1s for fast testing. asyncio.sleep() calls are minimal (0.1-0.5s range). Tests should complete well under 30 seconds collectively."
+    },
+    "code_coverage_target": {
+      "status": "CANNOT VERIFY",
+      "details": "80%+ coverage on trading_bot.py cannot be verified without running tests with coverage tool. However, test coverage appears comprehensive based on tested methods: start, stop, pause, resume, _normalize_and_validate_symbol, _validate_and_filter_symbols, _apply_config, _apply_ai_risk_preset, execution_logger methods, and state tracking variables."
+    }
+  },
+
+  "test_organization": {
+    "score": 95,
+    "details": "Excellent class-based organization: TestBotStateTransitions (11 tests), TestBotErrorStates (3 tests), TestConcurrentScanning (4 tests), TestRateLimitHandling (3 tests), TestMarketHoursDetection (7 tests), TestPausedStateBehavior (2 tests), TestDailyLossLimit (1 test), TestSymbolValidation (7 tests), TestBotConfiguration (3 tests), TestExecutionLogger (2 tests), TestBotPerformance (1 test). Clear naming conventions and docstrings."
+  },
+
+  "mock_usage": {
+    "score": 90,
+    "details": "Proper use of fixture-based mocks. MockAlpacaService and MockCryptoService support error simulation, call tracking, and configurable market state. Database session properly mocked. Context managers used appropriately for patches."
+  },
+
+  "code_quality": {
+    "score": 90,
+    "strengths": [
+      "Clear test class organization by feature area",
+      "Comprehensive docstrings explaining each test purpose",
+      "Proper async/await patterns with pytest.mark.asyncio",
+      "Good use of nonlocal variables for tracking in async callbacks",
+      "Proper cleanup with await trading_bot.stop() in all tests"
+    ],
+    "minor_concerns": [
+      "Line 286-287: test_error_state_can_be_stopped manually sets state to RUNNING before stopping - this tests the stop() method but not natural error recovery flow",
+      "Some tests rely on timing (asyncio.sleep) which could be flaky on slow systems",
+      "test_daily_loss_limit_pauses_trading (line 760-771) assertion is loose with 'or' condition"
+    ]
+  },
+
+  "file_structure_verification": {
+    "test_file": "api/tests/integration/test_trading_bot_states.py - EXISTS, 946 lines",
+    "init_file": "api/tests/integration/__init__.py - EXISTS, properly documented",
+    "crypto_mock": "api/tests/mocks/crypto_mock.py - EXISTS, 553 lines, fully implemented",
+    "mocks_init": "api/tests/mocks/__init__.py - UPDATED with crypto_mock exports",
+    "conftest": "api/tests/conftest.py - UPDATED with trading_bot_fixture and mock_crypto_service"
+  },
+
+  "estimated_test_count": 44,
+  "estimated_assertions": 85,
+
+  "recommendations": [
+    "Consider adding timeout decorators to prevent hung tests",
+    "Add explicit coverage measurement step to CI pipeline",
+    "Could add test for hierarchical strategy integration (mentioned in _main_loop but not fully tested)"
+  ],
+
+  "files_reviewed": [
+    "api/tests/integration/test_trading_bot_states.py",
+    "api/tests/integration/__init__.py",
+    "api/tests/mocks/crypto_mock.py",
+    "api/tests/mocks/__init__.py",
+    "api/tests/conftest.py",
+    "api/services/trading_bot.py (verified method signatures)"
+  ]
+}

@@ -220,6 +220,10 @@ class PositionResponse(BaseModel):
     entry_time: Optional[datetime] = None  # Optional for positions not tracked in DB
     entry_score: Optional[float] = None
     asset_class: Optional[str] = None  # 'stock' or 'crypto'
+    # NEW: Entry insight fields for position details modal
+    entry_reason: Optional[str] = None  # Human-readable reason why we entered
+    indicators_snapshot: Optional[Dict[str, Any]] = None  # Technical indicators at entry
+    confluence_factors: Optional[List[str]] = None  # List of confirming technical factors
 
 
 class PositionsListResponse(BaseModel):

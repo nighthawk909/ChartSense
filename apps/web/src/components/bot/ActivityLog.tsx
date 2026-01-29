@@ -1,8 +1,9 @@
 /**
  * Activity Log Component
  * Shows recent bot activity, decisions, and events
+ * Now includes crypto scanning activity
  */
-import { Activity, Info, AlertTriangle, AlertCircle, Clock, TrendingUp, Eye } from 'lucide-react';
+import { Activity, Info, AlertTriangle, AlertCircle, Clock, TrendingUp, Eye, Search, CheckCircle, Bitcoin, BarChart3, Zap, Settings } from 'lucide-react';
 
 interface ActivityItem {
   timestamp: string | null;
@@ -33,6 +34,7 @@ export default function ActivityLog({ activities, loading }: ActivityLogProps) {
   const getIcon = (type: string, level: string) => {
     if (level === 'error') return <AlertCircle className="w-4 h-4 text-red-400" />;
     if (level === 'warning') return <AlertTriangle className="w-4 h-4 text-yellow-400" />;
+    if (level === 'success') return <CheckCircle className="w-4 h-4 text-green-400" />;
 
     switch (type) {
       case 'cycle':
@@ -43,6 +45,22 @@ export default function ActivityLog({ activities, loading }: ActivityLogProps) {
         return <Eye className="w-4 h-4 text-purple-400" />;
       case 'uptime':
         return <Clock className="w-4 h-4 text-cyan-400" />;
+      case 'crypto_scan':
+        return <Bitcoin className="w-4 h-4 text-orange-400" />;
+      case 'crypto_signal':
+        return <Bitcoin className="w-4 h-4 text-green-400" />;
+      case 'stock_scan':
+        return <BarChart3 className="w-4 h-4 text-blue-400" />;
+      case 'stock_signal':
+        return <TrendingUp className="w-4 h-4 text-green-400" />;
+      case 'mode':
+        return <Settings className="w-4 h-4 text-slate-400" />;
+      case 'positions':
+        return <Eye className="w-4 h-4 text-purple-400" />;
+      case 'scans':
+        return <Search className="w-4 h-4 text-cyan-400" />;
+      case 'state':
+        return <Zap className="w-4 h-4 text-yellow-400" />;
       default:
         return <Info className="w-4 h-4 text-slate-400" />;
     }

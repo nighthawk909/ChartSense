@@ -1,0 +1,141 @@
+{
+  "task_id": "TASK-001",
+  "title": "Create pytest fixtures and mock infrastructure",
+  "tester": "qa_bot",
+  "timestamp": "2026-01-28T14:05:00Z",
+  "verdict": "passed",
+  "test_results": {
+    "backend": {
+      "ran": true,
+      "passed": 189,
+      "failed": 0,
+      "skipped": 0,
+      "duration_seconds": 1.64,
+      "warnings": 1,
+      "warning_details": "PydanticDeprecatedSince20 in models/indicators.py:61 - unrelated to TASK-001"
+    },
+    "frontend": {
+      "ran": false,
+      "notes": "Not applicable - TASK-001 is backend test infrastructure only"
+    },
+    "lint": {
+      "ran": false,
+      "notes": "Not applicable - test files validated by pytest execution"
+    },
+    "build": {
+      "ran": false,
+      "notes": "Not applicable - backend test infrastructure"
+    }
+  },
+  "files_verified": {
+    "api/tests/conftest.py": {
+      "exists": true,
+      "lines": 474,
+      "features_verified": [
+        "Pytest configuration with custom markers (slow, integration, unit)",
+        "FastAPI test client fixtures (test_client, client)",
+        "MockAlpacaService fixture",
+        "MockAlphaVantageService fixture",
+        "Service patch fixtures for dependency injection",
+        "Price data fixtures (uptrend, downtrend, sideways, volatile)",
+        "OHLCV data fixtures (bullish, bearish, neutral)",
+        "Account and position fixtures",
+        "Indicator service fixture",
+        "Time/date fixtures (market hours, pre-market, after-hours)",
+        "Mock environment variables fixture",
+        "Async mock and logger fixtures"
+      ]
+    },
+    "api/tests/mocks/__init__.py": {
+      "exists": true,
+      "notes": "Module marker present"
+    },
+    "api/tests/mocks/alpaca_mock.py": {
+      "exists": true,
+      "lines": 809,
+      "features_verified": [
+        "create_mock_account() - configurable account responses",
+        "create_mock_position() - position with PnL calculations",
+        "create_mock_order() - order with status tracking",
+        "create_mock_quote() - bid/ask quote",
+        "create_mock_bar() - OHLCV bar",
+        "create_mock_bars() - historical bar generation",
+        "MockAlpacaService class with all methods",
+        "Account methods (get_account, get_buying_power)",
+        "Position methods (get_positions, get_position)",
+        "Order methods (market, limit, stop-loss, bracket, cancel)",
+        "Market data methods (quotes, bars, trades)",
+        "Market status methods (is_market_open, clock, hours)",
+        "Error simulation support",
+        "Call history tracking for assertions"
+      ]
+    },
+    "api/tests/mocks/alpha_vantage_mock.py": {
+      "exists": true,
+      "lines": 620,
+      "features_verified": [
+        "create_mock_quote_response() - Global Quote format",
+        "create_mock_history_response() - Time Series format",
+        "create_mock_search_response() - Symbol search",
+        "create_mock_company_overview() - Fundamentals",
+        "create_mock_indicator_response() - Technical indicators",
+        "MockAlphaVantageService class",
+        "get_quote(), get_history(), search_symbols()",
+        "get_company_overview(), get_indicator()",
+        "Rate limit simulation",
+        "Error simulation"
+      ]
+    },
+    "api/tests/mocks/fixtures.py": {
+      "exists": true,
+      "lines": 718,
+      "features_verified": [
+        "PriceDataset dataclass with OHLCV arrays",
+        "generate_uptrend_data() - bullish price action",
+        "generate_downtrend_data() - bearish price action",
+        "generate_sideways_data() - range-bound with mean reversion",
+        "generate_volatile_data() - high ATR scenarios",
+        "generate_ohlcv_dataframe() - dict format for indicators",
+        "Pattern-specific fixtures (RSI oversold/overbought)",
+        "MACD bullish crossover setup",
+        "Bollinger squeeze setup",
+        "Golden cross setup (250 days)",
+        "calculate_expected_rsi() - validation helper",
+        "calculate_expected_sma() - validation helper",
+        "Reproducible with seed parameter"
+      ]
+    }
+  },
+  "acceptance_criteria": [
+    {
+      "criterion": "pytest discovers and loads conftest.py",
+      "status": "passed",
+      "evidence": "189 tests collected and executed - conftest.py loaded successfully"
+    },
+    {
+      "criterion": "Mock Alpaca service can return configurable responses",
+      "status": "passed",
+      "evidence": "MockAlpacaService implements set_account(), add_position(), simulate_error() for full configurability"
+    },
+    {
+      "criterion": "Sample OHLCV data available for indicator testing",
+      "status": "passed",
+      "evidence": "PriceDataset and generate_*_data() functions in fixtures.py provide comprehensive test data"
+    },
+    {
+      "criterion": "All existing tests still pass",
+      "status": "passed",
+      "evidence": "189 passed, 0 failed in 1.64s"
+    }
+  ],
+  "requirements_checklist": [
+    {"requirement": "Create api/tests/conftest.py with shared fixtures", "status": "completed"},
+    {"requirement": "Create api/tests/mocks/ directory structure", "status": "completed"},
+    {"requirement": "Create alpaca_mock.py with account, order, and position mocks", "status": "completed"},
+    {"requirement": "Create alpha_vantage_mock.py with OHLCV data mocks", "status": "completed"},
+    {"requirement": "Create fixtures.py with sample price datasets (uptrend, downtrend, sideways)", "status": "completed"},
+    {"requirement": "Add pytest-mock to requirements.txt", "status": "completed", "notes": "pytest-mock>=3.12.0 present"}
+  ],
+  "issues_found": [],
+  "recommendations": []
+}

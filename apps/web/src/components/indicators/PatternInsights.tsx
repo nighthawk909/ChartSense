@@ -26,81 +26,50 @@ import {
   Triangle,
   ArrowUpRight,
   ArrowDownRight,
+  Eye,
 } from 'lucide-react';
+import type {
+  Pattern,
+  PatternData,
+  SupportResistanceLevel,
+  TrendLine,
+  ActiveBreakout,
+  PatternKeyPoint,
+  PatternLine,
+  ElliottWaveData,
+  ApiPatternResponse,
+} from '../../types/analysis';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
-interface Pattern {
-  pattern: string;
-  confidence: number;
-  direction: string;
-  description: string;
-  price_target?: number;
-  target_pct?: number;
-  stop_loss?: number;
-  risk_pct?: number;
-  timeframe_relevance?: number;
-  relevance_label?: 'High' | 'Medium' | 'Low';
-  entry_zone?: {
-    low: number;
-    high: number;
-  };
+// Helper to detect if symbol is crypto
+function isCryptoSymbol(symbol: string): boolean {
+  if (!symbol) return false;
+  const upperSymbol = symbol.toUpperCase();
+  return (
+    upperSymbol.includes('/USD') ||
+    upperSymbol.endsWith('USD') ||
+    upperSymbol.endsWith('USDT') ||
+    ['BTC', 'ETH', 'SOL', 'DOGE', 'ADA', 'XRP', 'AVAX', 'LINK', 'DOT', 'MATIC', 'LTC', 'UNI', 'AAVE', 'SHIB', 'ATOM', 'NEAR', 'FTM', 'ALGO', 'VET', 'ICP'].some(
+      crypto => upperSymbol === crypto || upperSymbol.startsWith(crypto + '/') || upperSymbol === crypto + 'USD' || upperSymbol === crypto + 'USDT'
+    )
+  );
 }
 
-interface SupportResistance {
-  price: number;
-  strength: number;
-}
-
-interface TrendLine {
-  type: string;
-  direction: string;
-  strength: number;
-  current_value: number;
-  touches: number;
-}
-
-interface ActiveBreakout {
-  type: string;
-  description: string;
-  confidence: number;
-  direction: string;
-}
-
-interface PatternData {
-  symbol: string;
-  current_price: number;
-  interval: string;
-  timestamp: string;
-  trade_signal: string;
-  signal_color: string;
-  pattern_bias: string;
-  bullish_score: number;
-  bearish_score: number;
-  active_breakout: ActiveBreakout | null;
-  patterns_detected: number;
-  patterns: Pattern[];
-  actionable_patterns: Pattern[];
-  support_levels: SupportResistance[];
-  resistance_levels: SupportResistance[];
-  nearest_support: number | null;
-  nearest_resistance: number | null;
-  trend_lines: TrendLine[];
-  elliott_wave: any;
-  summary: {
-    signal: string;
-    reason: string;
-    confidence: number;
-    entry: number | null;
-    target: number | null;
-    stop: number | null;
-  };
+// Normalize crypto symbol for API (remove slash, add USD if needed)
+function normalizeCryptoSymbol(symbol: string): string {
+  const upperSymbol = symbol.toUpperCase().replace('/', '');
+  if (!upperSymbol.endsWith('USD') && !upperSymbol.endsWith('USDT')) {
+    return upperSymbol + 'USD';
+  }
+  return upperSymbol;
 }
 
 interface PatternInsightsProps {
   symbol: string;
   interval?: string;
   compact?: boolean;
+  onPatternClick?: (pattern: Pattern) => void;
 }
 
 const getPatternIcon = (pattern: string) => {
@@ -126,7 +95,7 @@ const getSignalBg = (signal: string) => {
   return 'bg-slate-600';
 };
 
-export default function PatternInsights({ symbol, interval = 'daily', compact = false }: PatternInsightsProps) {
+export default function PatternInsights({ symbol, interval = 'daily', compact = false, onPatternClick }: PatternInsightsProps) {
   const [data, setData] = useState<PatternData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -137,7 +106,13 @@ export default function PatternInsights({ symbol, interval = 'daily', compact = 
     setLoading(true);
     setError(null);
     try {
-      const response = await fetch(`${API_URL}/api/advanced/patterns/${symbol}?interval=${selectedInterval}`);
+      // Use crypto endpoint for crypto symbols, advanced endpoint for stocks
+      const isCrypto = isCryptoSymbol(symbol);
+      const apiSymbol = isCrypto ? normalizeCryptoSymbol(symbol) : symbol;
+      const endpoint = isCrypto
+        ? `${API_URL}/api/crypto/patterns/${apiSymbol}?interval=${selectedInterval}`
+        : `${API_URL}/api/advanced/patterns/${symbol}?interval=${selectedInterval}`;
+      const response = await fetch(endpoint);
       if (!response.ok) {
         throw new Error(`Failed to fetch patterns: ${response.statusText}`);
       }
@@ -159,6 +134,10 @@ export default function PatternInsights({ symbol, interval = 'daily', compact = 
         description: p.description,
         price_target: p.price_target,
         stop_loss: p.stop_loss,
+        start_index: p.start_index,
+        end_index: p.end_index,
+        key_points: p.key_points,
+        pattern_lines: p.pattern_lines,
       }));
 
       // Determine trade signal based on bias and confidence
@@ -491,20 +470,33 @@ export default function PatternInsights({ symbol, interval = 'daily', compact = 
             <div className="p-3 sm:p-4">
               <h4 className="text-xs sm:text-sm font-medium text-slate-400 mb-2 sm:mb-3">All Detected Patterns</h4>
               <div className="space-y-1">
-                {data.patterns.map((pattern, idx) => (
-                  <div key={idx} className="flex items-center justify-between py-1.5 border-b border-slate-700/50 last:border-0">
-                    <div className="flex items-center gap-2">
-                      <span className={`w-2 h-2 rounded-full ${
-                        pattern.direction === 'bullish' ? 'bg-green-500' :
-                        pattern.direction === 'bearish' ? 'bg-red-500' : 'bg-yellow-500'
-                      }`} />
-                      <span className="text-sm">{pattern.pattern}</span>
+                {data.patterns.map((pattern, idx) => {
+                  const hasOverlay = pattern.key_points && pattern.key_points.length > 0;
+                  return (
+                    <div
+                      key={idx}
+                      className={`flex items-center justify-between py-1.5 border-b border-slate-700/50 last:border-0 ${
+                        hasOverlay ? 'cursor-pointer hover:bg-slate-700/50 rounded px-1 -mx-1 transition-colors' : ''
+                      }`}
+                      onClick={() => hasOverlay && onPatternClick?.(pattern)}
+                      title={hasOverlay ? 'Click to view pattern on chart' : ''}
+                    >
+                      <div className="flex items-center gap-2">
+                        <span className={`w-2 h-2 rounded-full ${
+                          pattern.direction === 'bullish' ? 'bg-green-500' :
+                          pattern.direction === 'bearish' ? 'bg-red-500' : 'bg-yellow-500'
+                        }`} />
+                        <span className="text-sm">{pattern.pattern}</span>
+                        {hasOverlay && (
+                          <Eye className="w-3 h-3 text-blue-400" title="View on chart" />
+                        )}
+                      </div>
+                      <span className={`text-xs ${pattern.confidence >= 70 ? 'text-green-400' : pattern.confidence >= 50 ? 'text-yellow-400' : 'text-slate-400'}`}>
+                        {pattern.confidence}%
+                      </span>
                     </div>
-                    <span className={`text-xs ${pattern.confidence >= 70 ? 'text-green-400' : pattern.confidence >= 50 ? 'text-yellow-400' : 'text-slate-400'}`}>
-                      {pattern.confidence}%
-                    </span>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             </div>
           )}

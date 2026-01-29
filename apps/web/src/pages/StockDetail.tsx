@@ -1,12 +1,47 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { useParams } from 'react-router-dom'
-import { Star, TrendingUp, TrendingDown, Loader2, RefreshCw, Target, GitBranch } from 'lucide-react'
+import { Star, TrendingUp, TrendingDown, Loader2, RefreshCw, Target, GitBranch, Bitcoin } from 'lucide-react'
 import StockChart from '../components/StockChart'
+import CryptoChart from '../components/CryptoChart'
 import MultiTimeframeInsight from '../components/indicators/MultiTimeframeInsight'
 import TripleScreenPanel from '../components/indicators/TripleScreenPanel'
 import PatternInsights from '../components/indicators/PatternInsights'
+import PatternDetailModal from '../components/indicators/PatternDetailModal'
+import UnifiedRecommendation from '../components/indicators/UnifiedRecommendation'
+import type { Pattern } from '../types/analysis'
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
+
+// Helper to detect if symbol is crypto
+function isCryptoSymbol(symbol: string): boolean {
+  if (!symbol) return false
+  const upperSymbol = symbol.toUpperCase()
+  // Check for common crypto patterns
+  return (
+    upperSymbol.includes('/USD') ||
+    upperSymbol.endsWith('USD') ||
+    upperSymbol.endsWith('USDT') ||
+    ['BTC', 'ETH', 'SOL', 'DOGE', 'ADA', 'XRP', 'AVAX', 'LINK', 'DOT', 'MATIC', 'LTC', 'UNI', 'AAVE', 'SHIB', 'ATOM', 'NEAR', 'FTM', 'ALGO', 'VET', 'ICP'].some(
+      crypto => upperSymbol === crypto || upperSymbol.startsWith(crypto + '/')
+    )
+  )
+}
+
+// Normalize crypto symbol for API calls (convert BTCUSD to BTC/USD format)
+function normalizeCryptoSymbol(symbol: string): string {
+  const upperSymbol = symbol.toUpperCase()
+  if (upperSymbol.includes('/')) return upperSymbol
+  // Convert BTCUSD to BTC/USD
+  if (upperSymbol.endsWith('USD')) {
+    const base = upperSymbol.replace('USD', '')
+    return `${base}/USD`
+  }
+  if (upperSymbol.endsWith('USDT')) {
+    const base = upperSymbol.replace('USDT', '')
+    return `${base}/USDT`
+  }
+  return `${upperSymbol}/USD`
+}
 
 interface StockQuote {
   symbol: string
@@ -103,14 +138,42 @@ export default function StockDetail() {
   const [refreshing, setRefreshing] = useState(false)
   const [lastQuoteUpdate, setLastQuoteUpdate] = useState<Date | null>(null)
   const [secondsAgo, setSecondsAgo] = useState(0)
+  // Pattern visualization modal state
+  const [selectedPattern, setSelectedPattern] = useState<Pattern | null>(null)
+
+  // Determine if current symbol is crypto
+  const isCrypto = useMemo(() => symbol ? isCryptoSymbol(symbol) : false, [symbol])
+  const normalizedSymbol = useMemo(() => symbol ? (isCrypto ? normalizeCryptoSymbol(symbol) : symbol.toUpperCase()) : '', [symbol, isCrypto])
+  // For API calls that don't support slash in URL, use encoded or cleaned version
+  const apiSymbol = useMemo(() => normalizedSymbol.replace('/', ''), [normalizedSymbol])
 
   const fetchQuote = async () => {
     if (!symbol) return
     try {
-      const response = await fetch(`${API_URL}/api/stocks/quote/${symbol}`)
+      // Use crypto endpoint for crypto symbols, stock endpoint for stocks
+      const endpoint = isCrypto
+        ? `${API_URL}/api/crypto/quote/${encodeURIComponent(normalizedSymbol)}`
+        : `${API_URL}/api/stocks/quote/${symbol}`
+      const response = await fetch(endpoint)
       if (response.ok) {
         const data = await response.json()
-        setQuote(data)
+        // Normalize crypto response to match stock quote format
+        if (isCrypto) {
+          setQuote({
+            symbol: normalizedSymbol,
+            price: data.price || data.bid_price || 0,
+            change: data.change || 0,
+            change_percent: data.change_percent || data.change_pct || 0,
+            volume: data.volume || 0,
+            latest_trading_day: data.timestamp || new Date().toISOString().split('T')[0],
+            previous_close: data.previous_close || data.price || 0,
+            open: data.open || data.price || 0,
+            high: data.high || data.price || 0,
+            low: data.low || data.price || 0,
+          })
+        } else {
+          setQuote(data)
+        }
         setLastQuoteUpdate(new Date())
         setSecondsAgo(0)
       }
@@ -122,10 +185,12 @@ export default function StockDetail() {
   const fetchTechnicals = async () => {
     if (!symbol) return
     try {
+      // Use apiSymbol (no slash) for analysis endpoints
+      const analysisSymbol = isCrypto ? apiSymbol : symbol
       const [rsiRes, macdRes, smaRes] = await Promise.all([
-        fetch(`${API_URL}/api/analysis/rsi/${symbol}`),
-        fetch(`${API_URL}/api/analysis/macd/${symbol}`),
-        fetch(`${API_URL}/api/analysis/sma/${symbol}?period=20`),
+        fetch(`${API_URL}/api/analysis/rsi/${analysisSymbol}`),
+        fetch(`${API_URL}/api/analysis/macd/${analysisSymbol}`),
+        fetch(`${API_URL}/api/analysis/sma/${analysisSymbol}?period=20`),
       ])
 
       const newTechnicals: TechnicalAnalysis = {}
@@ -152,10 +217,12 @@ export default function StockDetail() {
   const fetchAdvancedAnalysis = async () => {
     if (!symbol) return
     try {
+      // Use apiSymbol (no slash) for advanced analysis endpoints
+      const analysisSymbol = isCrypto ? apiSymbol : symbol
       const [srRes, ewRes, tlRes] = await Promise.all([
-        fetch(`${API_URL}/api/advanced/support-resistance/${symbol}`),
-        fetch(`${API_URL}/api/advanced/elliott-wave/${symbol}`),
-        fetch(`${API_URL}/api/advanced/trend-lines/${symbol}`),
+        fetch(`${API_URL}/api/advanced/support-resistance/${analysisSymbol}`),
+        fetch(`${API_URL}/api/advanced/elliott-wave/${analysisSymbol}`),
+        fetch(`${API_URL}/api/advanced/trend-lines/${analysisSymbol}`),
       ])
 
       if (srRes.ok) {
@@ -179,7 +246,9 @@ export default function StockDetail() {
     if (!symbol) return
     setAiInsightLoading(true)
     try {
-      const response = await fetch(`${API_URL}/api/analysis/ai-insight/${symbol}`)
+      // Use apiSymbol (no slash) for AI insight endpoint
+      const analysisSymbol = isCrypto ? apiSymbol : symbol
+      const response = await fetch(`${API_URL}/api/analysis/ai-insight/${analysisSymbol}`)
       if (response.ok) {
         const data = await response.json()
         setAiInsight(data)
@@ -253,7 +322,13 @@ export default function StockDetail() {
       <div className="flex flex-col sm:flex-row items-start sm:justify-between gap-3 sm:gap-0">
         <div>
           <div className="flex items-center gap-2 sm:gap-3">
-            <h1 className="text-xl sm:text-2xl font-bold">{symbol}</h1>
+            {isCrypto && <Bitcoin className="h-6 w-6 text-orange-400" />}
+            <h1 className="text-xl sm:text-2xl font-bold">{normalizedSymbol}</h1>
+            {isCrypto && (
+              <span className="px-2 py-0.5 text-xs font-medium rounded bg-orange-500/20 text-orange-400">
+                CRYPTO
+              </span>
+            )}
             <button
               onClick={toggleWatchlist}
               className="p-2 hover:bg-slate-700 rounded-lg transition-colors"
@@ -269,7 +344,9 @@ export default function StockDetail() {
             </button>
           </div>
           <div className="flex items-center gap-3 mt-1">
-            <span className="text-slate-500 text-sm">Trading day: {quote?.latest_trading_day || 'N/A'}</span>
+            <span className="text-slate-500 text-sm">
+              {isCrypto ? '24/7 Trading' : `Trading day: ${quote?.latest_trading_day || 'N/A'}`}
+            </span>
             {lastQuoteUpdate && (
               <div className="flex items-center gap-1.5">
                 <span className={`w-2 h-2 rounded-full ${secondsAgo < 10 ? 'bg-green-500' : secondsAgo < 30 ? 'bg-yellow-500' : 'bg-orange-500'} ${secondsAgo < 30 ? 'animate-pulse' : ''}`}></span>
@@ -292,6 +369,9 @@ export default function StockDetail() {
           )}
         </div>
       </div>
+
+      {/* Unified AI Recommendation - THE FINAL DECISION */}
+      <UnifiedRecommendation symbol={apiSymbol} interval={interval === 'daily' ? '1day' : interval.replace('min', 'Min')} />
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 lg:gap-6">
         {/* Chart */}
@@ -362,7 +442,15 @@ export default function StockDetail() {
               </div>
             </div>
             <div className="h-64 sm:h-80 lg:h-96">
-              <StockChart symbol={symbol || 'AAPL'} chartType={chartType} period={period} interval={interval} />
+              {isCrypto ? (
+                <CryptoChart
+                  symbol={normalizedSymbol}
+                  chartType={chartType}
+                  timeframe={interval === '1min' ? '1Min' : interval === '5min' ? '5Min' : interval === '15min' ? '15Min' : interval === '60min' ? '1Hour' : '1Day'}
+                />
+              ) : (
+                <StockChart symbol={symbol || 'AAPL'} chartType={chartType} period={period} interval={interval} />
+              )}
             </div>
           </div>
 
@@ -548,7 +636,11 @@ export default function StockDetail() {
           </div>
 
           {/* Pattern Detection - Bull/Bear Flags, Breakouts, etc. */}
-          <PatternInsights symbol={symbol || 'AAPL'} interval={interval} />
+          <PatternInsights
+            symbol={symbol || 'AAPL'}
+            interval={interval}
+            onPatternClick={(pattern) => setSelectedPattern(pattern)}
+          />
 
           {/* Multi-Timeframe AI Insight */}
           <MultiTimeframeInsight symbol={symbol || 'AAPL'} />
@@ -629,6 +721,15 @@ export default function StockDetail() {
           )}
         </div>
       </div>
+
+      {/* Pattern Detail Modal */}
+      {selectedPattern && (
+        <PatternDetailModal
+          pattern={selectedPattern}
+          symbol={symbol || 'UNKNOWN'}
+          onClose={() => setSelectedPattern(null)}
+        />
+      )}
     </div>
   )
 }

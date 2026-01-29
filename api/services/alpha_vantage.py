@@ -3,11 +3,21 @@ Alpha Vantage API Service
 Handles all interactions with the Alpha Vantage API
 """
 import os
+import time
 import httpx
 from typing import Optional, List, Dict, Any
 from datetime import datetime, timedelta
 from functools import lru_cache
 from models.stock import StockQuote, StockHistory, PriceData, TimeInterval
+from exceptions import (
+    AlphaVantageError,
+    AlphaVantageRateLimitError,
+    AlphaVantageDataError,
+    AlphaVantageAPIError,
+)
+from services.logging_config import get_logger, log_api_call, log_method
+
+logger = get_logger(__name__)
 
 # Cache for API responses (simple in-memory cache)
 _cache: Dict[str, tuple[Any, datetime]] = {}
@@ -20,7 +30,29 @@ class AlphaVantageService:
     BASE_URL = "https://www.alphavantage.co/query"
 
     def __init__(self):
-        self.api_key = os.getenv("ALPHA_VANTAGE_API_KEY", "demo")
+        """
+        Initialize Alpha Vantage service.
+
+        Note: ALPHA_VANTAGE_API_KEY is optional but strongly recommended.
+        Without a valid API key, the service will use the demo key which has
+        severe rate limits (only works for specific demo symbols).
+        """
+        self.api_key = os.getenv("ALPHA_VANTAGE_API_KEY", "")
+
+        # Validate API key
+        if not self.api_key:
+            logger.warning(
+                "ALPHA_VANTAGE_API_KEY not set. Using 'demo' key with severe rate limits. "
+                "Get a free API key from https://www.alphavantage.co/support/#api-key"
+            )
+            self.api_key = "demo"
+        elif self.api_key == "demo":
+            logger.warning(
+                "Using Alpha Vantage 'demo' API key - limited to specific demo symbols only. "
+                "Get a free API key from https://www.alphavantage.co/support/#api-key"
+            )
+        else:
+            logger.info("Alpha Vantage API key configured successfully")
 
     def _get_cached(self, key: str) -> Optional[Any]:
         """Get cached response if still valid"""
@@ -43,24 +75,90 @@ class AlphaVantageService:
         cache_key = str(sorted(params.items()))
         cached = self._get_cached(cache_key)
         if cached:
+            logger.debug(
+                f"Cache hit for {params.get('function', 'unknown')}",
+                extra={"cache_key": cache_key[:50], "function": params.get("function")}
+            )
             return cached
 
-        async with httpx.AsyncClient() as client:
-            response = await client.get(self.BASE_URL, params=params, timeout=30.0)
-            response.raise_for_status()
-            data = response.json()
+        # Build endpoint description for logging
+        function = params.get("function", "unknown")
+        symbol = params.get("symbol", "")
+        endpoint = f"{self.BASE_URL}?function={function}"
+        if symbol:
+            endpoint += f"&symbol={symbol}"
 
-            # Check for API errors
-            if "Error Message" in data:
-                raise Exception(data["Error Message"])
-            if "Note" in data:
-                # Rate limit warning
-                raise Exception("API rate limit reached. Please wait and try again.")
+        start_time = time.perf_counter()
+        status_code = None
+        error_message = None
 
-            # Cache successful response
-            self._set_cache(cache_key, data)
-            return data
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await client.get(self.BASE_URL, params=params, timeout=30.0)
+                status_code = response.status_code
+                response.raise_for_status()
+                data = response.json()
 
+                # Check for API errors
+                if "Error Message" in data:
+                    error_message = data["Error Message"]
+                    log_api_call(
+                        logger, "GET", endpoint,
+                        status_code=status_code,
+                        response_time_ms=(time.perf_counter() - start_time) * 1000,
+                        error=error_message,
+                        function=function,
+                        symbol=symbol
+                    )
+                    raise AlphaVantageAPIError(api_message=error_message)
+
+                if "Note" in data:
+                    # Rate limit warning
+                    error_message = "Rate limit reached"
+                    log_api_call(
+                        logger, "GET", endpoint,
+                        status_code=429,  # Treat as rate limit
+                        response_time_ms=(time.perf_counter() - start_time) * 1000,
+                        error=error_message,
+                        function=function,
+                        symbol=symbol
+                    )
+                    raise AlphaVantageRateLimitError()
+
+                # Log successful API call
+                log_api_call(
+                    logger, "GET", endpoint,
+                    status_code=status_code,
+                    response_time_ms=(time.perf_counter() - start_time) * 1000,
+                    function=function,
+                    symbol=symbol
+                )
+
+                # Cache successful response
+                self._set_cache(cache_key, data)
+                return data
+
+        except httpx.HTTPStatusError as e:
+            log_api_call(
+                logger, "GET", endpoint,
+                status_code=e.response.status_code,
+                response_time_ms=(time.perf_counter() - start_time) * 1000,
+                error=str(e),
+                function=function,
+                symbol=symbol
+            )
+            raise
+        except httpx.RequestError as e:
+            log_api_call(
+                logger, "GET", endpoint,
+                response_time_ms=(time.perf_counter() - start_time) * 1000,
+                error=f"Request failed: {e}",
+                function=function,
+                symbol=symbol
+            )
+            raise
+
+    @log_method(logger=logger)
     async def get_quote(self, symbol: str) -> Optional[StockQuote]:
         """Get real-time quote for a symbol"""
         params = {
@@ -89,6 +187,7 @@ class AlphaVantageService:
             low=float(quote.get("04. low", 0)),
         )
 
+    @log_method(logger=logger)
     async def get_history(
         self,
         symbol: str,
@@ -147,6 +246,7 @@ class AlphaVantageService:
             prices=prices,  # Just close prices for indicator calculations
         )
 
+    @log_method(logger=logger)
     async def search_symbols(self, query: str) -> List[Dict[str, str]]:
         """Search for stock symbols"""
         params = {
@@ -168,6 +268,7 @@ class AlphaVantageService:
             for match in data["bestMatches"]
         ]
 
+    @log_method(logger=logger)
     async def get_company_overview(self, symbol: str) -> Optional[Dict[str, Any]]:
         """Get company fundamentals"""
         params = {
@@ -198,6 +299,7 @@ class AlphaVantageService:
             "revenue_growth": data.get("QuarterlyRevenueGrowthYOY"),
         }
 
+    @log_method(logger=logger)
     async def get_indicator(
         self,
         symbol: str,

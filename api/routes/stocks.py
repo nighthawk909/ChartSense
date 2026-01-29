@@ -11,11 +11,46 @@ import logging
 
 from services.alpha_vantage import AlphaVantageService
 from services.alpaca_service import get_alpaca_service
+from services.crypto_service import get_crypto_service, SUPPORTED_CRYPTOS
 from models.stock import StockQuote, StockHistory, TimeInterval
 
 router = APIRouter()
 av_service = AlphaVantageService()
 logger = logging.getLogger(__name__)
+
+# Common crypto suffixes that indicate a crypto symbol
+CRYPTO_SUFFIXES = ['USD', 'USDT', 'USDC', 'BTC', 'ETH']
+
+def is_crypto_symbol(symbol: str) -> bool:
+    """
+    Detect if a symbol is a cryptocurrency.
+    Crypto symbols typically end with USD, USDT, USDC (e.g., BTCUSD, ETHUSD)
+    or have a slash (e.g., BTC/USD).
+    """
+    symbol_upper = symbol.upper()
+
+    # Check for slash format (e.g., BTC/USD)
+    if '/' in symbol_upper:
+        return True
+
+    # Check against known crypto list
+    for crypto in SUPPORTED_CRYPTOS:
+        # Normalize both to compare (BTC/USD vs BTCUSD)
+        normalized_crypto = crypto.replace('/', '')
+        if symbol_upper == normalized_crypto:
+            return True
+
+    # Check for common crypto patterns (BTCUSD, ETHUSD, etc.)
+    # Must be at least 6 chars (3 for base + 3 for USD minimum)
+    if len(symbol_upper) >= 6:
+        for suffix in CRYPTO_SUFFIXES:
+            if symbol_upper.endswith(suffix):
+                base = symbol_upper[:-len(suffix)]
+                # Base should be 2-5 characters (BTC, ETH, DOGE, etc.)
+                if 2 <= len(base) <= 5 and base.isalpha():
+                    return True
+
+    return False
 
 
 @router.get("/quote/{symbol}", response_model=StockQuote)
@@ -98,11 +133,17 @@ async def get_stock_history(
     outputsize: str = Query(default="compact", pattern="^(compact|full)$"),
 ):
     """
-    Get historical price data for a stock.
+    Get historical price data for a stock or crypto.
     Uses Alpaca (unlimited) as primary source.
+    Automatically detects crypto symbols (BTCUSD, BTC/USD, etc.) and uses crypto service.
     """
     symbol_upper = symbol.upper()
     logger.info(f"[HISTORY] Fetching history for {symbol_upper}, interval={interval.value}, outputsize={outputsize}")
+
+    # Check if this is a crypto symbol - route to crypto service
+    if is_crypto_symbol(symbol_upper):
+        logger.info(f"[HISTORY] Detected crypto symbol {symbol_upper}, routing to crypto service")
+        return await _get_crypto_history(symbol_upper, interval, outputsize)
 
     try:
         alpaca = get_alpaca_service()
@@ -198,6 +239,78 @@ async def get_stock_history(
                 return history
         except:
             pass
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+async def _get_crypto_history(symbol: str, interval: TimeInterval, outputsize: str):
+    """
+    Internal helper to get crypto history data.
+    Called when a crypto symbol is detected in the /history endpoint.
+    """
+    crypto_service = get_crypto_service()
+
+    # Map interval to crypto timeframe format
+    timeframe_map = {
+        TimeInterval.MINUTE_1: "1Min",
+        TimeInterval.MINUTE_5: "5Min",
+        TimeInterval.MINUTE_15: "15Min",
+        TimeInterval.MINUTE_30: "30Min",
+        TimeInterval.MINUTE_60: "1Hour",
+        TimeInterval.DAILY: "1Day",
+        TimeInterval.WEEKLY: "1Day",  # Use daily for weekly
+        TimeInterval.MONTHLY: "1Day",  # Use daily for monthly
+    }
+
+    timeframe = timeframe_map.get(interval, "1Day")
+    limit = 500 if outputsize == "full" else 100
+
+    # Normalize symbol to Alpaca crypto format (BTC/USD)
+    # BCHUSD -> BCH/USD
+    normalized_symbol = symbol
+    if '/' not in symbol:
+        # Find the quote currency suffix and insert slash
+        for suffix in ['USDT', 'USDC', 'USD']:
+            if symbol.endswith(suffix):
+                base = symbol[:-len(suffix)]
+                normalized_symbol = f"{base}/{suffix}"
+                break
+
+    logger.info(f"[CRYPTO HISTORY] Fetching {limit} {timeframe} bars for {normalized_symbol}")
+
+    try:
+        bars = await crypto_service.get_crypto_bars(normalized_symbol, timeframe, limit)
+
+        if not bars:
+            logger.warning(f"[CRYPTO HISTORY] No bars returned for {normalized_symbol}")
+            raise HTTPException(status_code=404, detail=f"No history found for {symbol}")
+
+        logger.info(f"[CRYPTO HISTORY] Got {len(bars)} bars for {normalized_symbol}")
+
+        # Transform to format expected by frontend StockChart component
+        is_intraday = timeframe in ["1Min", "5Min", "15Min", "30Min", "1Hour"]
+
+        history = [
+            {
+                "date": bar["timestamp"] if is_intraday else (bar["timestamp"].split("T")[0] if "T" in bar.get("timestamp", "") else bar.get("timestamp", "")),
+                "open": bar["open"],
+                "high": bar["high"],
+                "low": bar["low"],
+                "close": bar["close"],
+                "volume": bar.get("volume", 0),
+            }
+            for bar in bars
+        ]
+
+        return {
+            "symbol": symbol.upper(),
+            "interval": interval.value,
+            "history": history,
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"[CRYPTO HISTORY] Failed for {symbol}: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 

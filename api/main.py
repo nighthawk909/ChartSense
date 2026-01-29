@@ -1,8 +1,9 @@
 """
 ChartSense API - FastAPI Backend
 Technical analysis stock trading app with automated trading bot
+Updated: 2026-01-28 - Fixed backtesting indicator bounds issue
 """
-import logging
+import os
 from contextlib import asynccontextmanager
 from dotenv import load_dotenv
 
@@ -15,15 +16,20 @@ from fastapi.middleware.cors import CORSMiddleware
 from routes import stocks, watchlist, analysis
 from routes import bot, positions, performance, settings
 from routes import ai, watchlist_bot
-from routes import crypto, advanced, notifications
+from routes import crypto, advanced, notifications, backtest
 from database.connection import init_db
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+# Configure structured logging with correlation IDs
+from services.logging_config import (
+    setup_logging,
+    get_logger,
+    CorrelationIdMiddleware
 )
-logger = logging.getLogger(__name__)
+
+# Use JSON logging in production (when not in debug mode)
+use_json_logging = os.getenv("LOG_FORMAT", "console").lower() == "json"
+setup_logging(use_json=use_json_logging)
+logger = get_logger(__name__)
 
 
 @asynccontextmanager
@@ -45,19 +51,28 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# CORS middleware
+# CORS middleware - supports env var ALLOWED_ORIGINS for production
+default_origins = [
+    "http://localhost:5173",
+    "http://localhost:3000",
+    "https://chart-sense-virid.vercel.app",
+    "https://chart-sense.vercel.app",
+]
+# Add any custom origins from environment variable
+custom_origins = os.getenv("ALLOWED_ORIGINS", "")
+if custom_origins:
+    default_origins.extend([o.strip() for o in custom_origins.split(",") if o.strip()])
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:5173",
-        "http://localhost:3000",
-        "https://chart-sense-virid.vercel.app",
-        "https://chart-sense.vercel.app",
-    ],
+    allow_origins=default_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Correlation ID middleware for request tracing
+app.add_middleware(CorrelationIdMiddleware)
 
 # Include routers - Market Data
 app.include_router(stocks.router, prefix="/api/stocks", tags=["stocks"])
@@ -84,6 +99,9 @@ app.include_router(advanced.router, prefix="/api/advanced", tags=["advanced"])
 
 # Include routers - Notifications
 app.include_router(notifications.router, prefix="/api/notifications", tags=["notifications"])
+
+# Include routers - Backtesting
+app.include_router(backtest.router)
 
 
 @app.get("/")

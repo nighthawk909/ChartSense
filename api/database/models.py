@@ -1,8 +1,30 @@
 """
 SQLAlchemy ORM models for ChartSense Trading Bot
+
+Database Index Strategy:
+========================
+The following indexes are designed to optimize common query patterns:
+
+Trade Table Indexes:
+- Primary key on 'id' (automatic)
+- Single column on 'symbol' for symbol lookups
+- Composite (symbol, created_at) for trade history queries with time filtering
+- Composite (symbol, exit_time) for finding open/closed trades by symbol
+- Single column on 'trade_type' for filtering SWING vs LONG_TERM trades
+- Single column on 'exit_time' for finding completed trades
+
+Position Table Indexes:
+- Primary key on 'id' (automatic)
+- Unique constraint on 'symbol' (acts as index) for position lookups
+- Single column on 'trade_type' for filtering by strategy type
+
+Performance Notes:
+- Composite indexes are ordered for leftmost-prefix optimization
+- Symbol queries benefit from the unique constraint acting as an index
+- Exit_time index helps with the common pattern: Trade.exit_time != None
 """
 from datetime import datetime
-from sqlalchemy import Column, Integer, String, Float, DateTime, Boolean, JSON, Enum as SQLEnum
+from sqlalchemy import Column, Integer, String, Float, DateTime, Boolean, JSON, Enum as SQLEnum, Index
 from sqlalchemy.sql import func
 import enum
 
@@ -42,8 +64,27 @@ class Trade(Base):
     """
     Completed trades table.
     Records all trades executed by the bot for performance tracking.
+
+    Indexes:
+    - ix_trades_symbol: Single column for symbol lookups
+    - ix_trades_symbol_created_at: Composite for history queries (ORDER BY created_at)
+    - ix_trades_symbol_exit_time: Composite for finding open trades (exit_time IS NULL)
+    - ix_trades_trade_type: Single column for filtering by SWING/LONG_TERM
+    - ix_trades_exit_time: Single column for finding completed trades
     """
     __tablename__ = "trades"
+
+    # Define composite and additional indexes
+    __table_args__ = (
+        # Composite index for trade history queries: WHERE symbol = ? ORDER BY created_at
+        Index('ix_trades_symbol_created_at', 'symbol', 'created_at'),
+        # Composite index for open trade lookup: WHERE symbol = ? AND exit_time IS NULL
+        Index('ix_trades_symbol_exit_time', 'symbol', 'exit_time'),
+        # Single column index for trade type filtering: WHERE trade_type = 'SWING'
+        Index('ix_trades_trade_type', 'trade_type'),
+        # Single column index for completed trades: WHERE exit_time IS NOT NULL
+        Index('ix_trades_exit_time', 'exit_time'),
+    )
 
     id = Column(Integer, primary_key=True, index=True)
     symbol = Column(String(10), nullable=False, index=True)
@@ -95,8 +136,21 @@ class Position(Base):
     """
     Currently open positions tracked by the bot.
     Synced with Alpaca but includes our strategy metadata.
+
+    Indexes:
+    - ix_positions_symbol: Unique constraint serves as index for symbol lookups
+    - ix_positions_trade_type: Single column for filtering by strategy type
+    - ix_positions_entry_time: Single column for sorting/filtering by entry date
     """
     __tablename__ = "positions"
+
+    # Define additional indexes (symbol already has unique constraint which acts as index)
+    __table_args__ = (
+        # Index for trade type filtering: WHERE trade_type = 'SWING'
+        Index('ix_positions_trade_type', 'trade_type'),
+        # Index for entry time queries: ORDER BY entry_time or filtering by date
+        Index('ix_positions_entry_time', 'entry_time'),
+    )
 
     id = Column(Integer, primary_key=True, index=True)
     symbol = Column(String(10), nullable=False, unique=True, index=True)
@@ -113,6 +167,11 @@ class Position(Base):
     trade_type = Column(String(20))  # SWING, LONG_TERM
     strategy_name = Column(String(50), default="default")
     entry_score = Column(Float)  # Confidence score at entry
+
+    # Entry reasoning (NEW - for position insight display)
+    entry_reason = Column(String(500))  # Human-readable reason why we entered
+    indicators_snapshot = Column(JSON)  # Technical indicators at time of entry
+    confluence_factors = Column(JSON)  # List of confirming technical factors
 
     # Current status (updated periodically)
     current_price = Column(Float)

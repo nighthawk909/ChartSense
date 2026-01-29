@@ -26,6 +26,7 @@ from .priority_scanner import PriorityScannerService, get_priority_scanner, Prio
 from .execution_logger import ExecutionLogger, ExecutionErrorCode, parse_api_error
 from .smart_scanner import SmartScanner, get_smart_scanner
 from .hierarchical_strategy import TradingHorizon, OpportunityQuality
+from config import TradingConfig, get_trading_config
 from database.models import Trade, Position, BotConfiguration, StockRepository, UserWatchlist
 from database.connection import SessionLocal
 
@@ -67,6 +68,9 @@ class TradingBot:
         self.indicator_service = IndicatorService()
         self.ai_advisor = get_ai_advisor()
 
+        # Load centralized trading configuration
+        self.trading_config = get_trading_config()
+
         # Bot state
         self.state = BotState.STOPPED
         self.start_time: Optional[datetime] = None
@@ -80,40 +84,40 @@ class TradingBot:
         self._queued_trades: List[Dict[str, Any]] = []
         self.auto_queue_strong_signals = True  # Auto-queue STRONG BUY when market closed
 
-        # Configuration
+        # Configuration (using TradingConfig for configurable values)
         self.enabled_symbols: List[str] = ["AAPL", "MSFT", "GOOGL", "AMZN", "NVDA"]
         self.user_symbols: List[str] = []  # User's personal stock picks
         self.paper_trading = paper_trading
         self.trading_hours_only = False  # Changed: trade during extended hours too!
         self.allow_extended_hours = True  # Trade pre-market and after-hours
-        self.cycle_interval_seconds = 60  # How often to run analysis
+        self.cycle_interval_seconds = self.trading_config.cycle_interval_seconds
         self.use_ai_discovery = True  # Use AI to discover stocks
         self.last_discovery_time: Optional[datetime] = None
 
-        # Exit Strategy Settings
+        # Exit Strategy Settings (from TradingConfig)
         self.trailing_stop_enabled = False
-        self.trailing_stop_pct = 0.03
-        self.trailing_stop_activation_pct = 0.05
+        self.trailing_stop_pct = self.trading_config.trailing_stop_pct
+        self.trailing_stop_activation_pct = self.trading_config.trailing_stop_activation_pct
         self.partial_profit_enabled = False
-        self.partial_profit_pct = 0.50  # Portion to sell
-        self.partial_profit_at = 0.05  # Profit level to trigger
+        self.partial_profit_pct = self.trading_config.partial_profit_pct
+        self.partial_profit_at = self.trading_config.partial_profit_trigger_pct
 
         # Profit Reinvestment
         self.reinvest_profits = True
         self.compounding_enabled = True
 
-        # Intraday Settings
+        # Intraday Settings (from TradingConfig)
         self.intraday_enabled = False
         self.intraday_timeframe = "5min"
-        self.max_trades_per_day = 10
+        self.max_trades_per_day = self.trading_config.max_trades_per_day
         self.trades_today = 0
 
         # Auto Trade Mode
         self.auto_trade_mode = False
         self.ai_risk_tolerance = "moderate"
 
-        # Crypto Trading Settings
-        self.crypto_trading_enabled = False
+        # Crypto Trading Settings - enabled by default for 24/7 trading
+        self.crypto_trading_enabled = True
         # Expanded crypto list - popular trading pairs on Alpaca
         self.crypto_symbols: List[str] = [
             "BTC/USD",   # Bitcoin
@@ -129,8 +133,8 @@ class TradingBot:
             "LTC/USD",   # Litecoin
             "UNI/USD",   # Uniswap
         ]
-        self.crypto_max_positions = 2
-        self.crypto_entry_threshold = 55.0  # Lower threshold for crypto (vs 70% for stocks)
+        self.crypto_max_positions = self.trading_config.crypto_max_positions
+        self.crypto_entry_threshold = self.trading_config.crypto_entry_threshold
         self._crypto_positions: Dict[str, Dict] = {}  # Track crypto positions
         self._crypto_analysis_results: Dict[str, Dict] = {}  # Track latest analysis for each crypto
         self._last_crypto_analysis_time: Optional[datetime] = None
@@ -198,7 +202,7 @@ class TradingBot:
         # This is the "make money every day" intelligent strategy
         self.hierarchical_mode_enabled = True  # Use smart cascading scan
         self.smart_scanner = get_smart_scanner()  # Intelligent scanner
-        self.daily_profit_target_pct = 0.5  # 0.5% daily goal
+        self.daily_profit_target_pct = self.trading_config.daily_profit_target_pct
         self.current_trading_horizon: Optional[TradingHorizon] = None
         self._hierarchical_scan_results: Dict[str, Any] = {}
 
@@ -296,7 +300,13 @@ class TradingBot:
     def _apply_config(self, config: Dict[str, Any]):
         """Apply configuration dictionary"""
         if "enabled_symbols" in config:
-            self.enabled_symbols = config["enabled_symbols"]
+            # Validate and filter symbols before applying
+            validated_symbols = self._validate_and_filter_symbols(config["enabled_symbols"], allow_crypto=False)
+            if validated_symbols:
+                self.enabled_symbols = validated_symbols
+                logger.info(f"[CONFIG] Applied {len(validated_symbols)} validated symbols")
+            else:
+                logger.warning("[CONFIG] No valid symbols in config, keeping existing symbols")
         if "paper_trading" in config:
             self.paper_trading = config["paper_trading"]
         if "trading_hours_only" in config:
@@ -401,6 +411,135 @@ class TradingBot:
 
         logger.info(f"Applied AI risk preset: {risk_level}")
 
+    def _normalize_and_validate_symbol(self, symbol: str, allow_crypto: bool = True) -> tuple[str, bool, str]:
+        """
+        Normalize and validate a trading symbol.
+
+        Args:
+            symbol: The symbol to validate (e.g., "AAPL", "btc/usd", " MSFT ")
+            allow_crypto: Whether to allow crypto symbols
+
+        Returns:
+            Tuple of (normalized_symbol, is_valid, error_message)
+            - normalized_symbol: Uppercase, stripped symbol (or empty string if invalid)
+            - is_valid: Whether the symbol passed validation
+            - error_message: Description of validation failure (empty if valid)
+        """
+        # Check for empty/None input
+        if not symbol or not isinstance(symbol, str):
+            logger.warning(f"[SYMBOL_VALIDATION] Invalid symbol: empty or not a string")
+            return "", False, "Symbol must be a non-empty string"
+
+        # Strip whitespace and convert to uppercase
+        normalized = symbol.strip().upper()
+
+        # Check if empty after stripping
+        if not normalized:
+            logger.warning(f"[SYMBOL_VALIDATION] Invalid symbol: '{symbol}' is empty after stripping whitespace")
+            return "", False, "Symbol is empty after removing whitespace"
+
+        # Check length (1-10 characters for standard symbols)
+        if len(normalized) < 1 or len(normalized) > 10:
+            logger.warning(f"[SYMBOL_VALIDATION] Invalid symbol length: '{normalized}' ({len(normalized)} chars, expected 1-10)")
+            return normalized, False, f"Symbol length must be 1-10 characters, got {len(normalized)}"
+
+        # Detect crypto vs stock
+        is_crypto = (
+            '/' in normalized or
+            normalized.endswith('USD') or
+            normalized.endswith('USDT') or
+            normalized.endswith('USDC')
+        )
+
+        if is_crypto:
+            if not allow_crypto:
+                logger.warning(f"[SYMBOL_VALIDATION] Crypto symbol '{normalized}' not allowed in stock context")
+                return normalized, False, "Crypto symbols not allowed in this context"
+
+            # Normalize crypto symbols to standard format (e.g., BTC/USD)
+            # Accept: BTC/USD, BTCUSD, BTC-USD -> normalize to BTC/USD
+            crypto_normalized = normalized.replace("-", "/")
+
+            # If no slash but ends with USD/USDT/USDC, add slash
+            if '/' not in crypto_normalized:
+                for suffix in ['USDT', 'USDC', 'USD']:
+                    if crypto_normalized.endswith(suffix):
+                        base = crypto_normalized[:-len(suffix)]
+                        if base:  # Ensure base is not empty
+                            crypto_normalized = f"{base}/{suffix}"
+                            break
+
+            # Validate crypto format: BASE/QUOTE
+            if '/' in crypto_normalized:
+                parts = crypto_normalized.split('/')
+                if len(parts) != 2 or not parts[0] or not parts[1]:
+                    logger.warning(f"[SYMBOL_VALIDATION] Invalid crypto format: '{normalized}'")
+                    return normalized, False, f"Invalid crypto symbol format: expected BASE/QUOTE"
+
+                # Validate base and quote are alphanumeric
+                base, quote = parts
+                if not base.isalnum() or not quote.isalnum():
+                    logger.warning(f"[SYMBOL_VALIDATION] Crypto symbol contains invalid characters: '{normalized}'")
+                    return normalized, False, "Crypto symbol must contain only alphanumeric characters"
+
+                logger.debug(f"[SYMBOL_VALIDATION] Validated crypto symbol: '{symbol}' -> '{crypto_normalized}'")
+                return crypto_normalized, True, ""
+            else:
+                logger.warning(f"[SYMBOL_VALIDATION] Could not parse crypto symbol: '{normalized}'")
+                return normalized, False, "Could not parse crypto symbol format"
+        else:
+            # Stock symbol validation
+            # Stock symbols should be 1-5 uppercase letters (some exceptions like BRK.A, BRK.B)
+
+            # Check for suspicious characters
+            valid_chars = set('ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.-')
+            if not all(c in valid_chars for c in normalized):
+                invalid_chars = [c for c in normalized if c not in valid_chars]
+                logger.warning(f"[SYMBOL_VALIDATION] Stock symbol contains invalid characters: '{normalized}' (found: {invalid_chars})")
+                return normalized, False, f"Stock symbol contains invalid characters: {invalid_chars}"
+
+            # Warn about unusually long stock symbols (>5 chars without special chars)
+            if len(normalized) > 5 and '.' not in normalized and '-' not in normalized:
+                logger.warning(f"[SYMBOL_VALIDATION] Suspicious stock symbol (unusually long): '{normalized}'")
+                # Still allow but log warning - could be valid (e.g., some OTC stocks)
+
+            logger.debug(f"[SYMBOL_VALIDATION] Validated stock symbol: '{symbol}' -> '{normalized}'")
+            return normalized, True, ""
+
+    def _validate_and_filter_symbols(self, symbols: List[str], allow_crypto: bool = False) -> List[str]:
+        """
+        Validate and normalize a list of symbols, filtering out invalid ones.
+
+        Args:
+            symbols: List of symbols to validate
+            allow_crypto: Whether to allow crypto symbols in the list
+
+        Returns:
+            List of valid, normalized symbols (invalid symbols are logged and removed)
+        """
+        if not symbols:
+            return []
+
+        valid_symbols = []
+        seen = set()
+
+        for symbol in symbols:
+            normalized, is_valid, error_msg = self._normalize_and_validate_symbol(symbol, allow_crypto=allow_crypto)
+
+            if is_valid:
+                # Avoid duplicates
+                if normalized not in seen:
+                    valid_symbols.append(normalized)
+                    seen.add(normalized)
+            else:
+                logger.warning(f"[SYMBOL_FILTER] Rejected invalid symbol '{symbol}': {error_msg}")
+
+        if len(valid_symbols) < len(symbols):
+            rejected_count = len(symbols) - len(valid_symbols)
+            logger.info(f"[SYMBOL_FILTER] Filtered {rejected_count} invalid symbols, kept {len(valid_symbols)} valid")
+
+        return valid_symbols
+
     async def _load_db_config(self):
         """Load configuration from database including user watchlist and stock repository"""
         try:
@@ -410,7 +549,10 @@ class TradingBot:
             config = db.query(BotConfiguration).filter(BotConfiguration.is_active == True).first()
 
             if config:
-                self.enabled_symbols = config.enabled_symbols or self.enabled_symbols
+                # Validate symbols from database config
+                if config.enabled_symbols:
+                    validated = self._validate_and_filter_symbols(config.enabled_symbols, allow_crypto=False)
+                    self.enabled_symbols = validated if validated else self.enabled_symbols
                 self.paper_trading = config.paper_trading
                 self.trading_hours_only = config.trading_hours_only
 
@@ -424,22 +566,22 @@ class TradingBot:
                 self.risk_manager.max_daily_loss_pct = config.max_daily_loss_pct
                 self.risk_manager.default_stop_loss_pct = config.default_stop_loss_pct
 
-                # Exit Strategies
+                # Exit Strategies (using TradingConfig values as defaults)
                 self.trailing_stop_enabled = getattr(config, 'trailing_stop_enabled', False)
-                self.trailing_stop_pct = getattr(config, 'trailing_stop_pct', 0.03)
-                self.trailing_stop_activation_pct = getattr(config, 'trailing_stop_activation_pct', 0.05)
+                self.trailing_stop_pct = getattr(config, 'trailing_stop_pct', self.trading_config.trailing_stop_pct)
+                self.trailing_stop_activation_pct = getattr(config, 'trailing_stop_activation_pct', self.trading_config.trailing_stop_activation_pct)
                 self.partial_profit_enabled = getattr(config, 'partial_profit_enabled', False)
-                self.partial_profit_pct = getattr(config, 'partial_profit_pct', 0.50)
-                self.partial_profit_at = getattr(config, 'partial_profit_at', 0.05)
+                self.partial_profit_pct = getattr(config, 'partial_profit_pct', self.trading_config.partial_profit_pct)
+                self.partial_profit_at = getattr(config, 'partial_profit_at', self.trading_config.partial_profit_trigger_pct)
 
                 # Profit Reinvestment
                 self.reinvest_profits = getattr(config, 'reinvest_profits', True)
                 self.compounding_enabled = getattr(config, 'compounding_enabled', True)
 
-                # Intraday
+                # Intraday (using TradingConfig values as defaults)
                 self.intraday_enabled = getattr(config, 'intraday_enabled', False)
                 self.intraday_timeframe = getattr(config, 'intraday_timeframe', "5min")
-                self.max_trades_per_day = getattr(config, 'max_trades_per_day', 10)
+                self.max_trades_per_day = getattr(config, 'max_trades_per_day', self.trading_config.max_trades_per_day)
 
                 # Auto Trade Mode
                 self.auto_trade_mode = getattr(config, 'auto_trade_mode', False)
@@ -465,18 +607,24 @@ class TradingBot:
 
             # Load user watchlist (highest priority stocks)
             user_stocks = db.query(UserWatchlist).filter(UserWatchlist.auto_trade == True).all()
-            self.user_symbols = [s.symbol for s in user_stocks]
+            raw_user_symbols = [s.symbol for s in user_stocks]
+            # Validate user symbols
+            self.user_symbols = self._validate_and_filter_symbols(raw_user_symbols, allow_crypto=False)
             if self.user_symbols:
                 logger.info(f"Loaded {len(self.user_symbols)} user stocks: {self.user_symbols}")
 
             # Load active stocks from repository
+            max_symbols = self.trading_config.max_enabled_symbols
             repo_stocks = db.query(StockRepository).filter(
                 StockRepository.is_active == True
-            ).order_by(StockRepository.priority.desc()).limit(20).all()
+            ).order_by(StockRepository.priority.desc()).limit(max_symbols).all()
 
-            repo_symbols = [s.symbol for s in repo_stocks]
+            raw_repo_symbols = [s.symbol for s in repo_stocks]
+            # Validate repository symbols
+            repo_symbols = self._validate_and_filter_symbols(raw_repo_symbols, allow_crypto=False)
 
             # Merge all symbols: user picks first (highest priority), then enabled, then repository
+            # Note: enabled_symbols already validated, user_symbols and repo_symbols just validated above
             all_symbols = []
             seen = set()
             for symbol in self.user_symbols + self.enabled_symbols + repo_symbols:
@@ -484,8 +632,8 @@ class TradingBot:
                     all_symbols.append(symbol)
                     seen.add(symbol)
 
-            self.enabled_symbols = all_symbols[:20]  # Cap at 20 for API limits
-            logger.info(f"Trading {len(self.enabled_symbols)} symbols: {self.enabled_symbols}")
+            self.enabled_symbols = all_symbols[:max_symbols]  # Cap at configured max for API limits
+            logger.info(f"Trading {len(self.enabled_symbols)} validated symbols: {self.enabled_symbols}")
 
             db.close()
         except Exception as e:
@@ -646,12 +794,13 @@ class TradingBot:
                 # Log to execution logger
                 self.execution_logger.log_failure(
                     symbol="SYSTEM",
+                    asset_class="system",
                     side="N/A",
                     quantity=0,
                     price=0,
+                    order_type="system",
                     error_code=ExecutionErrorCode.UNKNOWN_ERROR,
                     error_message=f"Main loop error: {str(e)}",
-                    api_response=None,
                 )
                 await asyncio.sleep(30)
 
@@ -678,7 +827,8 @@ class TradingBot:
 
             # Analyze all stocks and update their scores for when market opens
             self.current_cycle = "pre_analyzing"
-            for symbol in self.enabled_symbols[:10]:  # Limit to avoid rate limits
+            scan_batch = self.trading_config.scan_batch_size
+            for symbol in self.enabled_symbols[:scan_batch]:  # Limit to avoid rate limits
                 try:
                     signal = await self._analyze_symbol(symbol)
                     if signal:
@@ -761,6 +911,49 @@ class TradingBot:
             # Refresh symbols from watchlist
             await self._refresh_symbols_from_watchlist()
 
+            # Count stock positions (exclude crypto)
+            stock_positions = {k: v for k, v in self._positions_cache.items()
+                              if "/" not in k and not k.endswith("USD")}
+            num_stock_positions = len(stock_positions)
+            max_stock_positions = self.risk_manager.max_positions
+
+            # Check if at max capacity - only monitor existing positions, don't scan for new ones
+            # Capacity is reached if either:
+            # 1. Position count is at max
+            # 2. Buying power is too low (< $100 minimum to open meaningful position)
+            MIN_BUYING_POWER_FOR_NEW_POSITION = self.trading_config.min_buying_power_for_position
+            at_max_positions = num_stock_positions >= max_stock_positions
+            insufficient_buying_power = float(buying_power) < MIN_BUYING_POWER_FOR_NEW_POSITION
+            at_max_capacity = at_max_positions or insufficient_buying_power
+
+            if at_max_capacity:
+                # Determine the specific reason
+                if at_max_positions and insufficient_buying_power:
+                    capacity_reason = f"At max positions ({num_stock_positions}/{max_stock_positions}) and low buying power (${float(buying_power):.2f})"
+                elif at_max_positions:
+                    capacity_reason = f"At max positions ({num_stock_positions}/{max_stock_positions})"
+                else:
+                    capacity_reason = f"Insufficient buying power (${float(buying_power):.2f} < ${MIN_BUYING_POWER_FOR_NEW_POSITION} minimum)"
+
+                # At max capacity - update status to show monitoring mode only
+                self._stock_scan_progress = {
+                    "total": 0,
+                    "scanned": 0,
+                    "current_symbol": None,
+                    "signals_found": 0,
+                    "best_opportunity": None,
+                    "scan_status": "at_capacity",
+                    "scan_summary": f"{capacity_reason}. Monitoring existing positions only.",
+                    "last_scan_completed": datetime.now().isoformat(),
+                    "next_scan_in_seconds": self.cycle_interval_seconds,
+                    "market_status": "regular" if not extended_hours else "extended",
+                    "monitoring_only": True,
+                    "positions_held": list(stock_positions.keys()),
+                    "buying_power": float(buying_power),
+                }
+                logger.info(f"[Hierarchical] Capacity reached: {capacity_reason} - monitoring only, no new position scans")
+                return  # Exit early - no need to scan for new positions
+
             # Get symbols to scan (exclude those we already have positions in)
             symbols_to_scan = [s for s in self.enabled_symbols if s not in self._positions_cache]
 
@@ -777,10 +970,12 @@ class TradingBot:
                 "signals_found": 0,
                 "best_opportunity": None,
                 "scan_status": "hierarchical_scanning",
-                "scan_summary": "Starting hierarchical cascade scan...",
+                "scan_summary": f"Starting hierarchical cascade scan... ({num_stock_positions}/{max_stock_positions} positions)",
                 "last_scan_completed": None,
                 "next_scan_in_seconds": self.cycle_interval_seconds,
                 "market_status": "regular" if not extended_hours else "extended",
+                "current_positions": num_stock_positions,
+                "max_positions": max_stock_positions,
             }
 
             # Run the full cascade scan (Swing -> Intraday -> Scalp)
@@ -897,17 +1092,20 @@ class TradingBot:
 
         try:
             # Use limit order for extended hours, market order otherwise
-            order_type = "limit" if extended_hours else "market"
-            limit_price = opportunity.entry_price if extended_hours else None
-
-            result = await self.alpaca.place_order(
-                symbol=symbol,
-                qty=quantity,
-                side=side,
-                order_type=order_type,
-                limit_price=limit_price,
-                extended_hours=extended_hours,
-            )
+            if extended_hours:
+                result = await self.alpaca.submit_extended_hours_order(
+                    symbol=symbol,
+                    quantity=quantity,
+                    side=side,
+                    limit_price=opportunity.entry_price,
+                )
+            else:
+                result = await self.alpaca.submit_market_order(
+                    symbol=symbol,
+                    quantity=quantity,
+                    side=side,
+                    time_in_force="day",
+                )
 
             if result and result.get("id"):
                 logger.info(f"[Hierarchical] Order placed: {result['id']} for {symbol}")
@@ -917,9 +1115,40 @@ class TradingBot:
                 try:
                     # Map horizon to trade type
                     trade_type_map = {
+                        TradingHorizon.LONG: "LONG_TERM",
                         TradingHorizon.SWING: "SWING",
                         TradingHorizon.INTRADAY: "INTRADAY",
                         TradingHorizon.SCALP: "SCALP",
+                    }
+
+                    # Build detailed entry reason with trade plan
+                    entry_reason = self._build_entry_reason(opportunity)
+
+                    # Build indicators snapshot
+                    indicators_snapshot = {
+                        "scores": {
+                            "overall": opportunity.overall_score,
+                            "trend": opportunity.trend_score,
+                            "momentum": opportunity.momentum_score,
+                            "pattern": opportunity.pattern_score,
+                            "volume": opportunity.volume_score,
+                            "multi_tf": opportunity.multi_tf_score,
+                        },
+                        "levels": opportunity.key_levels,
+                        "risk_reward": opportunity.risk_reward_ratio,
+                        "timeframes": {
+                            "primary": opportunity.primary_timeframe,
+                            "confirmation": opportunity.confirmation_timeframe,
+                            "entry": opportunity.entry_timeframe,
+                        },
+                    }
+
+                    # Build confluence factors
+                    confluence_factors = {
+                        "confirming": opportunity.confluence_factors,
+                        "patterns": opportunity.patterns_detected,
+                        "elliott_wave": opportunity.elliott_wave,
+                        "warnings": opportunity.warnings,
                     }
 
                     new_position = Position(
@@ -929,9 +1158,11 @@ class TradingBot:
                         stop_loss_price=opportunity.stop_loss,
                         profit_target_price=opportunity.target_1,
                         trade_type=trade_type_map.get(opportunity.horizon, "SWING"),
-                        entry_reason=f"Hierarchical {opportunity.horizon.value}: {', '.join(opportunity.confluence_factors[:3])}",
+                        entry_reason=entry_reason,
                         entry_score=opportunity.overall_score,
-                        opened_at=datetime.now(),
+                        indicators_snapshot=indicators_snapshot,
+                        confluence_factors=confluence_factors,
+                        entry_time=datetime.now(),
                     )
                     db.add(new_position)
                     db.commit()
@@ -944,17 +1175,14 @@ class TradingBot:
                 # Log success
                 self.execution_logger.log_success(
                     symbol=symbol,
+                    asset_class="stock",
                     side=side,
                     quantity=quantity,
                     price=opportunity.entry_price,
+                    order_type="market",
                     order_id=result["id"],
-                    metadata={
-                        "horizon": opportunity.horizon.value,
-                        "quality": opportunity.quality.value,
-                        "score": opportunity.overall_score,
-                        "patterns": opportunity.patterns_detected,
-                        "elliott_wave": opportunity.elliott_wave,
-                    },
+                    filled_quantity=result.get("filled_qty", quantity),
+                    filled_price=result.get("filled_avg_price", opportunity.entry_price),
                 )
 
                 return result
@@ -964,12 +1192,13 @@ class TradingBot:
             error_code, error_msg = parse_api_error(str(e))
             self.execution_logger.log_failure(
                 symbol=symbol,
+                asset_class="stock",
                 side=side,
                 quantity=quantity,
                 price=opportunity.entry_price,
+                order_type="market",
                 error_code=error_code,
                 error_message=error_msg,
-                api_response=str(e),
             )
             return None
 
@@ -1288,17 +1517,20 @@ class TradingBot:
             # This makes the scanner follow the watchlist completely
             from database.models import UserWatchlist
             watchlist_stocks = db.query(UserWatchlist).all()
-            watchlist_symbols = [s.symbol for s in watchlist_stocks if s.symbol]
+            raw_symbols = [s.symbol for s in watchlist_stocks if s.symbol]
 
-            if watchlist_symbols:
-                # Use watchlist as the primary source, but keep some defaults if empty
-                self.enabled_symbols = list(set(watchlist_symbols))
-                logger.info(f"Refreshed stock symbols from watchlist: {len(self.enabled_symbols)} stocks")
+            # Validate and filter watchlist symbols
+            validated_symbols = self._validate_and_filter_symbols(raw_symbols, allow_crypto=False)
+
+            if validated_symbols:
+                # Use validated watchlist as the primary source
+                self.enabled_symbols = validated_symbols
+                logger.info(f"Refreshed stock symbols from watchlist: {len(self.enabled_symbols)} validated stocks")
             else:
-                # Fallback to defaults if watchlist is empty
+                # Fallback to defaults if watchlist is empty or all invalid
                 if not self.enabled_symbols:
                     self.enabled_symbols = ["AAPL", "MSFT", "GOOGL", "AMZN", "NVDA"]
-                logger.info(f"Watchlist empty, using defaults: {self.enabled_symbols}")
+                logger.info(f"Watchlist empty/invalid, using defaults: {self.enabled_symbols}")
 
             db.close()
         except Exception as e:
@@ -1328,8 +1560,15 @@ class TradingBot:
             )
 
             if discovered:
-                # Extract symbols from discovered stocks
-                new_symbols = [s["symbol"] for s in discovered if "symbol" in s]
+                # Extract and validate symbols from discovered stocks
+                new_symbols = []
+                for s in discovered:
+                    if "symbol" in s:
+                        normalized, is_valid, error_msg = self._normalize_and_validate_symbol(s["symbol"], allow_crypto=False)
+                        if is_valid:
+                            new_symbols.append(normalized)
+                        else:
+                            logger.warning(f"[AI_DISCOVERY] Skipping invalid symbol '{s['symbol']}': {error_msg}")
 
                 # Merge with existing symbols (keep unique)
                 existing = set(self.enabled_symbols)
@@ -1366,6 +1605,23 @@ class TradingBot:
 
     async def _analyze_symbol(self, symbol: str):
         """Analyze a symbol and generate trading signal"""
+        # Validate and normalize symbol first
+        normalized_symbol, is_valid, error_msg = self._normalize_and_validate_symbol(symbol, allow_crypto=False)
+        if not is_valid:
+            logger.warning(f"[ANALYZE] Invalid symbol '{symbol}': {error_msg}")
+            self.execution_logger.log_failure(
+                symbol=symbol,
+                asset_class="stock",
+                side="buy",
+                quantity=0,
+                price=None,
+                order_type="analysis",
+                error_code=ExecutionErrorCode.INVALID_SYMBOL,
+                error_message=error_msg,
+            )
+            return None
+        symbol = normalized_symbol
+
         try:
             # Get historical bars
             logger.info(f"[ANALYZE] Fetching bars for {symbol}...")
@@ -1508,6 +1764,23 @@ class TradingBot:
             shares: Number of shares
             extended_hours: If True, use limit order for extended hours
         """
+        # Validate and normalize symbol
+        normalized_symbol, is_valid, error_msg = self._normalize_and_validate_symbol(symbol, allow_crypto=False)
+        if not is_valid:
+            logger.warning(f"[ENTRY] Invalid symbol '{symbol}': {error_msg}")
+            self.execution_logger.log_failure(
+                symbol=symbol,
+                asset_class="stock",
+                side="buy",
+                quantity=shares,
+                price=getattr(signal, 'current_price', None),
+                order_type="market" if not extended_hours else "limit",
+                error_code=ExecutionErrorCode.INVALID_SYMBOL,
+                error_message=error_msg,
+            )
+            raise ValueError(f"Invalid symbol: {error_msg}")
+        symbol = normalized_symbol
+
         try:
             order_type = "limit (extended)" if extended_hours else "market"
             logger.info(
@@ -1535,7 +1808,7 @@ class TradingBot:
             if extended_hours:
                 # Extended hours require limit orders
                 # Use current price with small buffer for limit
-                limit_price = round(signal.current_price * 1.001, 2)  # 0.1% above current
+                limit_price = round(signal.current_price * (1 + self.trading_config.limit_order_offset_pct), 2)
                 order = await self.alpaca.submit_extended_hours_order(
                     symbol=symbol,
                     quantity=shares,
@@ -1578,6 +1851,26 @@ class TradingBot:
                 )
                 db.add(trade)
 
+                # Build entry reason from signal
+                entry_reason = self._build_signal_entry_reason(signal, filled_price)
+
+                # Build indicators snapshot if available
+                indicators_snapshot = None
+                if signal.indicators:
+                    indicators_snapshot = {
+                        "raw": signal.indicators,
+                        "score": signal.score,
+                        "trade_type": signal.trade_type.value if signal.trade_type else "SWING",
+                    }
+
+                # Build confluence factors
+                confluence_factors = None
+                if signal.confluence_factors:
+                    confluence_factors = {
+                        "confirming": signal.confluence_factors,
+                        "signal_type": signal.signal_type.value if signal.signal_type else "UNKNOWN",
+                    }
+
                 # Create position record
                 position = Position(
                     symbol=symbol,
@@ -1589,6 +1882,9 @@ class TradingBot:
                     trade_type=signal.trade_type.value,
                     strategy_name="default",
                     entry_score=signal.score,
+                    entry_reason=entry_reason,
+                    indicators_snapshot=indicators_snapshot,
+                    confluence_factors=confluence_factors,
                 )
                 db.add(position)
                 db.commit()
@@ -1637,6 +1933,23 @@ class TradingBot:
 
     async def _execute_partial_exit(self, symbol: str, quantity: int, reason: str):
         """Execute partial exit trade (for partial profit taking)"""
+        # Validate and normalize symbol
+        normalized_symbol, is_valid, error_msg = self._normalize_and_validate_symbol(symbol, allow_crypto=False)
+        if not is_valid:
+            logger.warning(f"[PARTIAL_EXIT] Invalid symbol '{symbol}': {error_msg}")
+            self.execution_logger.log_failure(
+                symbol=symbol,
+                asset_class="stock",
+                side="sell",
+                quantity=quantity,
+                price=None,
+                order_type="market",
+                error_code=ExecutionErrorCode.INVALID_SYMBOL,
+                error_message=error_msg,
+            )
+            raise ValueError(f"Invalid symbol: {error_msg}")
+        symbol = normalized_symbol
+
         try:
             logger.info(f"PARTIAL EXIT: {symbol} - {quantity} shares (reason: {reason})")
 
@@ -1736,16 +2049,15 @@ class TradingBot:
                     # Try fractional
                     quantity = round(position_value / current_price, 4)
 
-                if quantity <= 0 or position_value < 10:
+                if quantity <= 0 or position_value < self.trading_config.min_position_value_crypto:
                     failed.append({"symbol": symbol, "error": "Position size too small"})
                     continue
 
                 if signal.upper() == "BUY":
-                    order = await self.alpaca.place_order(
+                    order = await self.alpaca.submit_market_order(
                         symbol=symbol,
-                        qty=quantity,
+                        quantity=quantity,
                         side="buy",
-                        order_type="market",
                         time_in_force="day",
                     )
 
@@ -1795,14 +2107,21 @@ class TradingBot:
             confidence: Signal confidence score
             reason: Reason for queueing
         """
+        # Validate and normalize symbol
+        normalized_symbol, is_valid, error_msg = self._normalize_and_validate_symbol(symbol)
+        if not is_valid:
+            logger.warning(f"[QUEUE] Invalid symbol '{symbol}': {error_msg}")
+            return False
+        symbol = normalized_symbol
+
         # Check if already queued
-        existing = [t for t in self._queued_trades if t["symbol"] == symbol.upper()]
+        existing = [t for t in self._queued_trades if t["symbol"] == symbol]
         if existing:
             logger.debug(f"{symbol} already queued")
             return False
 
         trade = {
-            "symbol": symbol.upper(),
+            "symbol": symbol,
             "signal": signal.upper(),
             "confidence": confidence,
             "reason": reason or f"Strong {signal} signal detected while market closed",
@@ -1816,6 +2135,23 @@ class TradingBot:
 
     async def _execute_exit(self, symbol: str, quantity: float, reason: str):
         """Execute exit trade"""
+        # Validate and normalize symbol
+        normalized_symbol, is_valid, error_msg = self._normalize_and_validate_symbol(symbol)
+        if not is_valid:
+            logger.warning(f"[EXIT] Invalid symbol '{symbol}': {error_msg}")
+            self.execution_logger.log_failure(
+                symbol=symbol,
+                asset_class="stock",
+                side="sell",
+                quantity=quantity,
+                price=None,
+                order_type="market",
+                error_code=ExecutionErrorCode.INVALID_SYMBOL,
+                error_message=error_msg,
+            )
+            raise ValueError(f"Invalid symbol: {error_msg}")
+        symbol = normalized_symbol
+
         try:
             logger.info(f"EXIT: {symbol} - {quantity} shares (reason: {reason})")
 
@@ -1971,6 +2307,109 @@ class TradingBot:
         else:
             return f"Waiting for signal ({signal})"
 
+    def _build_entry_reason(self, opportunity) -> str:
+        """
+        Build a detailed human-readable entry reason explaining:
+        - Why we entered this position
+        - What the trade plan is (targets, stop loss)
+        - Key confluence factors
+
+        Args:
+            opportunity: TradingOpportunity object with all trade details
+
+        Returns:
+            A formatted string explaining the trade rationale
+        """
+        # Build horizon description
+        horizon_desc = {
+            "LONG": "Long-term hold (10+ days, targeting 15-30% gain)",
+            "SWING": "Swing trade (2-10 days, targeting 5-15% gain)",
+            "INTRADAY": "Intraday trade (1-8 hours, targeting 1-3% gain)",
+            "SCALP": "Scalp trade (5-60 min, targeting 0.3-1% gain)",
+        }
+        horizon_text = horizon_desc.get(opportunity.horizon.value, opportunity.horizon.value)
+
+        # Build signal strength description
+        if opportunity.overall_score >= 85:
+            strength = "EXCELLENT"
+        elif opportunity.overall_score >= 70:
+            strength = "STRONG"
+        elif opportunity.overall_score >= 55:
+            strength = "MODERATE"
+        else:
+            strength = "WEAK"
+
+        # Format confluence factors
+        confluence_text = ", ".join(opportunity.confluence_factors[:4]) if opportunity.confluence_factors else "Multiple indicators aligned"
+
+        # Format patterns detected
+        patterns_text = ", ".join(opportunity.patterns_detected[:3]) if opportunity.patterns_detected else None
+
+        # Build the entry reason
+        parts = [
+            f"[{strength} {opportunity.direction}] {horizon_text}",
+            f"Score: {opportunity.overall_score:.0f}/100 | R:R {opportunity.risk_reward_ratio:.1f}:1",
+            f"Entry: ${opportunity.entry_price:.2f} | Stop: ${opportunity.stop_loss:.2f} | Target: ${opportunity.target_1:.2f}",
+            f"Confluence: {confluence_text}",
+        ]
+
+        # Add patterns if detected
+        if patterns_text:
+            parts.append(f"Patterns: {patterns_text}")
+
+        # Add Elliott Wave if present
+        if opportunity.elliott_wave:
+            parts.append(f"Elliott: {opportunity.elliott_wave}")
+
+        # Add warnings if present
+        if opportunity.warnings:
+            parts.append(f"Caution: {', '.join(opportunity.warnings[:2])}")
+
+        return " | ".join(parts[:5])  # Limit to 500 chars (field limit)
+
+    def _build_signal_entry_reason(self, signal, filled_price: float) -> str:
+        """
+        Build entry reason from a trading signal (used for non-hierarchical trades).
+
+        Args:
+            signal: TradingSignal object
+            filled_price: The actual fill price
+
+        Returns:
+            A formatted string explaining the trade rationale
+        """
+        # Build signal strength description
+        if signal.score >= 85:
+            strength = "EXCELLENT"
+        elif signal.score >= 70:
+            strength = "STRONG"
+        elif signal.score >= 55:
+            strength = "MODERATE"
+        else:
+            strength = "WEAK"
+
+        # Trade type description
+        trade_type = signal.trade_type.value if signal.trade_type else "SWING"
+
+        # Build parts
+        parts = [
+            f"[{strength} {signal.signal_type.value if signal.signal_type else 'BUY'}] {trade_type}",
+            f"Score: {signal.score:.0f}/100",
+            f"Entry: ${filled_price:.2f}",
+        ]
+
+        # Add targets if available
+        if signal.suggested_stop_loss:
+            parts.append(f"Stop: ${signal.suggested_stop_loss:.2f}")
+        if signal.suggested_profit_target:
+            parts.append(f"Target: ${signal.suggested_profit_target:.2f}")
+
+        # Add confluence if available
+        if hasattr(signal, 'confluence_factors') and signal.confluence_factors:
+            parts.append(f"Confluence: {', '.join(signal.confluence_factors[:3])}")
+
+        return " | ".join(parts[:5])  # Limit to 500 chars
+
     def _log_execution_event(
         self,
         symbol: str,
@@ -1989,6 +2428,11 @@ class TradingBot:
             reason: Human-readable reason for the outcome
             details: Additional details (prices, scores, etc.)
         """
+        # Normalize symbol for consistent logging (but don't fail on invalid)
+        normalized_symbol, _, _ = self._normalize_and_validate_symbol(symbol)
+        if normalized_symbol:
+            symbol = normalized_symbol
+
         event = {
             "timestamp": datetime.now().isoformat(),
             "symbol": symbol,
@@ -2021,6 +2465,10 @@ class TradingBot:
         """
         log = self._execution_log
         if symbol:
+            # Normalize the filter symbol for consistent matching
+            normalized_symbol, _, _ = self._normalize_and_validate_symbol(symbol)
+            if normalized_symbol:
+                symbol = normalized_symbol
             log = [e for e in log if e["symbol"] == symbol]
         return log[-limit:]
 
@@ -2140,111 +2588,146 @@ class TradingBot:
             best_buy_confidence = 0
             signals_above_threshold = 0
 
+            # Check if at max capacity - only monitor existing positions, don't scan for new ones
+            # Capacity is reached if either:
+            # 1. Position count is at max
+            # 2. Buying power is too low (< $100 minimum to open meaningful position)
+            MIN_BUYING_POWER_FOR_NEW_POSITION = self.trading_config.min_buying_power_for_position
+            at_max_positions = num_crypto_positions >= self.crypto_max_positions
+            insufficient_buying_power = buying_power < MIN_BUYING_POWER_FOR_NEW_POSITION
+            at_max_capacity = at_max_positions or insufficient_buying_power
+
+            if at_max_capacity:
+                # Determine the specific reason
+                if at_max_positions and insufficient_buying_power:
+                    capacity_reason = f"At max positions ({num_crypto_positions}/{self.crypto_max_positions}) and low buying power (${buying_power:.2f})"
+                elif at_max_positions:
+                    capacity_reason = f"At max positions ({num_crypto_positions}/{self.crypto_max_positions})"
+                else:
+                    capacity_reason = f"Insufficient buying power (${buying_power:.2f} < ${MIN_BUYING_POWER_FOR_NEW_POSITION} minimum)"
+
+                # At max capacity - update status to show monitoring mode only
+                self._crypto_scan_progress = {
+                    "total": 0,
+                    "scanned": 0,
+                    "current_symbol": None,
+                    "signals_found": 0,
+                    "best_opportunity": None,
+                    "scan_status": "at_capacity",
+                    "scan_summary": f"{capacity_reason}. Monitoring existing positions only.",
+                    "last_scan_completed": datetime.now().isoformat(),
+                    "next_scan_in_seconds": self.cycle_interval_seconds,
+                    "monitoring_only": True,
+                    "positions_held": list(current_crypto_positions.keys()),
+                    "buying_power": buying_power,
+                }
+                logger.info(f"Crypto capacity reached: {capacity_reason} - monitoring only, no new position scans")
+                return  # Exit early - no need to scan for new positions
+
             # If we have room for more positions, look for entry opportunities
-            if num_crypto_positions < self.crypto_max_positions:
-                for idx, symbol in enumerate(symbols_to_scan):
-                    # Update scan progress
-                    self._crypto_scan_progress["current_symbol"] = symbol
-                    self._crypto_scan_progress["scanned"] = idx + 1
-                    self._crypto_scan_progress["scan_summary"] = f"Analyzing {symbol}... ({idx + 1}/{len(symbols_to_scan)})"
+            for idx, symbol in enumerate(symbols_to_scan):
+                # Update scan progress
+                self._crypto_scan_progress["current_symbol"] = symbol
+                self._crypto_scan_progress["scanned"] = idx + 1
+                self._crypto_scan_progress["scan_summary"] = f"Analyzing {symbol}... ({idx + 1}/{len(symbols_to_scan)})"
 
-                    try:
-                        # Analyze crypto for entry
-                        analysis = await crypto_service.analyze_crypto(symbol)
-                        if not analysis:
-                            logger.debug(f"No analysis returned for {symbol}")
-                            # Track that we analyzed but got no data
-                            self._crypto_analysis_results[symbol] = {
-                                "signal": "NO_DATA",
-                                "confidence": 0,
-                                "threshold": self.crypto_entry_threshold,
-                                "reason": "No analysis data available",
-                                "timestamp": datetime.now().isoformat(),
-                            }
-                            continue
-
-                        # Map crypto service response to our format
-                        recommendation = analysis.get("recommendation", "HOLD")
-                        score = analysis.get("score", 50)
-
-                        # Convert recommendation to simple signal
-                        if recommendation in ["BUY", "STRONG_BUY", "LEAN_BUY"]:
-                            signal = "BUY"
-                        elif recommendation in ["SELL", "STRONG_SELL", "LEAN_SELL"]:
-                            signal = "SELL"
-                        else:
-                            signal = "NEUTRAL"
-
-                        confidence = score
-
-                        # Track best buy opportunity (even if below threshold)
-                        if signal == "BUY" and confidence > best_buy_confidence:
-                            best_buy_confidence = confidence
-                            best_buy_signal = {
-                                "symbol": symbol,
-                                "confidence": confidence,
-                                "threshold": self.crypto_entry_threshold,
-                                "meets_threshold": confidence >= self.crypto_entry_threshold,
-                            }
-
-                        # Track analysis result - use lower crypto threshold
+                try:
+                    # Analyze crypto for entry
+                    analysis = await crypto_service.analyze_crypto(symbol)
+                    if not analysis:
+                        logger.debug(f"No analysis returned for {symbol}")
+                        # Track that we analyzed but got no data
                         self._crypto_analysis_results[symbol] = {
-                            "signal": signal,
+                            "signal": "NO_DATA",
+                            "confidence": 0,
+                            "threshold": self.crypto_entry_threshold,
+                            "reason": "No analysis data available",
+                            "timestamp": datetime.now().isoformat(),
+                        }
+                        continue
+
+                    # Map crypto service response to our format
+                    recommendation = analysis.get("recommendation", "HOLD")
+                    score = analysis.get("score", 50)
+
+                    # Convert recommendation to simple signal
+                    if recommendation in ["BUY", "STRONG_BUY", "LEAN_BUY"]:
+                        signal = "BUY"
+                    elif recommendation in ["SELL", "STRONG_SELL", "LEAN_SELL"]:
+                        signal = "SELL"
+                    else:
+                        signal = "NEUTRAL"
+
+                    confidence = score
+
+                    # Track best buy opportunity (even if below threshold)
+                    if signal == "BUY" and confidence > best_buy_confidence:
+                        best_buy_confidence = confidence
+                        best_buy_signal = {
+                            "symbol": symbol,
                             "confidence": confidence,
                             "threshold": self.crypto_entry_threshold,
-                            "meets_threshold": signal == "BUY" and confidence >= self.crypto_entry_threshold,
-                            "reason": self._get_analysis_reason(signal, confidence, self.crypto_entry_threshold),
-                            "timestamp": datetime.now().isoformat(),
-                            "indicators": analysis.get("indicators", {}),
-                            "signals": analysis.get("signals", []),
+                            "meets_threshold": confidence >= self.crypto_entry_threshold,
                         }
-                        self._last_crypto_analysis_time = datetime.now()
 
-                        logger.info(f"Crypto analysis for {symbol}: signal={signal}, confidence={confidence:.1f}, threshold={self.crypto_entry_threshold}")
+                    # Track analysis result - use lower crypto threshold
+                    self._crypto_analysis_results[symbol] = {
+                        "signal": signal,
+                        "confidence": confidence,
+                        "threshold": self.crypto_entry_threshold,
+                        "meets_threshold": signal == "BUY" and confidence >= self.crypto_entry_threshold,
+                        "reason": self._get_analysis_reason(signal, confidence, self.crypto_entry_threshold),
+                        "timestamp": datetime.now().isoformat(),
+                        "indicators": analysis.get("indicators", {}),
+                        "signals": analysis.get("signals", []),
+                    }
+                    self._last_crypto_analysis_time = datetime.now()
 
-                        # Use CRYPTO-SPECIFIC threshold (lower than stocks)
-                        if signal == "BUY" and confidence >= self.crypto_entry_threshold:
-                            signals_above_threshold += 1
-                            self._crypto_scan_progress["signals_found"] = signals_above_threshold
+                    logger.info(f"Crypto analysis for {symbol}: signal={signal}, confidence={confidence:.1f}, threshold={self.crypto_entry_threshold}")
 
-                            # Calculate position size using same risk params as stocks
-                            quote = await crypto_service.get_crypto_quote(symbol)
-                            if not quote or quote.get("price", 0) <= 0:
-                                continue
+                    # Use CRYPTO-SPECIFIC threshold (lower than stocks)
+                    if signal == "BUY" and confidence >= self.crypto_entry_threshold:
+                        signals_above_threshold += 1
+                        self._crypto_scan_progress["signals_found"] = signals_above_threshold
 
-                            price = quote["price"]
+                        # Calculate position size using same risk params as stocks
+                        quote = await crypto_service.get_crypto_quote(symbol)
+                        if not quote or quote.get("price", 0) <= 0:
+                            continue
 
-                            # === AI EVALUATION FOR ALL SIGNALS (for transparency) ===
-                            # Always run AI evaluation so users can see why trades pass/fail
-                            ai_decision = None
-                            logger.info(f"AI Evaluating {symbol} crypto trade (auto_trade_mode={self.auto_trade_mode})...")
-                            self._crypto_scan_progress["scan_summary"] = f"AI evaluating {symbol}..."
+                        price = quote["price"]
 
-                            # Get existing crypto positions for portfolio context
-                            existing_crypto_symbols = list(current_crypto_positions.keys())
+                        # === AI EVALUATION FOR ALL SIGNALS (for transparency) ===
+                        # Always run AI evaluation so users can see why trades pass/fail
+                        ai_decision = None
+                        logger.info(f"AI Evaluating {symbol} crypto trade (auto_trade_mode={self.auto_trade_mode})...")
+                        self._crypto_scan_progress["scan_summary"] = f"AI evaluating {symbol}..."
 
-                            # Ask AI to evaluate the trade
-                            try:
-                                ai_decision = await self.ai_advisor.evaluate_crypto_trade(
-                                    symbol=symbol,
-                                    technical_analysis=analysis,
-                                    current_price=price,
-                                    account_info={
-                                        "equity": float(account.get("equity", 0)),
-                                        "buying_power": buying_power,
-                                        "crypto_positions": num_crypto_positions,
-                                        "max_crypto_positions": self.crypto_max_positions,
-                                    },
-                                    existing_positions=existing_crypto_symbols,
-                                )
-                            except Exception as e:
-                                logger.warning(f"AI evaluation failed for {symbol}: {e}")
-                                ai_decision = {
-                                    "decision": "WAIT",
-                                    "confidence": 0,
-                                    "reasoning": f"AI evaluation unavailable: {str(e)[:50]}",
-                                    "concerns": ["AI service error"],
-                                }
+                        # Get existing crypto positions for portfolio context
+                        existing_crypto_symbols = list(current_crypto_positions.keys())
+
+                        # Ask AI to evaluate the trade
+                        try:
+                            ai_decision = await self.ai_advisor.evaluate_crypto_trade(
+                                symbol=symbol,
+                                technical_analysis=analysis,
+                                current_price=price,
+                                account_info={
+                                    "equity": float(account.get("equity", 0)),
+                                    "buying_power": buying_power,
+                                    "crypto_positions": num_crypto_positions,
+                                    "max_crypto_positions": self.crypto_max_positions,
+                                },
+                                existing_positions=existing_crypto_symbols,
+                            )
+                        except Exception as e:
+                            logger.warning(f"AI evaluation failed for {symbol}: {e}")
+                            ai_decision = {
+                                "decision": "WAIT",
+                                "confidence": 0,
+                                "reasoning": f"AI evaluation unavailable: {str(e)[:50]}",
+                                "concerns": ["AI service error"],
+                            }
 
                             # Log AI decision
                             self._log_ai_decision(symbol, ai_decision, analysis)
@@ -2308,7 +2791,7 @@ class TradingBot:
                             position_value = buying_power * position_size_pct
                             position_value = min(position_value, buying_power * self.risk_manager.max_position_size_pct)
 
-                            if position_value < 10:  # Minimum $10 for crypto
+                            if position_value < self.trading_config.min_position_value_crypto:
                                 logger.debug(f"Insufficient buying power for {symbol}")
                                 continue
 
@@ -2353,12 +2836,13 @@ class TradingBot:
                                     # Log to enhanced ExecutionLogger
                                     self.execution_logger.log_failure(
                                         symbol=symbol,
+                                        asset_class="crypto",
                                         side="BUY",
                                         quantity=qty,
                                         price=price,
+                                        order_type="market",
                                         error_code=error_code,
                                         error_message=parsed_msg,
-                                        api_response={"status_code": status_code, "message": error_msg},
                                     )
 
                                     # Also log to legacy event log
@@ -2384,10 +2868,14 @@ class TradingBot:
                                 filled_price = order.get("filled_avg_price") or price
                                 self.execution_logger.log_success(
                                     symbol=symbol,
+                                    asset_class="crypto",
                                     side="BUY",
                                     quantity=order.get("qty", qty),
                                     price=filled_price,
+                                    order_type="market",
                                     order_id=order.get("order_id"),
+                                    filled_quantity=order.get("filled_qty", qty),
+                                    filled_price=filled_price,
                                 )
 
                                 # Log successful execution (legacy)
@@ -2419,12 +2907,13 @@ class TradingBot:
                                 # Order returned None - log this failure
                                 self.execution_logger.log_failure(
                                     symbol=symbol,
+                                    asset_class="crypto",
                                     side="BUY",
                                     quantity=qty,
                                     price=price,
+                                    order_type="market",
                                     error_code=ExecutionErrorCode.NETWORK_ERROR,
                                     error_message="Order returned None - API call failed or returned no data",
-                                    api_response=None,
                                 )
 
                                 self._log_execution_event(
@@ -2440,14 +2929,15 @@ class TradingBot:
                                     }
                                 )
 
-                    except Exception as e:
-                        logger.error(f"Error analyzing crypto {symbol}: {e}")
+                except Exception as e:
+                    logger.error(f"Error analyzing crypto {symbol}: {e}")
 
             # Finalize scan tracking
             self._crypto_scan_progress["scanned"] = len(symbols_to_scan)
             self._crypto_scan_progress["current_symbol"] = None
             self._crypto_scan_progress["best_opportunity"] = best_buy_signal
             self._crypto_scan_progress["last_scan_completed"] = datetime.now().isoformat()
+            self._total_scans_today += 1  # Count crypto scans too
 
             # Set final scan status and summary
             if self._crypto_scan_progress["scan_status"] != "found_opportunity":
@@ -2474,6 +2964,13 @@ class TradingBot:
 
     async def _check_crypto_exit(self, crypto_service: CryptoService, symbol: str, position: Dict):
         """Check if a crypto position should be exited"""
+        # Validate and normalize crypto symbol
+        normalized_symbol, is_valid, error_msg = self._normalize_and_validate_symbol(symbol, allow_crypto=True)
+        if not is_valid:
+            logger.warning(f"[CRYPTO_EXIT] Invalid symbol '{symbol}': {error_msg}")
+            return
+        symbol = normalized_symbol
+
         try:
             qty = float(position.get("qty", 0))
             entry_price = float(position.get("avg_entry_price", 0))

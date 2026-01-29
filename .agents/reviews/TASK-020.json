@@ -1,0 +1,74 @@
+{
+  "task_id": "TASK-020",
+  "title": "Fix AlpacaService.place_order -> correct method name",
+  "reviewer": "reviewer",
+  "reviewed_at": "2026-01-29T02:30:00Z",
+  "status": "APPROVED",
+  "score": 100,
+  "summary": "Task requirement already satisfied. No alpaca.place_order() calls exist in bot.py. All stock order placements correctly use submit_market_order() which is the proper method name in AlpacaService.",
+  "verification_performed": {
+    "alpaca_service_methods_verified": true,
+    "method_names_found": [
+      "submit_market_order",
+      "submit_limit_order",
+      "submit_bracket_order",
+      "submit_stop_loss_order",
+      "submit_oco_order",
+      "submit_trailing_stop_order",
+      "submit_extended_hours_order",
+      "replace_order"
+    ],
+    "bot_py_search_for_place_order": "No matches found",
+    "bot_py_submit_market_order_calls": [
+      "Line 1380: result = await bot.alpaca.submit_market_order(symbol, quantity, 'buy', 'day')",
+      "Line 1588: result = await bot.alpaca.submit_market_order(symbol, quantity, 'buy', 'day')"
+    ],
+    "method_signature_match": true
+  },
+  "detailed_findings": {
+    "alpaca_service_analysis": {
+      "file": "api/services/alpaca_service.py",
+      "order_methods": {
+        "submit_market_order": "async def submit_market_order(self, symbol: str, quantity: float, side: str, time_in_force: str = 'day') -> Dict[str, Any]",
+        "submit_limit_order": "async def submit_limit_order(self, symbol: str, quantity: float, side: str, limit_price: float, time_in_force: str = 'day') -> Dict[str, Any]",
+        "submit_bracket_order": "async def submit_bracket_order(self, symbol: str, quantity: float, side: str, stop_loss_price: float, take_profit_price: float, ...) -> Dict[str, Any]"
+      },
+      "no_place_order_method_exists": true
+    },
+    "bot_py_analysis": {
+      "file": "api/routes/bot.py",
+      "stock_order_calls": {
+        "execute_opportunity_endpoint": {
+          "location": "Line 1380-1385",
+          "code": "result = await bot.alpaca.submit_market_order(symbol=symbol, quantity=quantity, side='buy', time_in_force='day')",
+          "status": "CORRECT - uses submit_market_order with proper signature"
+        },
+        "auto_trade_opportunities_endpoint": {
+          "location": "Line 1588-1593",
+          "code": "result = await bot.alpaca.submit_market_order(symbol=symbol, quantity=quantity, side='buy', time_in_force='day')",
+          "status": "CORRECT - uses submit_market_order with proper signature"
+        }
+      },
+      "grep_for_place_order": "No matches found - no .place_order( calls in entire api/ directory"
+    }
+  },
+  "acceptance_criteria_verification": {
+    "no_attributeerror_about_place_order": {
+      "status": "VERIFIED",
+      "reason": "No place_order calls exist in codebase. submit_market_order is the correct method name."
+    },
+    "method_calls_match_signature": {
+      "status": "VERIFIED",
+      "reason": "Both calls at lines 1380 and 1588 use (symbol, quantity, side, time_in_force) which matches AlpacaService.submit_market_order signature"
+    }
+  },
+  "issues_found": [],
+  "recommendations": [],
+  "notes": [
+    "The task was created under the assumption that bot.py had alpaca.place_order() calls similar to the crypto place_order bug in TASK-019.",
+    "However, the stock order code was already correctly using submit_market_order() from the start or was fixed in a prior update.",
+    "No code changes were needed - the implementation is already correct.",
+    "Task can be marked as complete as the acceptance criteria are already satisfied."
+  ],
+  "next_status": "qa_pending"
+}

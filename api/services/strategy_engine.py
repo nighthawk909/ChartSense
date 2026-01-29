@@ -40,13 +40,19 @@ class TradingSignal:
 
 
 # Default indicator weights for entry scoring
+# Updated based on backtest analysis (2026-01-28):
+# - Momentum: Best performer (avg Sharpe 0.33) - INCREASED weight
+# - Mean Reversion: Second best (avg Sharpe 0.17) - ADDED
+# - MACD: Worst performer (avg Sharpe -0.43) - REDUCED weight
+# - RSI: Needs tighter thresholds (25/75 instead of 30/70)
 DEFAULT_WEIGHTS = {
-    "rsi": 0.20,
-    "macd": 0.25,
-    "sma_crossover": 0.20,
-    "price_vs_sma20": 0.15,
-    "bollinger": 0.10,
-    "volume": 0.10,
+    "momentum": 0.25,      # NEW - best performing strategy
+    "mean_reversion": 0.20, # NEW - second best strategy
+    "rsi": 0.20,           # Keep - useful with tighter thresholds
+    "sma_crossover": 0.15, # Reduced slightly
+    "bollinger": 0.10,     # Keep for range-bound detection
+    "volume": 0.05,        # Reduced
+    "macd": 0.05,          # REDUCED from 0.25 - poor backtest results
 }
 
 
@@ -222,11 +228,23 @@ class StrategyEngine:
         indicators["ema_12"] = ema_12[-1] if ema_12 else prices[-1]
         indicators["ema_26"] = ema_26[-1] if ema_26 else prices[-1]
 
-        # Price momentum (5-day rate of change)
+        # Price momentum (rate of change)
         if len(prices) >= 5:
             indicators["momentum_5d"] = ((prices[-1] - prices[-5]) / prices[-5]) * 100
         else:
             indicators["momentum_5d"] = 0
+
+        # 20-day momentum - KEY for momentum strategy (best performer in backtests)
+        if len(prices) >= 20:
+            indicators["momentum_20d"] = ((prices[-1] - prices[-20]) / prices[-20]) * 100
+        else:
+            indicators["momentum_20d"] = indicators["momentum_5d"] * 2  # Approximation
+
+        # Mean reversion indicator - deviation from 20 SMA
+        if indicators["sma_20"] > 0:
+            indicators["deviation_from_sma20"] = ((prices[-1] - indicators["sma_20"]) / indicators["sma_20"]) * 100
+        else:
+            indicators["deviation_from_sma20"] = 0
 
         return indicators
 
@@ -242,19 +260,19 @@ class StrategyEngine:
         scores = {}
         reasons = []
 
-        # RSI Score (oversold = bullish, overbought = bearish)
+        # RSI Score - UPDATED: tighter thresholds (25/75) per backtest analysis
         rsi = indicators["rsi_14"]
-        if rsi < 30:
-            scores["rsi"] = 90  # Oversold - strong buy
+        if rsi < 25:
+            scores["rsi"] = 95  # Very oversold - strong buy
+            reasons.append(f"RSI very oversold at {rsi:.1f} (strong buy)")
+        elif rsi < 35:
+            scores["rsi"] = 75  # Oversold - buy signal
             reasons.append(f"RSI oversold at {rsi:.1f}")
-        elif rsi < 40:
-            scores["rsi"] = 70  # Getting oversold
-            reasons.append(f"RSI approaching oversold at {rsi:.1f}")
-        elif rsi > 70:
-            scores["rsi"] = 20  # Overbought - avoid
-            reasons.append(f"RSI overbought at {rsi:.1f}")
-        elif rsi > 60:
-            scores["rsi"] = 40  # Getting overbought
+        elif rsi > 75:
+            scores["rsi"] = 15  # Very overbought - avoid/sell
+            reasons.append(f"RSI very overbought at {rsi:.1f} (caution)")
+        elif rsi > 65:
+            scores["rsi"] = 35  # Getting overbought
         else:
             scores["rsi"] = 50  # Neutral
 
@@ -332,6 +350,44 @@ class StrategyEngine:
             scores["volume"] = 30
         else:
             scores["volume"] = 50
+
+        # ============ NEW INDICATORS FROM BACKTEST ANALYSIS ============
+
+        # Momentum Score - BEST PERFORMER (avg Sharpe 0.33)
+        # Buy when price momentum > 5% over 20 days
+        momentum_20d = indicators.get("momentum_20d", 0)
+
+        if momentum_20d > 7:
+            scores["momentum"] = 90  # Strong upward momentum
+            reasons.append(f"Strong 20d momentum (+{momentum_20d:.1f}%)")
+        elif momentum_20d > 5:
+            scores["momentum"] = 80  # Good momentum - backtest sweet spot
+            reasons.append(f"Positive 20d momentum (+{momentum_20d:.1f}%)")
+        elif momentum_20d > 2:
+            scores["momentum"] = 65  # Moderate momentum
+        elif momentum_20d < -5:
+            scores["momentum"] = 25  # Negative momentum - avoid
+            reasons.append(f"Negative momentum ({momentum_20d:.1f}%)")
+        else:
+            scores["momentum"] = 50  # Neutral
+
+        # Mean Reversion Score - SECOND BEST PERFORMER (avg Sharpe 0.17)
+        # Buy when price is 3%+ below 20-day SMA
+        deviation_from_sma = indicators.get("deviation_from_sma20", 0)
+
+        if deviation_from_sma < -5:
+            scores["mean_reversion"] = 95  # Very oversold - strong mean reversion buy
+            reasons.append(f"Price {abs(deviation_from_sma):.1f}% below 20 SMA (mean reversion)")
+        elif deviation_from_sma < -3:
+            scores["mean_reversion"] = 85  # Oversold - buy signal
+            reasons.append(f"Price {abs(deviation_from_sma):.1f}% below 20 SMA")
+        elif deviation_from_sma > 5:
+            scores["mean_reversion"] = 20  # Overextended above mean - expect pullback
+            reasons.append(f"Price {deviation_from_sma:.1f}% above 20 SMA (extended)")
+        elif deviation_from_sma > 3:
+            scores["mean_reversion"] = 35  # Slightly overextended
+        else:
+            scores["mean_reversion"] = 50  # Near mean - neutral
 
         return scores, reasons
 
