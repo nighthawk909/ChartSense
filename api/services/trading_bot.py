@@ -1384,11 +1384,13 @@ class TradingBot:
                                 )
                             except Exception as e:
                                 logger.warning(f"AI evaluation failed for {symbol}: {e}")
+                                # When AI is unavailable (e.g., OpenAI budget exhausted),
+                                # trust the technical signals and allow trading
                                 ai_decision = {
-                                    "decision": "WAIT",
-                                    "confidence": 0,
-                                    "reasoning": f"AI evaluation unavailable: {str(e)[:50]}",
-                                    "concerns": ["AI service error"],
+                                    "decision": "APPROVE",
+                                    "confidence": signal.score,
+                                    "reasoning": f"AI unavailable - proceeding with technical signals (score: {signal.score}%)",
+                                    "concerns": ["AI service unavailable - using technical analysis only"],
                                 }
 
                             # Log AI decision
@@ -2722,11 +2724,13 @@ class TradingBot:
                             )
                         except Exception as e:
                             logger.warning(f"AI evaluation failed for {symbol}: {e}")
+                            # When AI is unavailable (e.g., OpenAI budget exhausted),
+                            # trust the technical signals and allow trading
                             ai_decision = {
-                                "decision": "WAIT",
-                                "confidence": 0,
-                                "reasoning": f"AI evaluation unavailable: {str(e)[:50]}",
-                                "concerns": ["AI service error"],
+                                "decision": "APPROVE",
+                                "confidence": confidence,
+                                "reasoning": f"AI unavailable - proceeding with technical signals (score: {confidence}%)",
+                                "concerns": ["AI service unavailable - using technical analysis only"],
                             }
 
                             # Log AI decision
