@@ -94,9 +94,9 @@ const DEFAULT_SETTINGS: BotSettings = {
   auto_trade_mode: false,
   ai_risk_tolerance: 'moderate',
   broker: 'alpaca',
-  crypto_trading_enabled: false,
-  crypto_symbols: ['BTC/USD', 'ETH/USD'],
-  crypto_max_positions: 2,
+  crypto_trading_enabled: true,
+  crypto_symbols: ['BTC/USD', 'ETH/USD', 'SOL/USD', 'DOGE/USD', 'XRP/USD', 'LINK/USD', 'UNI/USD'],
+  crypto_max_positions: 5,
 }
 
 export default function Settings() {
@@ -749,7 +749,7 @@ export default function Settings() {
                       <input
                         type="range"
                         min="1"
-                        max={Math.min(10, settings.crypto_symbols?.length || 10)}
+                        max={10}
                         value={settings.crypto_max_positions}
                         onChange={(e) => setSettings({ ...settings, crypto_max_positions: parseInt(e.target.value) })}
                         className="flex-1 h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-orange-500"
@@ -759,6 +759,11 @@ export default function Settings() {
                     <p className="text-xs text-slate-500 mt-1">
                       The bot will scan all {settings.crypto_symbols?.length || 0} selected cryptos, but only hold up to {settings.crypto_max_positions} positions simultaneously.
                     </p>
+                    {settings.crypto_max_positions > (settings.crypto_symbols?.length || 0) && (
+                      <p className="text-xs text-amber-400 mt-1">
+                        Select at least {settings.crypto_max_positions} cryptos above to fill all position slots.
+                      </p>
+                    )}
                   </div>
                 </>
               )}
