@@ -113,7 +113,9 @@
       "Bash(cmd /c \"wmic process where ParentProcessId=45732 delete\")",
       "Bash(cmd /c \"wmic process where ParentProcessId=24344 delete\")",
       "Bash(cmd /c \"wmic process where ParentProcessId=12916 delete\")",
-      "Bash(cmd /c \"taskkill /F /PID 15936\")"
+      "Bash(cmd /c \"taskkill /F /PID 15936\")",
+      "Bash(railway --version:*)",
+      "WebFetch(domain:github.com)"
     ]
   },
   "hooks": {}

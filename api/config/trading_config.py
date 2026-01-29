@@ -76,8 +76,8 @@ class TradingConfig:
     # Maximum number of symbols to track (API rate limit consideration)
     max_enabled_symbols: int = field(default_factory=lambda: _get_env_int('max_enabled_symbols', 20))
 
-    # Maximum crypto positions
-    crypto_max_positions: int = field(default_factory=lambda: _get_env_int('crypto_max_positions', 2))
+    # Maximum crypto positions (increased from 2 to 5 for more diversification)
+    crypto_max_positions: int = field(default_factory=lambda: _get_env_int('crypto_max_positions', 5))
 
     # Minimum buying power required to open new positions
     min_buying_power_for_position: float = field(default_factory=lambda: _get_env_float('min_buying_power_for_position', 500.0))
