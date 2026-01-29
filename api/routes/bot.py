@@ -1961,3 +1961,106 @@ async def rescan_all_positions():
         "actions_summary": actions_summary,
         "rescanned_at": datetime.now().isoformat(),
     }
+
+
+# ==================== AUTO-OPTIMIZER ENDPOINTS ====================
+
+@router.get("/optimizer/status")
+async def get_optimizer_status():
+    """
+    Get auto-optimizer status.
+
+    Returns:
+    - Current market regime (bull, bear, high_vol, low_vol)
+    - Current strategy weights
+    - Last optimization time
+    - Next scheduled optimization
+    - Recent optimization history
+    """
+    bot = get_trading_bot()
+
+    if not bot.auto_optimize_enabled:
+        return {
+            "enabled": False,
+            "message": "Auto-optimizer is disabled",
+        }
+
+    return bot.auto_optimizer.get_status()
+
+
+@router.post("/optimizer/run")
+async def run_optimizer_now():
+    """
+    Manually trigger optimization.
+
+    Forces an immediate optimization cycle regardless of schedule.
+    This will:
+    1. Fetch recent historical data
+    2. Detect current market regime
+    3. Run walk-forward backtests
+    4. Update strategy weights if improvement found
+
+    Returns optimization results.
+    """
+    bot = get_trading_bot()
+
+    if not bot.auto_optimize_enabled:
+        raise HTTPException(status_code=400, detail="Auto-optimizer is disabled")
+
+    result = await bot.auto_optimizer.run_optimization(force=True)
+
+    if result is None:
+        raise HTTPException(status_code=500, detail="Optimization failed")
+
+    return {
+        "success": True,
+        "timestamp": result.timestamp.isoformat(),
+        "regime": result.regime.value,
+        "weights_updated": result.weights_updated,
+        "new_weights": result.new_weights,
+        "backtest_sharpe": result.backtest_sharpe,
+        "backtest_win_rate": result.backtest_win_rate,
+        "robustness_score": result.robustness_score,
+        "reason": result.reason,
+    }
+
+
+@router.post("/optimizer/toggle")
+async def toggle_optimizer(enabled: bool = Query(..., description="Enable or disable auto-optimizer")):
+    """
+    Enable or disable the auto-optimizer.
+
+    When disabled, strategy weights will remain static.
+    When enabled, weights will automatically adapt to market conditions.
+    """
+    bot = get_trading_bot()
+    bot.auto_optimize_enabled = enabled
+    bot.auto_optimizer.enabled = enabled
+
+    if enabled:
+        # Start background optimization if bot is running
+        if bot.state.value == "RUNNING":
+            await bot.auto_optimizer.start_background_optimization()
+        return {"enabled": True, "message": "Auto-optimizer enabled - strategy will adapt automatically"}
+    else:
+        await bot.auto_optimizer.stop_background_optimization()
+        return {"enabled": False, "message": "Auto-optimizer disabled - using static weights"}
+
+
+@router.get("/optimizer/weights")
+async def get_current_weights():
+    """
+    Get current strategy weights being used for trading.
+
+    These weights determine how much each indicator contributes to the
+    overall confidence score.
+    """
+    bot = get_trading_bot()
+
+    return {
+        "weights": bot.strategy.weights,
+        "entry_threshold": bot.strategy.entry_threshold,
+        "auto_optimize_enabled": bot.auto_optimize_enabled,
+        "current_regime": bot.auto_optimizer.current_regime.value if bot.auto_optimize_enabled else "unknown",
+        "last_optimization": bot.auto_optimizer.last_optimization.isoformat() if bot.auto_optimizer.last_optimization else None,
+    }

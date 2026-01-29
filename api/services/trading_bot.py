@@ -26,6 +26,7 @@ from .priority_scanner import PriorityScannerService, get_priority_scanner, Prio
 from .execution_logger import ExecutionLogger, ExecutionErrorCode, parse_api_error
 from .smart_scanner import SmartScanner, get_smart_scanner
 from .hierarchical_strategy import TradingHorizon, OpportunityQuality
+from .auto_optimizer import get_auto_optimizer, AutoOptimizer
 from config import TradingConfig, get_trading_config
 from database.models import Trade, Position, BotConfiguration, StockRepository, UserWatchlist
 from database.connection import SessionLocal
@@ -67,6 +68,11 @@ class TradingBot:
         self.risk_manager = RiskManager()
         self.indicator_service = IndicatorService()
         self.ai_advisor = get_ai_advisor()
+
+        # Auto-optimizer for automatic weight tuning
+        self.auto_optimizer = get_auto_optimizer()
+        self.auto_optimizer.set_strategy_engine(self.strategy)
+        self.auto_optimize_enabled = True  # Enable automatic strategy optimization
 
         # Load centralized trading configuration
         self.trading_config = get_trading_config()
@@ -254,6 +260,11 @@ class TradingBot:
         self.start_time = datetime.now()
         self.error_message = None
 
+        # Start auto-optimizer background task (adapts strategy weights automatically)
+        if self.auto_optimize_enabled:
+            await self.auto_optimizer.start_background_optimization()
+            logger.info("Auto-optimizer started - strategy will adapt to market conditions")
+
         # Start the main loop
         self._running_task = asyncio.create_task(self._main_loop())
         logger.info("Trading bot started successfully")
@@ -266,6 +277,10 @@ class TradingBot:
 
         logger.info("Stopping trading bot...")
         self.state = BotState.STOPPED
+
+        # Stop auto-optimizer
+        if self.auto_optimize_enabled:
+            await self.auto_optimizer.stop_background_optimization()
 
         if self._running_task:
             self._running_task.cancel()
@@ -2293,6 +2308,9 @@ class TradingBot:
             "queued_trades": self._queued_trades,
             "queued_trades_count": len(self._queued_trades),
             "auto_queue_strong_signals": self.auto_queue_strong_signals,
+            # Auto-Optimizer Status
+            "auto_optimize_enabled": self.auto_optimize_enabled,
+            "auto_optimizer": self.auto_optimizer.get_status() if self.auto_optimize_enabled else None,
         }
 
     def _get_analysis_reason(self, signal: str, confidence: float, threshold: float) -> str:
